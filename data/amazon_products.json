@@ -1,0 +1,23 @@
+[
+  {
+    "id": "1",
+    "nombre": "Audífonos inalámbricos Bluetooth",
+    "descripcion": "Auriculares inalámbricos con cancelación de ruido y batería de larga duración.",
+    "categoria": "Electrónica",
+    "precio": 59.99
+  },
+  {
+    "id": "2",
+    "nombre": "Cafetera de goteo 12 tazas",
+    "descripcion": "Cafetera eléctrica con temporizador programable y función de apagado automático.",
+    "categoria": "Electrodomésticos",
+    "precio": 45.50
+  },
+  {
+    "id": "3",
+    "nombre": "Lámpara de escritorio LED",
+    "descripcion": "Lámpara ajustable con brillo regulable y puerto USB para cargar dispositivos.",
+    "categoria": "Iluminación",
+    "precio": 25.00
+  }
+]
