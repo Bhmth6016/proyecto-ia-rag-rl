@@ -16,3 +16,4 @@ __pycache__/
 
 # Archivos de caché
 reduced_data.josnl
+reduced_data.jsonl
