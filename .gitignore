@@ -1,0 +1,18 @@
+# Archivos de entorno
+.env
+
+# Entornos virtuales
+venv/
+.venv/
+
+# Archivos de IDE
+.vscode/
+.idea/
+
+# Archivos temporales
+__pycache__/
+*.py[cod]
+
+
+# Archivos de caché
+reduced_data.josnl

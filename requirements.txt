@@ -1,0 +1,11 @@
+echo pandas >> requirements.txt
+
+
+chromadb==0.4.22
+sentence-transformers==2.2.2
+requests==2.31.0
+python-dotenv==1.0.1
+
+
+python -m pip install huggingface_hub
+huggingface-cli login
