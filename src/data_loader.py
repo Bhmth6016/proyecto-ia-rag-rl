@@ -23,7 +23,10 @@ def parse_price(price_str):
 
 class DataLoader:
     def __init__(self, raw_dir: str = None, processed_dir: str = None):
-        base_dir = Path("C:/Users/evill/OneDrive/Documentos/Github/proyecto-ia-rag-rl-data")
+        # Usando rutas relativas basadas en la ubicación del script
+        script_dir = Path(__file__).parent.resolve()
+        base_dir = script_dir.parent / "data"
+        
         self.raw_dir = Path(raw_dir) if raw_dir else (base_dir / "raw")
         self.processed_dir = Path(processed_dir) if processed_dir else (base_dir / "processed")
 
@@ -74,6 +77,23 @@ class DataLoader:
             logger.error(f"Error procesando ítem {item.get('asin', 'sin_asin')}: {e}")
             return None
 
+    def _needs_processing(self, raw_file: Path, cache_file: Path) -> bool:
+        """Verifica si el archivo necesita ser procesado."""
+        if not cache_file.exists():
+            return True
+        
+        # Verificar si el archivo raw ha cambiado
+        if raw_file.stat().st_mtime > cache_file.stat().st_mtime:
+            return True
+            
+        # Verificar si el archivo cache está corrupto
+        try:
+            with open(cache_file, 'rb') as f:
+                pickle.load(f)
+            return False
+        except:
+            return True
+
     def load_data(self, use_cache: bool = True) -> List[Dict]:
         all_data = []
 
@@ -84,7 +104,8 @@ class DataLoader:
 
         for raw_file in raw_files:
             cache_file = self._get_cache_file(raw_file)
-            if use_cache and cache_file.exists() and raw_file.stat().st_mtime <= cache_file.stat().st_mtime:
+            
+            if use_cache and not self._needs_processing(raw_file, cache_file):
                 try:
                     with open(cache_file, 'rb') as f:
                         all_data.extend(pickle.load(f))
@@ -93,6 +114,7 @@ class DataLoader:
                 except Exception as e:
                     logger.warning(f"Error cargando caché {cache_file.name}: {e}")
 
+            # Procesar el archivo si es necesario
             file_data = self._load_single_file(raw_file)
 
             try:
@@ -105,26 +127,3 @@ class DataLoader:
             all_data.extend(file_data)
 
         return all_data
-
-    def save_reduced_data(self, output_path: str = "reduced_data.jsonl") -> None:
-        output_path = Path(output_path)
-
-        # Si el archivo ya existe y está actualizado, no se hace nada
-        if output_path.exists():
-            is_updated = True
-            for raw_file in self._get_raw_files():
-                cache_file = self._get_cache_file(raw_file)
-                if not cache_file.exists() or raw_file.stat().st_mtime > output_path.stat().st_mtime:
-                    is_updated = False
-                    break
-            if is_updated:
-                logger.info(f"{output_path.name} ya está actualizado")
-                return
-
-        # Cargar y guardar datos reducidos
-        data = self.load_data(use_cache=True)
-        with open(output_path, 'w', encoding='utf-8') as f:
-            for item in data:
-                json.dump(item, f)
-                f.write('\n')
-        logger.info(f"Datos reducidos guardados en {output_path.name}")

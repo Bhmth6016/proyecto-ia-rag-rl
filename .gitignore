@@ -13,7 +13,5 @@ venv/
 __pycache__/
 *.py[cod]
 
-
-# Archivos de caché
-reduced_data.josnl
-reduced_data.jsonl
+# Ignorar toda la carpeta data
+/data/
