@@ -1,4 +1,4 @@
-#version establecida: 1.0.0
+#version establecida: 1.0.0 
 # #!/usr/bin/env python3
 import logging
 from pathlib import Path
