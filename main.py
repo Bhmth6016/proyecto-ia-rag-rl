@@ -1,24 +1,57 @@
+#!/usr/bin/env python3
+import logging
+from pathlib import Path
+from typing import Optional
 from src.data_loader import DataLoader
+from src.category_selector.category_tree import generar_categorias_y_filtros
 from src.ui_client.ui_interface import run_interface
-from src.category_selector.category_tree import load_category_tree
+
+def configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        handlers=[
+            logging.FileHandler("recommendation_system.log"),
+            logging.StreamHandler()
+        ]
+    )
+
+def initialize_data_loader() -> Optional[list]:
+    try:
+        loader = DataLoader()
+        productos = loader.load_data(use_cache=True)
+        if not productos:
+            logging.error("No se encontraron datos válidos.")
+            return None
+        logging.info(f"Datos cargados correctamente. Total productos: {len(productos)}")
+        return productos
+    except Exception as e:
+        logging.critical(f"Error inicializando DataLoader: {str(e)}", exc_info=True)
+        return None
 
 def main():
-    # Paso 1: Cargar los datos procesados (opcional si ya se generaron los archivos .pkl)
-    loader = DataLoader()
-    data = loader.load_data(use_cache=True)
+    print("\n" + "="*50)
+    print(" SISTEMA DE RECOMENDACIÓN ".center(50))
+    print("="*50)
 
-    # Mostrar información básica sobre los datos cargados
-    print(f"\nSe cargaron {len(data)} productos procesados")
+    configure_logging()
 
-    # Paso 2: Cargar árbol de categorías y filtros (esto internamente revisa los archivos .pkl)
-    category_tree = load_category_tree()
-    if not category_tree:
-        print("No se encontraron categorías procesadas. Verifica que existan archivos .pkl en la carpeta 'data/processed'.")
+    if not (productos := initialize_data_loader()):
         return
 
-    # Paso 3: Ejecutar interfaz de usuario
-    run_interface()
+    try:
+        logging.info("Verificando categorías y filtros...")
+        generar_categorias_y_filtros(productos)
+        run_interface(productos)
+    except KeyboardInterrupt:
+        logging.info("Aplicación interrumpida por el usuario")
+    except Exception as e:
+        logging.error(f"Error crítico: {str(e)}", exc_info=True)
+    finally:
+        logging.info("Liberando recursos...")
+        print("\n" + "="*50)
+        print(" SESIÓN TERMINADA ".center(50))
+        print("="*50)
 
-# Llamada directa a main()
-import json  # Importación para el print de ejemplo
-main()
+if __name__ == "__main__":
+    main()

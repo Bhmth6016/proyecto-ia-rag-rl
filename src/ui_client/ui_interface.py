@@ -1,207 +1,304 @@
-# ui_interface.py
-import pickle
+import json
+import logging
+from pathlib import Path
+from typing import List, Dict, Optional, Union, Any
+from collections import defaultdict
+from src.data_loader import DataLoader
 
-from src.category_selector.category_tree import load_category_tree
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 MAX_PRODUCTS = 20
 
-# ======================
-# FUNCIONES UTILITARIAS
-# ======================
-def format_price(price) -> str:
-    """Formatea el precio como string con $ o devuelve N/A"""
-    if price is None:
-        return 'N/A'
-    try:
-        return f"${float(price):.2f}"
-    except (ValueError, TypeError):
-        return str(price)
-
-def safe_join(items, default: str = 'N/A') -> str:
-    """Convierte una lista a string separado por comas de forma segura"""
-    if not items:
-        return default
-    try:
-        return ', '.join(str(item) for item in items if item is not None)
-    except Exception:
-        return default
-    
-def get_float_input(prompt: str, default: float, min_val: float = None, max_val: float = None) -> float:
-    while True:
+class ProductInterface:
+    def __init__(self, data_loader: DataLoader):
+        self.loader = data_loader
+        self.products = []
+        self.category_tree = {}
+        self.filters = {}
+        
+    def load_products(self, use_cache: bool = True) -> bool:
         try:
-            value = input(prompt)
-            num = float(value) if value else default
-            if (min_val is not None and num < min_val) or (max_val is not None and num > max_val):
-                print(f"¡Error! Ingrese un valor entre {min_val} y {max_val}.")
-                continue
-            return num
-        except ValueError:
-            print("¡Error! Ingrese un número válido.")
+            self.products = self.loader.load_data(use_cache)
+            self.category_tree = self._build_category_tree()
+            self.filters = self._extract_filters()
+            return True
+        except Exception as e:
+            logger.error(f"Error cargando productos: {e}")
+            return False
+    
+    def _build_category_tree(self) -> Dict[str, List[Dict]]:
+        tree = defaultdict(list)
+        for product in self.products:
+            category = product.get('main_category', 'Uncategorized')
+            tree[category].append(product)
+        return dict(tree)
+    
+    def _extract_filters(self) -> Dict[str, Any]:
+        filters = {
+            'price_range': {'min': float('inf'), 'max': 0},
+            'ratings': set(),
+            'categories': set(),
+            'details': defaultdict(set)
+        }
+        
+        for product in self.products:
+            # Filtro de precio
+            price = product.get('price')
+            if isinstance(price, (int, float)):
+                filters['price_range']['min'] = min(filters['price_range']['min'], price)
+                filters['price_range']['max'] = max(filters['price_range']['max'], price)
             
-def show_details(details: dict) -> None:
-    """Muestra los detalles adicionales del producto"""
-    if not details:
-        return
-    print("\nDetalles adicionales:")
-    for k, v in details.items():
-        print(f"- {k}: {v if v is not None else 'N/A'}")
-                   
-def show_categories(category_tree):
-    print("\nCategorías disponibles:")
-    for i, category in enumerate(category_tree.keys()):
-        print(f"{i + 1}. {category}")
-    choice = input("Seleccione una categoría por número: ")
-    try:
-        choice_index = int(choice) - 1
-        category = list(category_tree.keys())[choice_index]
-        return category
-    except (ValueError, IndexError):
-        print("Selección inválida.")
-        return None
-
-def show_filters(filters):
-    print("\nFiltros disponibles:")
-    print(f"1. Precio: {filters['price_range'] if filters['price_range'] else 'No disponible'}")
-    print(f"2. Rating promedio: {filters['average_rating']}")
-    print(f"3. Etiquetas de categoría: {filters['category_tags']}")
-    
-    # Opcionalmente podrías permitir al usuario elegir aplicar filtros aquí
-    return filters
-def apply_filters(products, filters):
-    filtered = []
-    
-    for product in products:
-        # 1. Filtro por rating
-        if "average_rating" in filters and filters["average_rating"]:
-            rating = product.get("average_rating")
-            if rating is None or rating not in filters["average_rating"]:
-                continue
+            # Filtro de ratings
+            rating = product.get('average_rating')
+            if isinstance(rating, (int, float)):
+                filters['ratings'].add(round(rating))
+            
+            # Filtro de categorías
+            categories = product.get('categories', [])
+            if isinstance(categories, list):
+                filters['categories'].update(
+                    str(cat).strip() for cat in categories 
+                    if cat and str(cat).strip()
+                )
+            
+            # Filtro de detalles
+            details = product.get('details', {})
+            if isinstance(details, dict):
+                for key, value in details.items():
+                    if value and isinstance(value, str):
+                        filters['details'][key].add(value.strip())
         
-        # 2. Filtro por rango de precio (solo si hay datos)
-        if "price_range" in filters and len(filters["price_range"]) == 2:
-            price = product.get("price")
-            min_price, max_price = filters["price_range"]
-            if price is None or not (min_price <= price <= max_price):
-                continue
-        
-        # 3. Filtro por categorías (solo si hay etiquetas)
-        if "category_tags" in filters and filters["category_tags"]:
-            product_categories = product.get("categories", []) or []
-            if not any(cat in filters["category_tags"] for cat in product_categories):
-                continue
-        
-        filtered.append(product)
+        # Asegurar que no hay None al ordenar
+        return {
+            'price_range': [
+                filters['price_range']['min'] if filters['price_range']['min'] != float('inf') else 0,
+                filters['price_range']['max']
+            ],
+            'ratings': sorted(r for r in filters['ratings'] if r is not None),
+            'categories': sorted(
+                (c for c in filters['categories'] if c is not None),
+                key=lambda x: x if x is not None else ""
+            ),
+            'details': {
+                k: sorted(v for v in values if v is not None)
+                for k, values in filters['details'].items()
+            }
+        }
     
-    return filtered[:MAX_PRODUCTS]  # Asegura el límite máximo# Mantén el límite de productos
-
-def show_products(products):
-    print("\nProductos encontrados:")
-    for i, product in enumerate(products, 1):
-        title = product.get("title", "Sin título") or "Sin título"
-        price = product.get("price", "N/A") if product.get("price") is not None else "N/A"
-        rating = product.get("average_rating", "N/A") if product.get("average_rating") is not None else "N/A"
-        print(f"{i}. {title} - Precio: {price} - Rating: {rating}")
-    
-    print(f"{len(products)+1}. Ver otros resultados")
-    print(f"{len(products)+2}. Salir")
-    
-    while True:
-        choice = input("\nSeleccione una opción: ")
+    @staticmethod
+    def format_price(price: Optional[Union[float, str]]) -> str:
+        if price is None:
+            return "N/A"
         try:
-            choice_index = int(choice)
-            if 1 <= choice_index <= len(products):
-                return {"action": "select", "product": products[choice_index-1]}
-            elif choice_index == len(products)+1:
-                return {"action": "retry"}
-            elif choice_index == len(products)+2:
-                return {"action": "exit"}
-        except ValueError:
+            return f"${float(price):.2f}"
+        except (ValueError, TypeError):
+            return str(price)
+    
+    def show_main_menu(self) -> str:
+        print("\n" + "="*60)
+        print(" SISTEMA DE RECOMENDACIÓN ".center(60))
+        print("="*60)
+        
+        categories = sorted(self.category_tree.keys())
+        for i, cat in enumerate(categories, 1):
+            count = len(self.category_tree[cat])
+            print(f"{i}. {cat} ({count} productos)")
+        
+        print("\n0. Salir")
+        print("="*60)
+        
+        while True:
+            choice = input("\nSeleccione una categoría: ")
+            if choice == '0':
+                return 'exit'
+            if choice.isdigit() and 1 <= int(choice) <= len(categories):
+                return categories[int(choice)-1]
             print("Opción inválida. Intente nuevamente.")
-            
-            
-def run_interface():
-    category_tree = load_category_tree()
     
-    while True:
-        # Paso 1: Selección de categoría
-        category = show_categories(category_tree)
-        if category is None:
-            continue
-
-        file_path = category_tree[category]["file_path"]
-        filters = category_tree[category]["filters"]
-
-        # Paso 2: Preguntar si quiere aplicar filtros
-        apply_filters_choice = input("\n¿Desea aplicar filtros? (s/n): ").lower()
-        user_filters = {}
-
-        if apply_filters_choice == 's':
-            print("\nFiltros disponibles para esta categoría:")
-            show_filters(filters)
-            
-            # Opción para seleccionar qué filtros aplicar
-            filter_choice = input("\nIngrese los números de filtros a aplicar (ej: 1,3): ")
-            selected_indices = [int(idx.strip()) for idx in filter_choice.split(',') if idx.strip().isdigit()]
-
-            # Construir user_filters basado en selección
-            if 1 in selected_indices and filters["price_range"]:
-                min_price = float(input(f"Ingrese precio mínimo ({filters['price_range'][0]}): ") or filters["price_range"][0])
-                max_price = float(input(f"Ingrese precio máximo ({filters['price_range'][1]}): ") or filters["price_range"][1])
-                user_filters["price_range"] = [min_price, max_price]
-
-            if 2 in selected_indices and filters["average_rating"]:
-                print("Ratings disponibles:", filters["average_rating"])
-                selected_ratings = input("Ingrese ratings separados por comas (ej: 4,5): ")
-                user_filters["average_rating"] = [int(r) for r in selected_ratings.split(',') if r.strip().isdigit()]
-
-            if 3 in selected_indices and filters["category_tags"]:
-                print("Etiquetas disponibles:", filters["category_tags"])
-                selected_tags = input("Ingrese etiquetas separadas por comas: ")
-                user_filters["category_tags"] = [tag.strip() for tag in selected_tags.split(',')]
-
-        # Cargar productos
-        with open(file_path, "rb") as f:
-            products = pickle.load(f)
-
-        # Aplicar filtros solo si se seleccionaron
-        filtered_products = apply_filters(products, user_filters) if user_filters else products[:MAX_PRODUCTS]
-
-        # Resto del flujo...
-        result = show_products(filtered_products)
+    def show_filters_menu(self, category: str) -> Dict[str, Any]:
+        selected = {}
         
-        if result["action"] == "select":
-            product = result["product"]
-            print("\n" + "═"*50)
-            print("PRODUCTO SELECCIONADO".center(50))
-            print("═"*50)
+        # Verificar si hay filtros disponibles
+        if not self.filters.get('categories'):
+            logger.warning(f"No hay categorías disponibles para filtrar en {category}")
+            return selected
+        print(f"\nFiltros para {category}:")
+        print("1. Precio")
+        print("2. Rating")
+        print("3. Características")
+        print("0. Saltar")
+        
+        selected = {}
+        choice = input("\nSeleccione filtros (ej: 1,3): ")
+        
+        if '1' in choice:
+            min_p, max_p = self.filters['price_range']
+            print(f"\nRango actual: {self.format_price(min_p)} - {self.format_price(max_p)}")
+            try:
+                min_val = float(input(f"Mínimo ({self.format_price(min_p)}): ") or min_p)
+                max_val = float(input(f"Máximo ({self.format_price(max_p)}): ") or max_p)
+                selected['price_range'] = [min_val, max_val]
+            except ValueError:
+                print("¡Valor inválido! Usando valores por defecto")
+                selected['price_range'] = [min_p, max_p]
+        
+        if '2' in choice:
+            print("\nRatings:", ', '.join(map(str, self.filters['ratings'])))
+            ratings = input("Incluir ratings (ej: 4,5): ")
+            selected['ratings'] = [int(r) for r in ratings.split(',') if r.strip().isdigit()]
+        
+        if '3' in choice:
+            print("\nCaracterísticas disponibles:")
+            for i, (k, v) in enumerate(self.filters['details'].items(), 1):
+                print(f"{i}. {k}: {', '.join(v[:3])}{'...' if len(v) > 3 else ''}")
             
-            print(f"Nombre: {product.get('title', 'N/A') or 'N/A'}")
-            print(f"Precio: {format_price(product.get('price'))}")
-            print(f"Rating: {product.get('average_rating', 'N/A')}")
-            print(f"Categorías: {safe_join(product.get('categories'))}")
-            
-            # Llamada corregida al nombre de la función
-            show_details(product.get('details', {}))
-            
-            print("═"*50 + "\n")
-            
-            # Aquí iría tu llamada al modelo de RL para recompensa/castigo
-            feedback = input("¿Le gustó este producto? (s/n): ").lower()
-            if feedback == 's':
-                print("¡Perfecto! Guardando preferencia...")
-                # Lógica de recompensa al RL
-            else:
-                print("Buscando alternativas...")
-                # Lógica de castigo al RL
+            feature = input("\nSeleccione característica: ")
+            if feature.isdigit() and 1 <= int(feature) <= len(self.filters['details']):
+                key = list(self.filters['details'].keys())[int(feature)-1]
+                values = input(f"Valores para {key} (separados por coma): ").split(',')
+                selected['details'] = {key: [v.strip() for v in values]}
+        
+        return selected
+    
+    def apply_filters(self, products: List[Dict], filters: Dict) -> List[Dict]:
+        if not products or not filters:
+            return products[:MAX_PRODUCTS]
+        
+        filtered = []
+        for product in products:
+            # Validar producto
+            if not isinstance(product, dict):
                 continue
+            # Filtrado por precio
+            if 'price_range' in filters:
+                price = product.get('price')
+                if not isinstance(price, (int, float)):
+                    continue
+                if not (filters['price_range'][0] <= price <= filters['price_range'][1]):
+                    continue
             
-            if input("¿Desea realizar otra búsqueda? (s/n): ").lower() != 's':
-                print("¡Gracias por usar nuestro sistema!")
+            if 'ratings' in filters:
+                rating = product.get('average_rating')
+                if not rating or round(rating) not in filters['ratings']:
+                    continue
+            
+            if 'details' in filters:
+                detail_match = False
+                for k, values in filters['details'].items():
+                    if str(product.get('details', {}).get(k, '')).strip() in values:
+                        detail_match = True
+                        break
+                if not detail_match:
+                    continue
+            
+            filtered.append(product)
+            if len(filtered) >= MAX_PRODUCTS:
                 break
+        
+        return filtered
+    
+    def show_products(self, products: List[Dict]) -> Dict[str, Any]:
+        if not products:
+            print("\nNo hay productos con estos filtros")
+            return {'action': 'retry'}
+        
+        print("\n" + "="*60)
+        print(f" PRODUCTOS ({len(products)}) ".center(60))
+        print("="*60)
+        
+        for i, product in enumerate(products, 1):
+            title = (product.get('title') or 'Sin título')[:50]
+            print(f"{i}. {title}")
+            print(f"   Precio: {self.format_price(product.get('price'))} | Rating: {product.get('average_rating', 'N/A')}")
+        
+        print("\nOpciones:")
+        print(f"{len(products)+1}. Nuevos filtros")
+        print(f"{len(products)+2}. Volver")
+        print(f"{len(products)+3}. Salir")
+        print("="*60)
+        
+        while True:
+            choice = input("\nSelección: ")
+            if choice.isdigit():
+                num = int(choice)
+                if 1 <= num <= len(products):
+                    return {'action': 'select', 'product': products[num-1]}
+                elif num == len(products)+1:
+                    return {'action': 'filter'}
+                elif num == len(products)+2:
+                    return {'action': 'back'}
+                elif num == len(products)+3:
+                    return {'action': 'exit'}
+            print("Opción inválida")
+    
+    def show_product_detail(self, product: Dict) -> None:
+        print("\n" + "="*60)
+        print(" DETALLES ".center(60))
+        print("="*60)
+        print(f"Nombre: {product.get('title', 'N/A')}")
+        print(f"Precio: {self.format_price(product.get('price'))}")
+        print(f"Rating: {product.get('average_rating', 'N/A')}")
+        print(f"Categoría: {product.get('main_category', 'N/A')}")
+        
+        if categories := product.get('categories'):
+            print(f"\nOtras categorías: {', '.join(categories)}")
+        
+        if details := product.get('details'):
+            print("\nEspecificaciones:")
+            for k, v in details.items():
+                print(f"- {k}: {v if v else 'N/A'}")
+        
+        print("="*60)
+        input("\nPresione Enter para continuar...")
+    
+    def run(self) -> None:
+        if not self.load_products():
+            return
+        
+        navigation_stack = []
+        current_category = None
+        current_filters = {}
+        current_products = []
+        
+        try:
+            while True:
+                if not navigation_stack:
+                    action = self.show_main_menu()
+                    if action == 'exit':
+                        break
+                    current_category = action
+                    navigation_stack.append(('category', current_category))
+                    current_products = self.category_tree[current_category]
+                    continue
                 
-        elif result["action"] == "retry":
-            continue
-            
-        elif result["action"] == "exit":
-            print("¡Hasta pronto!")
-            break
+                if navigation_stack[-1][0] == 'category':
+                    current_filters = self.show_filters_menu(current_category)
+                    filtered = self.apply_filters(current_products, current_filters)
+                    navigation_stack.append(('filtered', current_filters))
+                
+                elif navigation_stack[-1][0] == 'filtered':
+                    result = self.show_products(
+                        self.apply_filters(current_products, current_filters)
+                    )
+                    
+                    if result['action'] == 'select':
+                        self.show_product_detail(result['product'])
+                    elif result['action'] == 'filter':
+                        navigation_stack.pop()
+                    elif result['action'] == 'back':
+                        navigation_stack.pop()
+                    elif result['action'] == 'exit':
+                        break
+                
+        except KeyboardInterrupt:
+            print("\nOperación cancelada")
+        except Exception as e:
+            logger.error(f"Error: {e}")
+        finally:
+            print("\nGracias por usar el sistema")
+
+def run_interface(products: List[Dict[str, Any]], filters_path: Optional[Path] = None) -> None:
+    loader = DataLoader()
+    interface = ProductInterface(loader)
+    interface.run()
