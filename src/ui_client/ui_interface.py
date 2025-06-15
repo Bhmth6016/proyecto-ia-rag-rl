@@ -30,7 +30,11 @@ class ProductInterface:
     def _build_category_tree(self) -> Dict[str, List[Dict]]:
         tree = defaultdict(list)
         for product in self.products:
-            category = product.get('main_category', 'Uncategorized')
+            if not isinstance(product, dict):
+                continue
+            category = product.get('main_category')
+            if not isinstance(category, str):
+                category = 'Uncategorized'
             tree[category].append(product)
         return dict(tree)
     
@@ -41,48 +45,62 @@ class ProductInterface:
             'categories': set(),
             'details': defaultdict(set)
         }
-        
+
         for product in self.products:
-            # Filtro de precio
+            if not isinstance(product, dict):
+                continue
+                
             price = product.get('price')
-            if isinstance(price, (int, float)):
+            if isinstance(price, (int, float)) and not isinstance(price, bool):
                 filters['price_range']['min'] = min(filters['price_range']['min'], price)
                 filters['price_range']['max'] = max(filters['price_range']['max'], price)
             
-            # Filtro de ratings
             rating = product.get('average_rating')
-            if isinstance(rating, (int, float)):
-                filters['ratings'].add(round(rating))
+            if isinstance(rating, (int, float)) and not isinstance(rating, bool):
+                rounded = int(round(rating))
+                if 0 <= rounded <= 5:
+                    filters['ratings'].add(rounded)
             
-            # Filtro de categorías
-            categories = product.get('categories', [])
+            categories = product.get('categories')
             if isinstance(categories, list):
-                filters['categories'].update(
-                    str(cat).strip() for cat in categories 
-                    if cat and str(cat).strip()
-                )
+                valid_categories = set()
+                for cat in categories:
+                    if cat is None:
+                        continue
+                    try:
+                        cleaned = str(cat).strip()
+                        if cleaned:
+                            valid_categories.add(cleaned.lower())
+                    except (AttributeError, TypeError):
+                        continue
+                filters['categories'].update(valid_categories)
             
-            # Filtro de detalles
-            details = product.get('details', {})
+            details = product.get('details')
             if isinstance(details, dict):
                 for key, value in details.items():
-                    if value and isinstance(value, str):
-                        filters['details'][key].add(value.strip())
+                    if value is None:
+                        continue
+                    try:
+                        cleaned_value = str(value).strip()
+                        if cleaned_value and isinstance(key, str):
+                            filters['details'][key.strip().lower()].add(cleaned_value)
+                    except (AttributeError, TypeError):
+                        continue
         
-        # Asegurar que no hay None al ordenar
         return {
             'price_range': [
                 filters['price_range']['min'] if filters['price_range']['min'] != float('inf') else 0,
-                filters['price_range']['max']
+                max(filters['price_range']['max'], 0)
             ],
-            'ratings': sorted(r for r in filters['ratings'] if r is not None),
+            'ratings': sorted({r for r in filters['ratings'] if isinstance(r, int) and 0 <= r <= 5}),
             'categories': sorted(
-                (c for c in filters['categories'] if c is not None),
-                key=lambda x: x if x is not None else ""
+                {c for c in filters['categories'] if isinstance(c, str) and c},
+                key=str.lower
             ),
             'details': {
-                k: sorted(v for v in values if v is not None)
+                k: sorted({v for v in values if isinstance(v, str) and v})
                 for k, values in filters['details'].items()
+                if isinstance(k, str) and k
             }
         }
     
@@ -119,7 +137,6 @@ class ProductInterface:
     def show_filters_menu(self, category: str) -> Dict[str, Any]:
         selected = {}
         
-        # Verificar si hay filtros disponibles
         if not self.filters.get('categories'):
             logger.warning(f"No hay categorías disponibles para filtrar en {category}")
             return selected
@@ -156,8 +173,9 @@ class ProductInterface:
             feature = input("\nSeleccione característica: ")
             if feature.isdigit() and 1 <= int(feature) <= len(self.filters['details']):
                 key = list(self.filters['details'].keys())[int(feature)-1]
-                values = input(f"Valores para {key} (separados por coma): ").split(',')
-                selected['details'] = {key: [v.strip() for v in values]}
+                values = [v.strip() for v in input(f"Valores para {key} (separados por coma): ").split(',') if v.strip()]
+                if values:
+                    selected['details'] = {key: values}
         
         return selected
     
@@ -167,34 +185,36 @@ class ProductInterface:
         
         filtered = []
         for product in products:
-            # Validar producto
             if not isinstance(product, dict):
                 continue
-            # Filtrado por precio
+            
+            valid = True
+            
             if 'price_range' in filters:
                 price = product.get('price')
                 if not isinstance(price, (int, float)):
-                    continue
-                if not (filters['price_range'][0] <= price <= filters['price_range'][1]):
-                    continue
+                    valid = False
+                elif not (filters['price_range'][0] <= price <= filters['price_range'][1]):
+                    valid = False
             
-            if 'ratings' in filters:
+            if valid and 'ratings' in filters:
                 rating = product.get('average_rating')
-                if not rating or round(rating) not in filters['ratings']:
-                    continue
+                if not isinstance(rating, (int, float)) or round(rating) not in filters['ratings']:
+                    valid = False
             
-            if 'details' in filters:
+            if valid and 'details' in filters:
                 detail_match = False
                 for k, values in filters['details'].items():
-                    if str(product.get('details', {}).get(k, '')).strip() in values:
+                    detail_value = str(product.get('details', {}).get(k, '')).strip()
+                    if detail_value in values:
                         detail_match = True
                         break
-                if not detail_match:
-                    continue
+                valid = detail_match
             
-            filtered.append(product)
-            if len(filtered) >= MAX_PRODUCTS:
-                break
+            if valid:
+                filtered.append(product)
+                if len(filtered) >= MAX_PRODUCTS:
+                    break
         
         return filtered
     

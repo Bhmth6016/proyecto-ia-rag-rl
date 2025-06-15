@@ -20,13 +20,13 @@ def initialize_data_loader() -> Optional[list]:
     try:
         loader = DataLoader()
         productos = loader.load_data(use_cache=True)
-        if not productos:
-            logging.error("No se encontraron datos válidos.")
+        if not productos or not isinstance(productos, list):
+            logging.error("Datos no válidos o vacíos")
             return None
-        logging.info(f"Datos cargados correctamente. Total productos: {len(productos)}")
+        logging.info(f"Datos cargados. Productos: {len(productos)}")
         return productos
     except Exception as e:
-        logging.critical(f"Error inicializando DataLoader: {str(e)}", exc_info=True)
+        logging.critical(f"Error DataLoader: {str(e)}", exc_info=True)
         return None
 
 def main():
@@ -36,19 +36,20 @@ def main():
 
     configure_logging()
 
-    if not (productos := initialize_data_loader()):
+    productos = initialize_data_loader()
+    if not productos:
         return
 
     try:
-        logging.info("Verificando categorías y filtros...")
+        logging.info("Generando categorías...")
         generar_categorias_y_filtros(productos)
         run_interface(productos)
     except KeyboardInterrupt:
-        logging.info("Aplicación interrumpida por el usuario")
+        logging.info("Aplicación interrumpida")
     except Exception as e:
-        logging.error(f"Error crítico: {str(e)}", exc_info=True)
+        logging.error(f"Error: {str(e)}", exc_info=True)
     finally:
-        logging.info("Liberando recursos...")
+        logging.info("Finalizando...")
         print("\n" + "="*50)
         print(" SESIÓN TERMINADA ".center(50))
         print("="*50)

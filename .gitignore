@@ -1,17 +1,21 @@
-# Archivos de entorno
+# Entorno virtual
+ambiente/
+venv/
 .env
 
-# Entornos virtuales
-venv/
-.venv/
+# Datos y caché
+data/
+*.pkl
+*.log
 
-# Archivos de IDE
-.vscode/
-.idea/
-
-# Archivos temporales
+# Python
 __pycache__/
 *.py[cod]
+*.so
+.Python
 
-# Ignorar toda la carpeta data
-/data/
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo

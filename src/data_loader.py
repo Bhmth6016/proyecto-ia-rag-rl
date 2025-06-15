@@ -11,52 +11,100 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ProductModel(BaseModel):
-    main_category: Optional[str] = Field(default=None)
-    title: Optional[str] = Field(default=None)
-    average_rating: Optional[float] = Field(default=None, ge=0, le=5)
-    price: Optional[float] = Field(default=None, ge=0)
-    images: Optional[dict] = Field(default_factory=dict)  # Nunca será None
-    categories: Optional[List[str]] = Field(default_factory=list)  # Nunca será None
-    details: Optional[dict] = Field(default_factory=dict)  # Nunca será None
+    main_category: Optional[str] = Field(default=None, description="Categoría principal del producto")
+    title: Optional[str] = Field(default=None, description="Título del producto")
+    average_rating: Optional[float] = Field(
+        default=None, 
+        ge=0, 
+        le=5,
+        description="Rating promedio entre 0 y 5"
+    )
+    price: Optional[float] = Field(
+        default=None, 
+        ge=0,
+        description="Precio en dólares (si está disponible)"
+    )
+    images: Optional[dict] = Field(
+        default_factory=dict,
+        description="Diccionario con URLs de imágenes"
+    )
+    categories: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Lista de categorías secundarias"
+    )
+    details: Optional[dict] = Field(
+        default_factory=dict,
+        description="Detalles adicionales del producto"
+    )
 
     @field_validator('price', mode='before')
     def parse_price(cls, value):
+        """Convierte y valida el precio, devuelve None si no es válido"""
         if value is None:
             return None
+        if isinstance(value, bool):  # Evita que True/False se conviertan en 1/0
+            return None
         if isinstance(value, (int, float)):
-            return float(value)
-        # Reutiliza tu vieja función `parse_price` aquí
+            return float(value) if value >= 0 else None
         return parse_price(str(value))
+
+    @field_validator('average_rating', mode='before')
+    def parse_rating(cls, value):
+        """Valida que el rating esté entre 0 y 5"""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        try:
+            rating = float(value)
+            return rating if 0 <= rating <= 5 else None
+        except (ValueError, TypeError):
+            return None
 
     @field_validator('categories', mode='before')
     def parse_categories(cls, value):
+        """Asegura que las categorías sean una lista de strings válidos"""
         if value is None:
             return []
-        if not isinstance(value, list):
+        if not isinstance(value, (list, tuple, set)):
             return []
-        return [str(cat).strip() for cat in value if cat and str(cat).strip()]
+        return [
+            str(cat).strip() 
+            for cat in value 
+            if cat is not None and str(cat).strip()
+        ]
 
     @field_validator('details', mode='before')
     def parse_details(cls, value):
-        return {} if value is None or not isinstance(value, dict) else value
-def parse_float(value: Union[str, int, float, None]) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return None
+        """Asegura que los detalles sean un diccionario válido"""
+        if value is None or not isinstance(value, dict):
+            return {}
+        return {
+            str(k).strip(): str(v).strip() if v is not None else ""
+            for k, v in value.items()
+            if k is not None and str(k).strip()
+        }
+
 def parse_price(price_str: Union[str, int, float, None]) -> Optional[float]:
-    """Tu implementación original (la que ya funcionaba bien)."""
+    """Parsea el precio de diferentes formatos a float"""
     if price_str is None:
         return None
-    if isinstance(price_str, (int, float)):
-        return float(price_str)
-    price_str = str(price_str).lower().replace('from', '').replace('$', '').replace(',', '').strip()
-    if price_str in ('', '—', '-', 'n/a', 'null'):
+    if isinstance(price_str, bool):
         return None
-    match = re.search(r'(\d+\.?\d*)', price_str)
-    return float(match.group(1)) if match else None
+    if isinstance(price_str, (int, float)):
+        return float(price_str) if price_str >= 0 else None
+    
+    try:
+        # Limpieza del string de precio
+        price_str = str(price_str).lower()
+        price_str = re.sub(r'[^\d.]', '', price_str)  # Elimina todo excepto números y punto
+        
+        if not price_str:
+            return None
+            
+        return float(price_str)
+    except (ValueError, TypeError):
+        return None
 
 class DataLoader:
     def __init__(self, raw_dir: Optional[Union[str, Path]] = None,
@@ -86,9 +134,13 @@ class DataLoader:
         data = []
         error_count = 0
         lines = file_path.read_text(encoding='utf-8').splitlines()
+        
         for i, line in enumerate(lines, 1):
             try:
                 item = json.loads(line)
+                if not isinstance(item, dict):
+                    raise ValueError("El ítem no es un diccionario")
+                    
                 if processed := self._process_item(item):
                     data.append(processed)
             except json.JSONDecodeError:
@@ -96,30 +148,58 @@ class DataLoader:
                 logger.warning(f"[{file_path.name}] JSON inválido en línea {i}")
             except Exception as e:
                 error_count += 1
-                logger.warning(f"[{file_path.name}] Error en línea {i}: {e}")
+                logger.warning(f"[{file_path.name}] Error en línea {i}: {str(e)}")
+                
         if error_count > 0:
             logger.info(f"{file_path.name} → {error_count}/{len(lines)} errores ({round((1-error_count/len(lines))*100, 2)}% éxito)")
         return data
 
     def _process_item(self, item: Dict) -> Optional[Dict]:
+        """Procesa un ítem crudo y devuelve un producto validado"""
         try:
+            if not isinstance(item, dict):
+                logger.warning("Ítem no es un diccionario")
+                return None
+                
+            # Procesamiento de imágenes
             images = []
-            if isinstance(item.get('images'), list):
-                for img in item['images']:
+            raw_images = item.get('images')
+            if isinstance(raw_images, list):
+                for img in raw_images:
                     if isinstance(img, dict) and 'large' in img:
-                        images.append({'large': str(img['large'])})
+                        img_url = img['large']
+                        if isinstance(img_url, str) and img_url.strip():
+                            images.append({'large': img_url.strip()})
+            
+            # Construcción del diccionario de producto
             product_data = {
-                "main_category": str(item.get("main_category", "")).strip() or None,
-                "title": str(item.get("title", "")).strip() or None,
+                "main_category": self._clean_string(item.get("main_category")),
+                "title": self._clean_string(item.get("title")),
                 "average_rating": item.get("average_rating"),
                 "price": item.get("price"),
-                "images": images[0] if images else None,
+                "images": images[0] if images else {},
                 "categories": item.get("categories"),
                 "details": item.get("details", {})
             }
+            
+            # Validación con Pydantic
             return ProductModel(**product_data).model_dump()
+            
+        except ValidationError as e:
+            logger.warning(f"Error de validación en ítem: {str(e)}")
+            return None
         except Exception as e:
-            logger.error(f"Error procesando ítem: {e}")
+            logger.error(f"Error inesperado procesando ítem: {str(e)}")
+            return None
+
+    def _clean_string(self, value: Optional[Union[str, int, float]]) -> Optional[str]:
+        """Limpia y valida strings"""
+        if value is None:
+            return None
+        try:
+            cleaned = str(value).strip()
+            return cleaned if cleaned else None
+        except Exception:
             return None
 
     def _needs_processing(self, raw_file: Path, cache_file: Path) -> bool:
@@ -129,8 +209,10 @@ class DataLoader:
         all_data = []
         total_errors = 0
         total_items = 0
+        
         for raw_file in self._get_raw_files():
             cache_file = self._get_cache_file(raw_file)
+            
             if use_cache and not self._needs_processing(raw_file, cache_file):
                 try:
                     with cache_file.open('rb') as f:
@@ -139,15 +221,18 @@ class DataLoader:
                         total_items += len(cached_data)
                     continue
                 except Exception as e:
-                    logger.warning(f"No se pudo leer la caché '{cache_file.name}': {e}")
+                    logger.warning(f"No se pudo leer la caché '{cache_file.name}': {str(e)}")
+            
             file_data = self._load_single_file(raw_file)
             total_items += len(file_data)
+            
             try:
                 with cache_file.open('wb') as f:
-                    pickle.dump(file_data, f)
+                    pickle.dump(file_data, f, protocol=pickle.HIGHEST_PROTOCOL)
                 all_data.extend(file_data)
             except Exception as e:
-                logger.error(f"Fallo al guardar la caché '{cache_file.name}': {e}")
+                logger.error(f"Fallo al guardar la caché '{cache_file.name}': {str(e)}")
+                
         logger.info(f"Carga finalizada: {len(all_data)} productos | Éxito: {round((1 - total_errors / max(1, total_items)) * 100, 2)}%")
         return all_data
 
@@ -170,6 +255,6 @@ class DataLoader:
                             yield batch
                             batch = []
                 except Exception as e:
-                    logger.warning(f"Error en línea {i+1} de {raw_file.name}: {e}")
+                    logger.warning(f"Error en línea {i+1} de {raw_file.name}: {str(e)}")
             if batch:
                 yield batch
