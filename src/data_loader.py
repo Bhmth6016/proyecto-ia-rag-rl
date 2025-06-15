@@ -21,9 +21,40 @@ def parse_price(price_str):
         return float(match.group(1))
     return None
 
+def parse_rating(rating) -> Optional[float]:
+    """Convierte un rating a float o None si no es válido."""
+    if rating is None:
+        return None
+    try:
+        return float(rating)
+    except (ValueError, TypeError):
+        return None
+
+def parse_categories(categories) -> Optional[list]:
+    """Valida y normaliza las categorías."""
+    if categories is None:
+        return None
+    if not isinstance(categories, list):
+        return None
+    return [str(cat).strip() for cat in categories if cat and str(cat).strip()] or None
+
+def parse_details(details) -> Optional[dict]:
+    """Valida los detalles del producto."""
+    if details is None:
+        return None
+    if not isinstance(details, dict):
+        return None
+    return {k: v for k, v in details.items() if v is not None} or None
+
+def parse_main_category(category) -> Optional[str]:
+    """Valida la categoría principal."""
+    if category is None:
+        return None
+    category = str(category).strip()
+    return category if category else None
+
 class DataLoader:
     def __init__(self, raw_dir: str = None, processed_dir: str = None):
-        # Usando rutas relativas basadas en la ubicación del script
         script_dir = Path(__file__).parent.resolve()
         base_dir = script_dir.parent / "data"
         
@@ -51,28 +82,39 @@ class DataLoader:
                 except Exception as e:
                     logger.warning(f"Error procesando línea en {file_path.name}: {e}")
         return data
-
     def _process_item(self, item: Dict) -> Optional[Dict]:
         try:
+            # Procesamiento de imágenes
             main_image = None
-            for img in item.get('images', []):
-                if img.get('variant') == 'MAIN' and 'large' in img:
-                    main_image = img['large']
-                    break
-            if not main_image and item.get('images'):
-                main_image = item['images'][0].get('large')
+            if item.get('images'):
+                for img in item.get('images', []):
+                    if isinstance(img, dict):
+                        if img.get('variant') == 'MAIN' and 'large' in img:
+                            main_image = img['large']
+                            break
+                if not main_image and item['images']:
+                    first_img = item['images'][0]
+                    if isinstance(first_img, dict):
+                        main_image = first_img.get('large')
 
-            price = parse_price(item.get('price'))
-
-            return {
-                "main_category": item.get("main_category", ""),
-                "title": item.get("title", ""),
-                "average_rating": item.get("average_rating", 0.0),
-                "price": price,
-                "images": {"large": main_image},
-                "categories": item.get("categories", []),
-                "details": item.get("details", {})
+            # Procesamiento de todos los campos
+            processed_item = {
+                "main_category": parse_main_category(item.get("main_category")),
+                "title": str(item.get("title", "")).strip() or None,
+                "average_rating": parse_rating(item.get("average_rating")),
+                "price": parse_price(item.get("price")),
+                "images": {"large": main_image} if main_image else None,
+                "categories": parse_categories(item.get("categories")),
+                "details": parse_details(item.get("details"))  # <-- Aquí estaba el error (paréntesis extra)
             }
+
+            # Validación mínima del ítem
+            if not processed_item["title"]:
+                logger.debug(f"Ítem sin título válido: {item.get('asin')}")
+                return None
+
+            return processed_item
+
         except Exception as e:
             logger.error(f"Error procesando ítem {item.get('asin', 'sin_asin')}: {e}")
             return None
@@ -81,12 +123,8 @@ class DataLoader:
         """Verifica si el archivo necesita ser procesado."""
         if not cache_file.exists():
             return True
-        
-        # Verificar si el archivo raw ha cambiado
         if raw_file.stat().st_mtime > cache_file.stat().st_mtime:
             return True
-            
-        # Verificar si el archivo cache está corrupto
         try:
             with open(cache_file, 'rb') as f:
                 pickle.load(f)
@@ -96,8 +134,8 @@ class DataLoader:
 
     def load_data(self, use_cache: bool = True) -> List[Dict]:
         all_data = []
-
         raw_files = self._get_raw_files()
+        
         if not raw_files:
             logger.warning(f"No se encontraron archivos en {self.raw_dir}")
             return []
@@ -114,9 +152,8 @@ class DataLoader:
                 except Exception as e:
                     logger.warning(f"Error cargando caché {cache_file.name}: {e}")
 
-            # Procesar el archivo si es necesario
             file_data = self._load_single_file(raw_file)
-
+            
             try:
                 with open(cache_file, 'wb') as f:
                     pickle.dump(file_data, f)

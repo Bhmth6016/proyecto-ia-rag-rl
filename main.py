@@ -1,22 +1,24 @@
 from src.data_loader import DataLoader
-#from src.category_selector.category_tree import extract_category_filters
-#from src.ui_client.ui_interface import run_user_interface
+from src.ui_client.ui_interface import run_interface
+from src.category_selector.category_tree import load_category_tree
 
 def main():
-    # Paso 1: Cargar los datos procesados
+    # Paso 1: Cargar los datos procesados (opcional si ya se generaron los archivos .pkl)
     loader = DataLoader()
     data = loader.load_data(use_cache=True)
-    
-    # Opcional: Mostrar información básica sobre los datos cargados
+
+    # Mostrar información básica sobre los datos cargados
     print(f"\nSe cargaron {len(data)} productos procesados")
 
-    
-    # Paso 2: Generar archivo de categorías si es necesario (descomentar cuando esté listo)
-    # extract_category_filters(data)
-    
-    # Paso 3: Ejecutar interfaz de usuario (descomentar cuando esté listo)
-    # run_user_interface(data)
+    # Paso 2: Cargar árbol de categorías y filtros (esto internamente revisa los archivos .pkl)
+    category_tree = load_category_tree()
+    if not category_tree:
+        print("No se encontraron categorías procesadas. Verifica que existan archivos .pkl en la carpeta 'data/processed'.")
+        return
 
-if __name__ == "__main__":
-    import json  # Importación añadida para el print de ejemplo
-    main()
+    # Paso 3: Ejecutar interfaz de usuario
+    run_interface()
+
+# Llamada directa a main()
+import json  # Importación para el print de ejemplo
+main()
