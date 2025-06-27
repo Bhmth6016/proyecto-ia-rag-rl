@@ -123,6 +123,7 @@ class DataLoader:
     @property
     def processed_dir(self) -> Path:
         return self._processed_dir
+    
 
     def _get_raw_files(self) -> List[Path]:
         return list(self.raw_dir.glob("meta_*.jsonl"))
