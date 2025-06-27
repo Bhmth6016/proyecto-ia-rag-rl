@@ -39,7 +39,6 @@ class ProductModel(BaseModel):
 
     @field_validator('price', mode='before')
     def parse_price(cls, value):
-        """Convierte y valida el precio, devuelve None si no es válido"""
         if value is None:
             return None
         if isinstance(value, bool):  # Evita que True/False se conviertan en 1/0
@@ -50,7 +49,6 @@ class ProductModel(BaseModel):
 
     @field_validator('average_rating', mode='before')
     def parse_rating(cls, value):
-        """Valida que el rating esté entre 0 y 5"""
         if value is None:
             return None
         if isinstance(value, bool):
@@ -63,7 +61,6 @@ class ProductModel(BaseModel):
 
     @field_validator('categories', mode='before')
     def parse_categories(cls, value):
-        """Asegura que las categorías sean una lista de strings válidos"""
         if value is None:
             return []
         if not isinstance(value, (list, tuple, set)):
@@ -76,7 +73,6 @@ class ProductModel(BaseModel):
 
     @field_validator('details', mode='before')
     def parse_details(cls, value):
-        """Asegura que los detalles sean un diccionario válido"""
         if value is None or not isinstance(value, dict):
             return {}
         return {
@@ -86,7 +82,6 @@ class ProductModel(BaseModel):
         }
 
 def parse_price(price_str: Union[str, int, float, None]) -> Optional[float]:
-    """Parsea el precio de diferentes formatos a float"""
     if price_str is None:
         return None
     if isinstance(price_str, bool):
@@ -95,9 +90,8 @@ def parse_price(price_str: Union[str, int, float, None]) -> Optional[float]:
         return float(price_str) if price_str >= 0 else None
     
     try:
-        # Limpieza del string de precio
         price_str = str(price_str).lower()
-        price_str = re.sub(r'[^\d.]', '', price_str)  # Elimina todo excepto números y punto
+        price_str = re.sub(r'[^\d.]', '', price_str)  
         
         if not price_str:
             return None
@@ -156,13 +150,11 @@ class DataLoader:
         return data
 
     def _process_item(self, item: Dict) -> Optional[Dict]:
-        """Procesa un ítem crudo y devuelve un producto validado"""
         try:
             if not isinstance(item, dict):
                 logger.warning("Ítem no es un diccionario")
                 return None
                 
-            # Procesamiento de imágenes
             images = []
             raw_images = item.get('images')
             if isinstance(raw_images, list):
@@ -172,7 +164,6 @@ class DataLoader:
                         if isinstance(img_url, str) and img_url.strip():
                             images.append({'large': img_url.strip()})
             
-            # Construcción del diccionario de producto
             product_data = {
                 "main_category": self._clean_string(item.get("main_category")),
                 "title": self._clean_string(item.get("title")),
@@ -183,7 +174,6 @@ class DataLoader:
                 "details": item.get("details", {})
             }
             
-            # Validación con Pydantic
             return ProductModel(**product_data).model_dump()
             
         except ValidationError as e:
@@ -194,7 +184,6 @@ class DataLoader:
             return None
 
     def _clean_string(self, value: Optional[Union[str, int, float]]) -> Optional[str]:
-        """Limpia y valida strings"""
         if value is None:
             return None
         try:

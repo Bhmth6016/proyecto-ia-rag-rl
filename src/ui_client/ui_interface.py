@@ -13,33 +13,86 @@ MAX_PRODUCTS = 20
 
 class ProductInterface:
     def __init__(self, loader=None, filters_path=None, products_path=None):
-        self.loader = loader
+        self.loader = loader or DataLoader()
         self.filters_path = filters_path or "data/processed/category_filters.json"
         self.products_path = products_path or "data/processed"
         self.selected_category = None
-        self.filters = self.load_filters()
-        self.products = []
         self.selected = {}
-        self.category_tree = {}  # Añadir esta línea
+        self.products = []
+        self.category_tree = {}
+        
+        self.filters = {
+            'global': {
+                'price_range': [0, 0],
+                'ratings': [],
+                'details': {},
+                'categories': []
+            },
+            'by_category': {}
+        }
+        
+        self._load_filters_from_file()  
+        
+    def get_current_filters(self) -> Dict[str, Any]:
+        if self.selected_category and self.filters['by_category'].get(self.selected_category):
+            return self.filters['by_category'][self.selected_category]
+        return self.filters['global']
+    
+    def _load_filters_from_file(self):
+        try:
+            with open(self.filters_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if 'global' in data:
+                    self.filters['global'].update(data['global'])
+                if 'by_category' in data:
+                    self.filters['by_category'].update(data['by_category'])
+        except Exception as e:
+            logger.error(f"No se pudo cargar filtros: {e}")
 
-    def load_products(self):
-        """Cargar productos desde el loader"""
+    
+    def load_products(self) -> bool:
         try:
             self.products = self.loader.load_data(use_cache=True)
+            if not self.products:
+                return False
+                
             self.category_tree = self._build_category_tree()
+            
+            # Generar filtros globales
+            self.filters['global'] = self._extract_filters()  # Sin argumentos
+            
+            # Generar filtros por categoría
+            for category, products in self.category_tree.items():
+                self.filters['by_category'][category] = self._extract_filters(products)  # Pasando productos específicos
+                
             return True
         except Exception as e:
             logger.error(f"Error cargando productos: {e}")
             return False
-
+        
+    def verify_filters(self):
+        print("\n=== DEBUG: Información de Filtros ===")
+        print(f"Rango de precios: {self.filters.get('price_range', [0,0])}")
+        print(f"Ratings disponibles: {self.filters.get('ratings', [])}")
+        print(f"Características disponibles: {list(self.filters.get('details', {}).keys())[:5]}...")
+        print("="*40)
+        
     def load_filters(self):
         try:
-            with open(self.filters_path, "r", encoding="utf-8") as f:
+            with open(self.filters_path, 'r', encoding='utf-8') as f:
                 filters = json.load(f)
-            return filters
+                return {
+                    'ratings': filters.get('ratings', []),
+                    'price_range': filters.get('price_range', [0, 0]),
+                    'details': filters.get('details', {})
+                }
         except Exception as e:
-            print(f" Error cargando filtros desde {self.filters_path}: {e}")
-            return {}
+            logger.warning(f"No se pudieron cargar filtros: {str(e)}")
+            return {
+                'ratings': [],
+                'price_range': [0, 0],
+                'details': {}
+            }
 
     
     def _build_category_tree(self) -> Dict[str, List[Dict]]:
@@ -47,13 +100,17 @@ class ProductInterface:
         for product in self.products:
             if not isinstance(product, dict):
                 continue
-            category = product.get('main_category')
+                
+            category = product.get('main_category', 'Uncategorized')
             if not isinstance(category, str):
                 category = 'Uncategorized'
+                
             tree[category].append(product)
+        
         return dict(tree)
     
-    def _extract_filters(self) -> Dict[str, Any]:
+    def _extract_filters(self, products: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        target_products = products if products is not None else self.products
         filters = {
             'price_range': {'min': float('inf'), 'max': 0},
             'ratings': set(),
@@ -61,7 +118,7 @@ class ProductInterface:
             'details': defaultdict(set)
         }
 
-        for product in self.products:
+        for product in target_products:
             if not isinstance(product, dict):
                 continue
                 
@@ -142,79 +199,70 @@ class ProductInterface:
         print("="*60)
         
         while True:
-            choice = input("\nSeleccione una categoría: ")
+            choice = input("\nSeleccione una categoría (0-{}): ".format(len(categories)))
             if choice == '0':
                 return 'exit'
             if choice.isdigit() and 1 <= int(choice) <= len(categories):
                 return categories[int(choice)-1]
-            print("Opción inválida. Intente nuevamente.")
+            print("¡Opción inválida! Por favor ingrese un número entre 0 y {}".format(len(categories)))
     
     def show_filters_menu(self, category: str) -> Dict[str, Any]:
-        if not self.filters:
-            logger.debug(f"No hay filtros disponibles para {category}")
-            return {}
-        
+        current_filters = self.get_current_filters()
+        selected = {}
         
         print(f"\nFiltros para {category}:")
         print("1. Precio")
         print("2. Rating")
         print("3. Características")
-        print("4. Limpiar todos los filtros")
-        print("0. Volver sin cambiar")
+        print("0. Volver")
         
-        selected = {}
         while True:
             choice = input("\nSeleccione filtros (ej: 1,3): ").strip()
             
             if choice == '0':
-                return None  # Indicar que el usuario quiere volver
+                return None
             
-            if choice == '4':
-                return {} 
-            
-            if '1' in choice:
-                min_p, max_p = self.filters['price_range']
-                print(f"\nRango actual: {self.format_price(min_p)} - {self.format_price(max_p)}")
+            # Procesar selección de filtros
+            if '1' in choice:  # Filtro de precio
+                min_p, max_p = current_filters['price_range']
+                print(f"\nRango disponible: {self.format_price(min_p)} - {self.format_price(max_p)}")
                 try:
-                    min_val = float(input(f"Mínimo ({self.format_price(min_p)}): ") or min_p)
-                    max_val = float(input(f"Máximo ({self.format_price(max_p)}): ") or max_p)
+                    min_val = float(input(f"Nuevo mínimo ({self.format_price(min_p)}): ") or min_p)
+                    max_val = float(input(f"Nuevo máximo ({self.format_price(max_p)}): ") or max_p)
                     selected['price_range'] = [min_val, max_val]
                 except ValueError:
                     print("¡Valor inválido! Usando valores por defecto")
                     selected['price_range'] = [min_p, max_p]
             
-            if '2' in choice:
-                print("\nRatings:", ', '.join(map(str, self.filters['ratings'])))
-                ratings = input("Ingresa los ratings deseados separados por coma (e.g., 4,5): ")
-                raw_ratings = [r.strip() for r in ratings.split(',')]
-                valid_ratings = []
-                invalid_ratings = []
-
-                for r in raw_ratings:
-                    if r.isdigit() and 1 <= int(r) <= 5:
-                        valid_ratings.append(int(r))
-                    else:
-                        invalid_ratings.append(r)
-
-                if not valid_ratings:
-                    print(" No se ingresaron ratings válidos. Intenta de nuevo.")
-                    return self.show_filters_menu(self.filters)
-
-                if invalid_ratings:
-                    print(f" Estos valores fueron ignorados por no ser ratings válidos: {', '.join(invalid_ratings)}")
-
-                selected['ratings'] = valid_ratings
-
-            
-            if '3' in choice:
-                print("\nCaracterísticas disponibles:")
-                features = list(self.filters['details'].items())
+            if '2' in choice:  # Filtro de rating
+                available_ratings = current_filters.get('ratings', [])
+                print(f"\nRatings disponibles: {', '.join(map(str, available_ratings))}")
+                ratings_input = input("Ingrese ratings deseados (separados por coma): ")
+                selected_ratings = {int(r.strip()) for r in ratings_input.split(',') if r.strip().isdigit()}
+                valid_ratings = [r for r in selected_ratings if r in available_ratings]
                 
+                if valid_ratings:
+                    selected['ratings'] = valid_ratings
+                else:
+                    print("No se seleccionaron ratings válidos")
+                    continue
+            
+            if '3' in choice:  # Filtro de características
+                available_features = current_filters.get('details', {})
+                if not available_features:
+                    print("No hay características disponibles para filtrar")
+                    continue
+                    
+                print("\nCaracterísticas disponibles:")
+                features = list(available_features.items())
                 for i, (k, v) in enumerate(features, 1):
                     print(f"{i}. {k}: {', '.join(v[:3])}{'...' if len(v) > 3 else ''}")
                 
                 try:
-                    feature_choice = int(input("\nSeleccione característica (número): "))
+                    feature_choice = input("\nSeleccione característica (número o 0 para cancelar): ")
+                    if feature_choice == '0':
+                        continue
+                    feature_choice = int(feature_choice)
                     if 1 <= feature_choice <= len(features):
                         key, _ = features[feature_choice-1]
                         values_input = input(f"Valores deseados para {key} (separados por coma): ")
@@ -229,13 +277,11 @@ class ProductInterface:
                     print("¡Debe ingresar un número!")
                     continue
             
-            # Si se seleccionó algún filtro, retornar
+            # Si se seleccionó algún filtro, retornar inmediatamente
             if selected:
                 return selected
             
-            print("\n¡No se seleccionaron filtros válidos! Intente nuevamente.")
-            
-            return selected
+            print("\n¡No se seleccionaron filtros válidos! Intente nuevamente o ingrese 0 para volver.")
     
     def apply_filters(self, products: List[Dict], filters: Dict) -> List[Dict]:
         if not products or not filters:
@@ -335,51 +381,45 @@ class ProductInterface:
     
     def run(self) -> None:
         if not self.load_products():
+            print("\nError al cargar los productos. Verifique los datos.")
             return
-        
-        navigation_stack = []
-        current_category = None
-        current_filters = {}
-        current_products = []
         
         try:
             while True:
-                # Menú principal cuando no hay categoría seleccionada
-                if not current_category:
-                    action = self.show_main_menu()
-                    if action == 'exit':
-                        break
-                    current_category = action
-                    current_products = self.category_tree.get(current_category, [])
-                    continue
-                
-                # Mostrar filtros si no se han aplicado o se solicitan nuevos
-                if not current_filters or navigation_stack and navigation_stack[-1] == 'new_filters':
-                    current_filters = self.show_filters_menu(current_category)
-                    if navigation_stack and navigation_stack[-1] == 'new_filters':
-                        navigation_stack.pop()
-                
-                # Aplicar filtros y mostrar productos
-                filtered_products = self.apply_filters(current_products, current_filters)
-                result = self.show_products(filtered_products)
-                
-                # Manejar acciones del usuario
-                if result['action'] == 'select':
-                    self.show_product_detail(result['product'])
-                elif result['action'] == 'filter':
-                    navigation_stack.append('new_filters')  # Solicitar nuevos filtros
-                elif result['action'] == 'back':
-                    current_category = None  # Volver al menú principal
-                    current_filters = {}
-                elif result['action'] == 'exit':
+                category = self.show_main_menu()
+                if category == 'exit':
                     break
+                
+                current_products = self.category_tree.get(category, [])
+                
+                while True:
+                    filters = self.show_filters_menu(category)
+                    if filters is None:  # Usuario eligió volver
+                        break
+                        
+                    filtered = self.apply_filters(current_products, filters)
                     
+                    if not filtered:
+                        print("\nNo se encontraron productos con estos filtros")
+                        continue
+                        
+                    result = self.show_products(filtered)
+                    
+                    if result['action'] == 'select':
+                        self.show_product_detail(result['product'])
+                    elif result['action'] == 'filter':
+                        continue
+                    elif result['action'] == 'back':
+                        break
+                    elif result['action'] == 'exit':
+                        return
+        
         except KeyboardInterrupt:
-            print("\nOperación cancelada")
+            print("\nOperación cancelada por el usuario")
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"Error crítico: {e}")
         finally:
-            print("\nGracias por usar el sistema")
+            print("\nSesión finalizada")
 
 def run_interface(products: List[Dict[str, Any]], filters_path: Optional[Path] = None) -> None:
     loader = DataLoader()
