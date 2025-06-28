@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def sanitize_category_name(name: Optional[str]) -> str:
     if name is None:
         return "Otras Categorías"
-    
+
     try:
         base_name = os.path.basename(str(name))
         clean = (
@@ -37,18 +37,18 @@ def extract_filters_from_products(products: List[Dict[str, Any]]) -> Dict[str, A
     for product in products:
         if not isinstance(product, dict):
             continue
-        
+
         # Procesar precio
         if isinstance(product.get("price"), (int, float)):
             filters["price_range"][0] = min(filters["price_range"][0], product["price"])
             filters["price_range"][1] = max(filters["price_range"][1], product["price"])
-        
+
         # Procesar rating
         if isinstance(product.get("average_rating"), (int, float)):
             rounded = round(product["average_rating"])
             if 0 <= rounded <= 5:
                 filters["average_rating"].add(rounded)
-        
+
         # Procesar detalles
         if isinstance(product.get("details"), dict):
             for k, v in product["details"].items():
@@ -65,18 +65,18 @@ def extract_filters_from_products(products: List[Dict[str, Any]]) -> Dict[str, A
         ],
         "average_rating": sorted(filters["average_rating"]),
         "details": {
-            k: sorted(v) 
-            for k, v in filters["details"].items() 
+            k: sorted(v)
+            for k, v in filters["details"].items()
             if k and v
         }
     }
 
 def get_safe_filename(raw_category: Optional[str]) -> str:
     default = "meta_otros_processed.pkl"
-    
+
     if raw_category is None:
         return default
-        
+
     try:
         clean = (
             str(raw_category)
@@ -96,7 +96,7 @@ def load_category_tree() -> Dict[str, Dict[str, Any]]:
 
     try:
         categorized_data = loader.load_by_main_category(use_cache=True)
-        
+
         if not isinstance(categorized_data, dict):
             logger.error("Datos categorizados no son un diccionario")
             return category_tree
@@ -124,7 +124,7 @@ def load_category_tree() -> Dict[str, Dict[str, Any]]:
 
     return category_tree
 
-def generar_categorias_y_filtros(productos: List[Dict[str, Any]]):
+def generar_categorias_y_filtros(productos: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not isinstance(productos, list):
         logger.error("Los productos no son una lista válida")
         return None
@@ -164,7 +164,8 @@ def generar_categorias_y_filtros(productos: List[Dict[str, Any]]):
             data["by_category"][category] = {
                 "price_range": cat_filters["price_range"],
                 "ratings": cat_filters["average_rating"],
-                "details": cat_filters["details"]
+                "details": cat_filters["details"],
+                "products": products
             }
 
         with open(output_path, "w", encoding="utf-8") as f:

@@ -117,7 +117,6 @@ class DataLoader:
     @property
     def processed_dir(self) -> Path:
         return self._processed_dir
-    
 
     def _get_raw_files(self) -> List[Path]:
         return list(self.raw_dir.glob("meta_*.jsonl"))
@@ -232,19 +231,3 @@ class DataLoader:
             if category := product.get("main_category"):
                 categorized[category].append(product)
         return dict(categorized)
-
-    def load_in_batches(self, batch_size: int = 1000) -> Iterator[List[Dict]]:
-        for raw_file in self._get_raw_files():
-            batch = []
-            for i, line in enumerate(raw_file.read_text(encoding='utf-8').splitlines()):
-                try:
-                    item = json.loads(line)
-                    if processed := self._process_item(item):
-                        batch.append(processed)
-                        if len(batch) >= batch_size:
-                            yield batch
-                            batch = []
-                except Exception as e:
-                    logger.warning(f"Error en línea {i+1} de {raw_file.name}: {str(e)}")
-            if batch:
-                yield batch

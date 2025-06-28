@@ -1,7 +1,6 @@
-#version establecida: 1.0.0 
+#version establecida: 1.0.5 
 # #!/usr/bin/env python3
 import logging
-from pathlib import Path
 from typing import Optional
 from src.data_loader import DataLoader
 from src.category_selector.category_tree import generar_categorias_y_filtros
@@ -42,7 +41,7 @@ def main():
         return
 
     try:
-        logging.info("Generando categorías...")
+        logging.info("Generando categorías y filtros...")
         generar_categorias_y_filtros(productos)
         run_interface(productos)
     except KeyboardInterrupt:
