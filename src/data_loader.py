@@ -1,113 +1,15 @@
-import json
 import pickle
-import re
+import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Union, Iterator
-from pydantic import BaseModel, Field, field_validator, ValidationError
-from collections import defaultdict
+from typing import List, Dict, Optional, Union
+from pydantic import ValidationError
+from src.validaciones import ProductModel, clean_string
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class ProductModel(BaseModel):
-    main_category: Optional[str] = Field(default=None, description="Categoría principal del producto")
-    title: Optional[str] = Field(default=None, description="Título del producto")
-    average_rating: Optional[float] = Field(
-        default=None, 
-        ge=0, 
-        le=5,
-        description="Rating promedio entre 0 y 5"
-    )
-    price: Optional[float] = Field(
-        default=None, 
-        ge=0,
-        description="Precio en dólares (si está disponible)"
-    )
-    images: Optional[dict] = Field(
-        default_factory=dict,
-        description="Diccionario con URLs de imágenes"
-    )
-    categories: Optional[List[str]] = Field(
-        default_factory=list,
-        description="Lista de categorías secundarias"
-    )
-    details: Optional[dict] = Field(
-        default_factory=dict,
-        description="Detalles adicionales del producto"
-    )
-
-    @field_validator('price', mode='before')
-    def parse_price(cls, value):
-        """Convierte y valida el precio, devuelve None si no es válido"""
-        if value is None:
-            return None
-        if isinstance(value, bool):  # Evita que True/False se conviertan en 1/0
-            return None
-        if isinstance(value, (int, float)):
-            return float(value) if value >= 0 else None
-        return parse_price(str(value))
-
-    @field_validator('average_rating', mode='before')
-    def parse_rating(cls, value):
-        """Valida que el rating esté entre 0 y 5"""
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return None
-        try:
-            rating = float(value)
-            return rating if 0 <= rating <= 5 else None
-        except (ValueError, TypeError):
-            return None
-
-    @field_validator('categories', mode='before')
-    def parse_categories(cls, value):
-        """Asegura que las categorías sean una lista de strings válidos"""
-        if value is None:
-            return []
-        if not isinstance(value, (list, tuple, set)):
-            return []
-        return [
-            str(cat).strip() 
-            for cat in value 
-            if cat is not None and str(cat).strip()
-        ]
-
-    @field_validator('details', mode='before')
-    def parse_details(cls, value):
-        """Asegura que los detalles sean un diccionario válido"""
-        if value is None or not isinstance(value, dict):
-            return {}
-        return {
-            str(k).strip(): str(v).strip() if v is not None else ""
-            for k, v in value.items()
-            if k is not None and str(k).strip()
-        }
-
-def parse_price(price_str: Union[str, int, float, None]) -> Optional[float]:
-    """Parsea el precio de diferentes formatos a float"""
-    if price_str is None:
-        return None
-    if isinstance(price_str, bool):
-        return None
-    if isinstance(price_str, (int, float)):
-        return float(price_str) if price_str >= 0 else None
-    
-    try:
-        # Limpieza del string de precio
-        price_str = str(price_str).lower()
-        price_str = re.sub(r'[^\d.]', '', price_str)  # Elimina todo excepto números y punto
-        
-        if not price_str:
-            return None
-            
-        return float(price_str)
-    except (ValueError, TypeError):
-        return None
-
 class DataLoader:
-    def __init__(self, raw_dir: Optional[Union[str, Path]] = None,
+    def __init__(self, raw_dir: Optional[Union[str, Path]] = None, 
                  processed_dir: Optional[Union[str, Path]] = None):
         script_dir = Path(__file__).parent.resolve()
         base_dir = script_dir.parent / "data"
@@ -155,13 +57,7 @@ class DataLoader:
         return data
 
     def _process_item(self, item: Dict) -> Optional[Dict]:
-        """Procesa un ítem crudo y devuelve un producto validado"""
         try:
-            if not isinstance(item, dict):
-                logger.warning("Ítem no es un diccionario")
-                return None
-                
-            # Procesamiento de imágenes
             images = []
             raw_images = item.get('images')
             if isinstance(raw_images, list):
@@ -171,10 +67,9 @@ class DataLoader:
                         if isinstance(img_url, str) and img_url.strip():
                             images.append({'large': img_url.strip()})
             
-            # Construcción del diccionario de producto
             product_data = {
-                "main_category": self._clean_string(item.get("main_category")),
-                "title": self._clean_string(item.get("title")),
+                "main_category": clean_string(item.get("main_category")),
+                "title": clean_string(item.get("title")),
                 "average_rating": item.get("average_rating"),
                 "price": item.get("price"),
                 "images": images[0] if images else {},
@@ -182,7 +77,6 @@ class DataLoader:
                 "details": item.get("details", {})
             }
             
-            # Validación con Pydantic
             return ProductModel(**product_data).model_dump()
             
         except ValidationError as e:
@@ -190,16 +84,6 @@ class DataLoader:
             return None
         except Exception as e:
             logger.error(f"Error inesperado procesando ítem: {str(e)}")
-            return None
-
-    def _clean_string(self, value: Optional[Union[str, int, float]]) -> Optional[str]:
-        """Limpia y valida strings"""
-        if value is None:
-            return None
-        try:
-            cleaned = str(value).strip()
-            return cleaned if cleaned else None
-        except Exception:
             return None
 
     def _needs_processing(self, raw_file: Path, cache_file: Path) -> bool:
@@ -235,10 +119,3 @@ class DataLoader:
                 
         logger.info(f"Carga finalizada: {len(all_data)} productos | Éxito: {round((1 - total_errors / max(1, total_items)) * 100, 2)}%")
         return all_data
-
-    def load_by_main_category(self, use_cache: bool = True) -> Dict[str, List[Dict]]:
-        categorized = defaultdict(list)
-        for product in self.load_data(use_cache):
-            if category := product.get("main_category"):
-                categorized[category].append(product)
-        return dict(categorized)

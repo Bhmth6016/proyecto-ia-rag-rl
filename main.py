@@ -1,10 +1,12 @@
-#version establecida: 1.0.5 
+#version establecida: 1.1.0 
 # #!/usr/bin/env python3
 import logging
 from typing import Optional
 from src.data_loader import DataLoader
 from src.category_selector.category_tree import generar_categorias_y_filtros
 from src.ui_client.ui_interface import run_interface
+from pathlib import Path
+import json
 
 def configure_logging():
     logging.basicConfig(
@@ -42,8 +44,15 @@ def main():
 
     try:
         logging.info("Generando categorías y filtros...")
-        generar_categorias_y_filtros(productos)
-        run_interface(productos)
+        category_filters = generar_categorias_y_filtros(productos)
+        if category_filters is None:
+            logging.error("No se pudieron generar las categorías y filtros")
+            return
+        
+        with open(Path("data/processed/category_filters.json"), 'r', encoding='utf-8') as f:
+            filters_data = json.load(f)
+        
+        run_interface(productos, filters_data)  # Falta paréntesis de cierre aquí
     except KeyboardInterrupt:
         logging.info("Aplicación interrumpida")
     except Exception as e:
