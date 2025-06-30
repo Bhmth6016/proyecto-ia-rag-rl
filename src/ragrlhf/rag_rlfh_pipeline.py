@@ -1,9 +1,8 @@
-#nada
 import json
 import numpy as np
 import faiss
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.embeddings import HuggingFaceEmbeddings
 from src.data_loader import DataLoader
 
 # 1. Embeddings con LangChain
@@ -11,15 +10,14 @@ def get_langchain_embedder(model_name="sentence-transformers/all-MiniLM-L6-v2"):
     return HuggingFaceEmbeddings(model_name=model_name)
 
 def embed_products(products, embedder):
-    texts = [str(p.get("title", "")) + " " + str(p.get("details", "")) for p in products]
+    texts = [p.get("title", "") + " " + str(p.get("details", "")) for p in products]
     return embedder.embed_documents(texts)
 
 # 2. Índice FAISS
 def build_faiss_index(embeddings):
-    embeddings_np = np.array(embeddings).astype('float32')
-    dim = embeddings_np.shape[1]
+    dim = embeddings[0].shape[0]
     index = faiss.IndexFlatL2(dim)
-    index.add(embeddings_np)
+    index.add(np.array(embeddings).astype('float32'))
     return index
 
 # 3. Recuperación de productos
@@ -30,19 +28,20 @@ def retrieve_products(query, embedder, index, products, k=5):
 
 # 4. Generación con DeepSeek
 def generate_answer(query, retrieved_products, model, tokenizer):
-    context = "\n".join([str(p.get("title", "")) + ": " + str(p.get("details", "")) for p in retrieved_products])
+    context = "\n".join([p["title"] + ": " + str(p.get("details", "")) for p in retrieved_products])
     prompt = f"Usuario: {query}\nProductos relevantes:\n{context}\nRespuesta:"
     inputs = tokenizer(prompt, return_tensors="pt")
     output = model.generate(**inputs, max_new_tokens=128)
     return tokenizer.decode(output[0], skip_special_tokens=True)
 
+# 5. Recolección de feedback
 def collect_feedback(query, retrieved, respuesta, feedback_file="feedback.jsonl"):
     print("\nRespuesta generada:\n", respuesta)
     rating = input("¿Qué tan útil fue esta respuesta? (1-5): ")
     comentario = input("¿Comentarios adicionales? (opcional): ")
     feedback_data = {
         "query": query,
-        "retrieved_titles": [str(p.get("title", "")) for p in retrieved],
+        "retrieved_titles": [p["title"] for p in retrieved],
         "respuesta": respuesta,
         "rating": rating,
         "comentario": comentario
@@ -68,19 +67,8 @@ def build_supervised_dataset(feedback_file="feedback.jsonl", output_file="rlhf_s
 # 7. Pipeline principal
 def main():
     # Carga productos
-    #loader = DataLoader()
-    #products = loader.load_data(use_cache=True)
-
-    # Embeddings e índice
-    #embedder = get_langchain_embedder()
-    #embeddings = embed_products(products, embedder)
-    #index = build_faiss_index(embeddings)
-
-     # Carga productos
     loader = DataLoader()
     products = loader.load_data(use_cache=True)
-    products = [p for p in products if isinstance(p, dict)]  # (opcional, filtra solo dicts)
-    products = products[:1000]  # <-- Solo los primeros 1000 productos para pruebas
 
     # Embeddings e índice
     embedder = get_langchain_embedder()

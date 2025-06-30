@@ -17,3 +17,29 @@
 2025-06-28 17:35:34,484 - INFO - src.category_selector.category_tree - Categorías y filtros guardados en data\processed\category_filters.json
 2025-06-28 17:37:01,113 - INFO - src.ui_client.ui_interface - Filtrados 1 productos de 2 totales
 2025-06-28 17:37:07,983 - INFO - root - Finalizando...
+2025-06-29 16:59:18,015 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-29 17:03:41,285 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-29 17:03:42,664 - INFO - sentence_transformers.SentenceTransformer - Use pytorch device_name: cpu
+2025-06-29 17:03:42,664 - INFO - sentence_transformers.SentenceTransformer - Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-06-29 17:03:47,761 - WARNING - huggingface_hub.file_download - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2025-06-29 17:10:34,572 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-29 17:10:35,576 - INFO - sentence_transformers.SentenceTransformer - Use pytorch device_name: cpu
+2025-06-29 17:10:35,576 - INFO - sentence_transformers.SentenceTransformer - Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-06-29 17:12:53,764 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-29 17:12:54,299 - INFO - sentence_transformers.SentenceTransformer - Use pytorch device_name: cpu
+2025-06-29 17:12:54,300 - INFO - sentence_transformers.SentenceTransformer - Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-06-29 22:11:23,371 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-29 22:11:24,396 - INFO - sentence_transformers.SentenceTransformer - Use pytorch device_name: cpu
+2025-06-29 22:11:24,396 - INFO - sentence_transformers.SentenceTransformer - Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-06-30 08:38:01,173 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-30 08:38:02,379 - INFO - sentence_transformers.SentenceTransformer - Use pytorch device_name: cpu
+2025-06-30 08:38:02,379 - INFO - sentence_transformers.SentenceTransformer - Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-06-30 13:25:39,038 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-30 13:25:40,575 - INFO - sentence_transformers.SentenceTransformer - Use pytorch device_name: cpu
+2025-06-30 13:25:40,575 - INFO - sentence_transformers.SentenceTransformer - Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-06-30 14:09:39,157 - INFO - src.data_loader - Carga finalizada: 424641 productos | Éxito: 100.0%
+2025-06-30 14:09:39,173 - INFO - root - Datos cargados. Productos: 424641
+2025-06-30 14:09:39,174 - INFO - root - Generando categorías y filtros...
+2025-06-30 14:10:06,128 - INFO - src.category_selector.category_tree - Categorías y filtros guardados en data\processed\category_filters.json
+2025-06-30 14:11:03,269 - INFO - src.ui_client.ui_interface - Filtrados 20 productos de 49422 totales
+2025-06-30 14:11:25,218 - INFO - root - Finalizando modo clásico...
