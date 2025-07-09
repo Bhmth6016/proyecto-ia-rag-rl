@@ -6,12 +6,11 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 
-# Configuración básica de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     handlers=[
-        logging.FileHandler("generator.log"),
+        logging.FileHandler("generator.log", encoding='utf-8'),  # Add encoding here
         logging.StreamHandler()
     ]
 )
