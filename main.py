@@ -124,7 +124,7 @@ def run_category_mode(productos: List[Dict]):
 def show_welcome_banner():
     """Muestra el banner de bienvenida"""
     print("\n" + "="*50)
-    print(" SISTEMA DE RECOMENDACIÓN AVANZADO ".center(50))
+    print(" SISTEMA DE RECOMENDACIÓN DE AMAZON ".center(50))
     print("="*50)
     print(f"\n Directorio de datos: {DATA_DIR}")
     print(f" Índices vectoriales: {CHROMA_INDEX_DIR}\n")

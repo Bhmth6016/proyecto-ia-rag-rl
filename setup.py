@@ -6,7 +6,7 @@ with open('requirements.txt') as f:
 setup(
     name="proyecto_ia_rag_rl",
     version="0.2.0",
-    description="Sistema de recomendación con RAG y RLHF para productos de bebés",
+    description="Sistema de recomendación con RAG y RLHF para productos de Amazon",    
     author="Tu Nombre",
     author_email="tu@email.com",
     packages=find_packages(include=['src', 'demo']),

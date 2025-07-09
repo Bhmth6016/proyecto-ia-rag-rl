@@ -53,24 +53,15 @@ def convertir_jsonl_a_json(ruta_entrada: str, ruta_salida: str) -> List[Dict]:
         raise
 
 def producto_a_documento(producto: Dict) -> Document:
-    """
-    Transforma un producto en un Documento de LangChain
-    
-    Args:
-        producto: Diccionario con datos del producto
-    
-    Returns:
-        Documento LangChain para indexación
-    """
+    """Transforma un producto en un Documento de LangChain"""
     try:
         detalles = producto.get("details", {})
         texto = "\n".join([
             f"Título: {producto.get('title', '')}",
             f"Categoría: {producto.get('main_category', '')}",
-            f"Marca: {detalles.get('Brand', '')}",
             f"Precio: {producto.get('price', 'No disponible')}",
-            f"Valoración: {producto.get('average_rating', '')} ({producto.get('rating_number', '')} reseñas)",
-            "Detalles técnicos: " + ", ".join([f"{k}: {v}" for k, v in detalles.items()])
+            f"Valoración: {producto.get('average_rating', '')}",
+            "Detalles: " + ", ".join([f"{k}: {v}" for k, v in detalles.items()])
         ])
         return Document(
             page_content=texto,

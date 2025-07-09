@@ -124,7 +124,7 @@ class RAGAgentV2:
     def _create_conversational_chain(self):
         """Crea la cadena conversacional con plantilla personalizada."""
         prompt_template = """
-        Eres un asistente experto en productos para bebés. Sigue esta estructura:
+        Eres un asistente experto en productos de Amazon. Sigue esta estructura:
 
         - Saludo breve
         - Recomendación clara y concisa basada en los productos relevantes

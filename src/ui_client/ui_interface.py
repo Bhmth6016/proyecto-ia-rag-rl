@@ -85,7 +85,7 @@ class ProductInterface:
 
     def show_main_menu(self) -> str:
         print("\n" + "="*60)
-        print(" SISTEMA DE RECOMENDACIÓN ".center(60))
+        print(" SISTEMA DE RECOMENDACIÓN DE AMAZON ".center(60))
         print("="*60)
 
         categories = sorted(self.filters['by_category'].keys())
