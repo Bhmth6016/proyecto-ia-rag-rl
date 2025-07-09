@@ -122,7 +122,6 @@ def procesar_archivo(archivo: str, input_dir: str, output_dir: str, index_dir: s
             ),
             persist_directory=persist_directory
         )
-        vectordb.persist()
         
         logger.info(f"Índice creado: {len(documentos)} documentos en {persist_directory}")
         return len(documentos)
