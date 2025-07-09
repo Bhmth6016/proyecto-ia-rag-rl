@@ -89,39 +89,7 @@ def get_safe_filename(raw_category: Optional[str]) -> str:
     except Exception:
         return default
 
-def load_category_tree() -> Dict[str, Dict[str, Any]]:
-    loader = DataLoader()
-    category_tree: Dict[str, Dict[str, Any]] = {}
 
-    try:
-        categorized_data = loader.load_by_main_category(use_cache=True)
-
-        if not isinstance(categorized_data, dict):
-            logger.error("Datos categorizados no son un diccionario")
-            return category_tree
-
-        for raw_category, products in categorized_data.items():
-            if not products or not isinstance(products, list):
-                continue
-
-            safe_name = sanitize_category_name(raw_category)
-            safe_filename = get_safe_filename(raw_category)
-            file_path = loader.processed_dir / safe_filename
-
-            if not file_path.exists():
-                logger.debug(f"Archivo no encontrado: {file_path}")
-                continue
-
-            category_tree[safe_name] = {
-                "file_path": str(file_path),
-                "product_count": len(products),
-                "filters": extract_filters_from_products(products)
-            }
-
-    except Exception as e:
-        logger.error(f"Error crítico cargando categorías: {str(e)}", exc_info=True)
-
-    return category_tree
 
 def generar_categorias_y_filtros(productos: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not isinstance(productos, list):
