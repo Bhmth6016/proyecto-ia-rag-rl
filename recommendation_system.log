@@ -18,3 +18,25 @@
 2025-07-09 07:51:52,805 - WARNING - root - 25 productos con estructura inválida
 2025-07-09 07:51:56,148 - INFO - demo.generator - Iniciando procesamiento de archivos...
 2025-07-09 07:52:03,611 - INFO - demo.generator - Conversión completada: 112590 productos -> meta_All_Beauty.json
+2025-07-09 07:59:09,770 - INFO - src.data_loader - Carga finalizada: 3009718 productos | Éxito: 100.0%
+2025-07-09 07:59:09,772 - INFO - root - Datos cargados. Productos totales: 3009718
+2025-07-09 07:59:10,196 - WARNING - root - 141 productos con estructura inválida
+2025-07-09 08:07:24,639 - INFO - src.data_loader - Carga finalizada: 3009718 productos | Éxito: 100.0%
+2025-07-09 08:07:24,641 - INFO - root - Datos cargados. Productos totales: 3009718
+2025-07-09 08:07:25,074 - WARNING - root - 141 productos con estructura inválida
+2025-07-09 08:07:28,208 - INFO - demo.generator - Iniciando procesamiento de archivos...
+2025-07-09 08:07:34,484 - INFO - demo.generator - Conversión completada: 112590 productos -> meta_All_Beauty.json
+2025-07-09 08:07:43,349 - INFO - datasets - PyTorch version 2.7.1 available.
+2025-07-09 08:07:45,723 - WARNING - huggingface_hub.file_download - Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. Falling back to regular HTTP download. For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+2025-07-09 08:18:59,906 - ERROR - demo.generator - Error procesando archivo meta_All_Beauty.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:18:59,907 - ERROR - demo.generator - Error procesando meta_All_Beauty.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:19:00,177 - INFO - demo.generator - Conversión completada: 1137 productos -> meta_Gift_Cards.json
+2025-07-09 08:19:06,917 - ERROR - demo.generator - Error procesando archivo meta_Gift_Cards.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:19:06,917 - ERROR - demo.generator - Error procesando meta_Gift_Cards.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:19:07,069 - INFO - demo.generator - Conversión completada: 3391 productos -> meta_Magazine_Subscriptions.json
+2025-07-09 08:19:18,323 - ERROR - demo.generator - Error procesando archivo meta_Magazine_Subscriptions.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:19:18,324 - ERROR - demo.generator - Error procesando meta_Magazine_Subscriptions.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:19:18,373 - INFO - demo.generator - Conversión completada: 641 productos -> meta_Subscription_Boxes.json
+2025-07-09 08:19:21,706 - ERROR - demo.generator - Error procesando archivo meta_Subscription_Boxes.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:19:21,706 - ERROR - demo.generator - Error procesando meta_Subscription_Boxes.jsonl: 'Chroma' object has no attribute 'persist'
+2025-07-09 08:21:43,191 - INFO - demo.generator - Conversión completada: 1473810 productos -> meta_Tools_and_Home_Improvement.json
