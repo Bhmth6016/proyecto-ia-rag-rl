@@ -8,3 +8,13 @@
 2025-07-09 07:41:14,383 - WARNING - root - 25 productos con estructura inválida
 2025-07-09 07:41:18,217 - INFO - demo.generator - Iniciando procesamiento de archivos...
 2025-07-09 07:41:35,676 - INFO - datasets - PyTorch version 2.7.0 available.
+2025-07-09 07:47:59,267 - INFO - src.data_loader - Carga finalizada: 337840 productos | Éxito: 100.0%
+2025-07-09 07:47:59,267 - INFO - root - Datos cargados. Productos totales: 337840
+2025-07-09 07:47:59,335 - WARNING - root - 25 productos con estructura inválida
+2025-07-09 07:48:01,536 - INFO - demo.generator - Iniciando procesamiento de archivos...
+2025-07-09 07:48:16,955 - INFO - datasets - PyTorch version 2.7.0 available.
+2025-07-09 07:51:52,768 - INFO - src.data_loader - Carga finalizada: 337840 productos | Éxito: 100.0%
+2025-07-09 07:51:52,768 - INFO - root - Datos cargados. Productos totales: 337840
+2025-07-09 07:51:52,805 - WARNING - root - 25 productos con estructura inválida
+2025-07-09 07:51:56,148 - INFO - demo.generator - Iniciando procesamiento de archivos...
+2025-07-09 07:52:03,611 - INFO - demo.generator - Conversión completada: 112590 productos -> meta_All_Beauty.json

@@ -1,8 +1,9 @@
 import os
 import json
+import sys
 import logging
 from typing import List, Dict, Optional
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 
@@ -10,8 +11,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     handlers=[
-        logging.FileHandler("generator.log", encoding='utf-8'),  # Add encoding here
-        logging.StreamHandler()
+        logging.FileHandler("generator.log", encoding='utf-8'),
+        # This will handle Unicode characters in Windows console
+        logging.StreamHandler(stream=sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ def convertir_jsonl_a_json(ruta_entrada: str, ruta_salida: str) -> List[Dict]:
         with open(ruta_salida, 'w', encoding='utf-8') as out_file:
             json.dump(productos, out_file, indent=2, ensure_ascii=False)
             
-        logger.info(f"Conversión completada: {len(productos)} productos → {os.path.basename(ruta_salida)}")
+        logger.info(f"Conversión completada: {len(productos)} productos -> {os.path.basename(ruta_salida)}")        
         return productos
         
     except Exception as e:
