@@ -58,3 +58,21 @@
 2025-07-09 08:48:18,708 - INFO - demo.generator - Índice creado: 641 documentos en C:\Users\x\OneDrive\Documents\GitHub\proyecto-ia-rag-rl\data\chroma_indexes\chroma_meta_Subscription_Boxes
 2025-07-09 08:48:18,709 - INFO - demo.generator - Archivo meta_Subscription_Boxes.jsonl procesado: 641 documentos
 2025-07-09 08:50:38,641 - INFO - demo.generator - Conversión completada: 1473810 productos -> meta_Tools_and_Home_Improvement.json
+2025-07-09 13:18:51,856 - INFO - src.data_loader - Carga finalizada: 645034 productos | Éxito: 100.0%
+2025-07-09 13:18:51,859 - INFO - root - Datos cargados. Productos totales: 645034
+2025-07-09 13:18:51,941 - WARNING - root - 28 productos con estructura inválida
+2025-07-09 13:18:59,222 - INFO - demo.generator - Iniciando procesamiento de archivos...
+2025-07-09 13:19:06,630 - INFO - demo.generator - Conversión completada: 112590 productos -> meta_All_Beauty.json
+2025-07-09 13:19:49,524 - INFO - datasets - PyTorch version 2.7.1 available.
+2025-07-09 13:30:44,805 - INFO - demo.generator - Índice creado: 112590 documentos en C:\Users\x\OneDrive\Documents\GitHub\proyecto-ia-rag-rl\data\chroma_indexes\chroma_meta_All_Beauty
+2025-07-09 13:30:44,993 - INFO - demo.generator - Archivo meta_All_Beauty.jsonl procesado: 112590 documentos
+2025-07-09 13:30:45,075 - INFO - demo.generator - Conversión completada: 1137 productos -> meta_Gift_Cards.json
+2025-07-09 13:30:51,155 - INFO - demo.generator - Índice creado: 1137 documentos en C:\Users\x\OneDrive\Documents\GitHub\proyecto-ia-rag-rl\data\chroma_indexes\chroma_meta_Gift_Cards
+2025-07-09 13:30:51,158 - INFO - demo.generator - Archivo meta_Gift_Cards.jsonl procesado: 1137 documentos
+2025-07-09 13:30:51,337 - INFO - demo.generator - Conversión completada: 3391 productos -> meta_Magazine_Subscriptions.json
+2025-07-09 13:31:02,331 - INFO - demo.generator - Índice creado: 3391 documentos en C:\Users\x\OneDrive\Documents\GitHub\proyecto-ia-rag-rl\data\chroma_indexes\chroma_meta_Magazine_Subscriptions
+2025-07-09 13:31:02,334 - INFO - demo.generator - Archivo meta_Magazine_Subscriptions.jsonl procesado: 3391 documentos
+2025-07-09 13:31:02,392 - INFO - demo.generator - Conversión completada: 641 productos -> meta_Subscription_Boxes.json
+2025-07-09 13:31:05,673 - INFO - demo.generator - Índice creado: 641 documentos en C:\Users\x\OneDrive\Documents\GitHub\proyecto-ia-rag-rl\data\chroma_indexes\chroma_meta_Subscription_Boxes
+2025-07-09 13:31:05,674 - INFO - demo.generator - Archivo meta_Subscription_Boxes.jsonl procesado: 641 documentos
+2025-07-09 13:31:28,019 - INFO - demo.generator - Conversión completada: 390006 productos -> meta_Unknown.json

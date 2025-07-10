@@ -1,0 +1,6 @@
+2025-07-09 14:19:07 [INFO] \u2705 Conversión completada: 217724 productos \u2192 C:\Users\x\Downloads\rag\data\procesados\productos.json
+2025-07-09 14:21:34 [INFO] \u2705 Conversión completada: 217724 productos \u2192 C:\Users\x\Downloads\rag\data\procesados\productos.json
+2025-07-09 14:21:46 [INFO] Use pytorch device_name: cpu
+2025-07-09 14:21:46 [INFO] Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-07-09 14:21:49 [INFO] Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-07-09 14:51:46 [INFO] \U0001f4e6 Indexación completada con 217724 documentos en 'chroma_index'.
