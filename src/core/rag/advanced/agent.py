@@ -7,7 +7,7 @@ from langchain_core.memory import BaseMemory
 from langchain_core.output_parsers import StrOutputParser
 from src.core.rag.advanced.prompts import RAG_PROMPT_TEMPLATE
 
-class RAGAdvancedAgent:
+class AdvancedRAGAgent:
     def __init__(
         self,
         llm: BaseLLM,

@@ -2,7 +2,7 @@
 # Exporta las principales funcionalidades del core
 from .rag import Retriever, Indexer, RAGAdvancedAgent
 from .category_search import CategoryTree
-from .data import DataLoader, AmazonProduct
+from .data import DataLoader
 from .utils import get_logger
 
 __all__ = [

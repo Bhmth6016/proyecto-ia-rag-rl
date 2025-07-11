@@ -1,5 +1,5 @@
 #src/core/rag/advanced/__init__.py
-from .agent import RAGAdvancedAgent
+from .agent import AdvancedRAGAgent  
 from .evaluators import RAGEvaluator
 from .rlhf import RLHFTrainer
 

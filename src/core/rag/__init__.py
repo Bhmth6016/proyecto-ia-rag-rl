@@ -1,6 +1,6 @@
 #src/core/rag/__init__.py
 from .basic import Retriever, Indexer
-from .advanced import RAGAdvancedAgent, RAGEvaluator
+from .advanced import AdvancedRAGAgent, RAGEvaluator
 
 __all__ = [
     'Retriever',
