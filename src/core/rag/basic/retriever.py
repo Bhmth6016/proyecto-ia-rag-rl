@@ -94,26 +94,42 @@ class Retriever:
 
         return Product(**product_data)
 
-    def retrieve(
-        self,
-        query: str,
-        k: int = 5,
-        filters: Optional[Dict] = None,
-        score_threshold: Optional[float] = None
-    ) -> List[Document]:
+    def retrieve(self, query: str, k: int = 5, max_price: float = 30.0) -> List[Document]:
+        """Enhanced retrieval with price filtering"""
         try:
-            if self.vectorstore_type == "chroma":
-                search_kwargs = {"k": k}
-                if filters:
-                    search_kwargs["filter"] = self._build_chroma_filter(filters)
-                if score_threshold:
-                    search_kwargs["score_threshold"] = score_threshold
-                return self.retriever.get_relevant_documents(query, **search_kwargs)
-            else:
-                return self._retrieve_faiss(query, k, filters)
+            # First get category matches
+            base_results = self.retriever.invoke(
+                query,
+                k=k*3,  # Get more for filtering
+                filter={"category": {"$eq": "Beauty"}}
+            )
+            
+            # Then filter by price
+            filtered = []
+            for doc in base_results:
+                try:
+                    price = float(doc.metadata.get("price", "0").replace("$", ""))
+                    if price <= max_price:
+                        filtered.append(doc)
+                except (ValueError, AttributeError):
+                    continue
+                    
+            return filtered[:k]
         except Exception as e:
             logger.error(f"Retrieval error: {str(e)}")
             return []
+
+    def _filter_by_price(self, docs: List[Document], max_price: float) -> List[Document]:
+        """Filter documents by maximum price"""
+        filtered = []
+        for doc in docs:
+            try:
+                price = float(doc.metadata.get("price", "0").replace("$", ""))
+                if price <= max_price:
+                    filtered.append(doc)
+            except (ValueError, AttributeError):
+                continue
+        return filtered
 
     def _retrieve_faiss(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
         query_embedding = np.array(self.embedder.embed_query(query)).astype('float32')
@@ -161,3 +177,14 @@ class Retriever:
             elif metadata[field] != value:
                 return False
         return True
+    
+    def debug_index(self, category="Beauty", limit=5):
+        """Debug what's actually in the index"""
+        results = self.vectorstore.get(
+            where={"category": category},
+            limit=limit
+        )
+        for doc in results["documents"]:
+            print(f"Title: {doc.metadata['title']}")
+            print(f"Price: {doc.metadata.get('price', 'N/A')}")
+            print(f"Content: {doc.page_content[:200]}...\n")

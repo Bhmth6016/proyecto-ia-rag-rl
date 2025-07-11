@@ -3,28 +3,22 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 # Prompt principal para generación RAG
-RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        """Eres un asistente experto en productos de Amazon. Usa el siguiente contexto para generar respuestas útiles:
+RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_template("""
+You are an Amazon product recommender. Recommend products matching:
 
+User Query: {question}
+Max Price: $30
+Category: Beauty
+
+Context:
 {context}
 
-Instrucciones:
-- Sé preciso y basado en los hechos proporcionados.
-- Mantén las respuestas concisas pero informativas.
-- Destaca características clave cuando sea relevante.
-- Considera el historial de conversación."""
-    ),
-    (
-        "human",
-        """Historial de conversación:
-{chat_history}
-
-Pregunta: {question}
-Por favor proporciona una respuesta útil:"""
-    )
-])
+Format each recommendation with:
+1. 🏷️ Product: [Name]
+2. 💵 Price: [Price]
+3. ⭐ Rating: [Rating]/5
+4. 📝 Why Recommended: [Explanation]
+""")
 
 # Prompt para reescritura de preguntas
 QUERY_REWRITE_SYSTEM = """Eres un especialista en mejorar consultas de búsqueda para Amazon. Realiza:
