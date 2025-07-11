@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional
+
 from dotenv import load_dotenv
 from google.api_core.exceptions import InvalidArgument
 import google.generativeai as genai
@@ -18,69 +19,73 @@ from src.core.category_search.category_tree import CategoryTree
 from src.interfaces.cli import AmazonRecommendationCLI
 from src.core.utils.logger import configure_root_logger
 
-# Load environment variables
+# Load .env configuration
 load_dotenv()
 
-def initialize_system(data_dir: Optional[str] = None, 
-                    log_level: Optional[str] = None,
-                    enable_ui: bool = False):
+def initialize_system(data_dir: Optional[str] = None,
+                      log_level: Optional[str] = None,
+                      enable_ui: bool = False):
     """
-    Initialize all system components
+    Initialize system components: logger, data loader, LLM, retriever, agent, and interface.
     
     Args:
-        data_dir: Directory with product data (optional)
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        enable_ui: Whether to enable graphical interface
+        data_dir: Custom path to product dataset (JSON/JSONL)
+        log_level: Logging verbosity level (DEBUG, INFO, etc.)
+        enable_ui: Whether to start graphical interface
     """
-    # Configure logging
+    # Setup logger
     configure_root_logger(
         level=log_level or os.getenv("LOG_LEVEL", "INFO"),
-        log_file=os.getenv("LOG_FILE")
+        log_file=os.getenv("LOG_FILE", "logs/system.log")
     )
     logger = logging.getLogger(__name__)
-    logger.info("Initializing Amazon Recommendation System")
-    
-    # Configure Gemini - MODIFIED VERSION
-    try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
-            temperature=0.7,
-            convert_system_message_to_human=True,
-            google_api_key=os.getenv("GEMINI_API_KEY")  # Explicitly pass the key
-        )
-    except InvalidArgument as e:
-        logger.error(f"Failed to configure Gemini: {str(e)}")
-        raise
-    
-    # Load data
-    loader = DataLoader(data_dir or os.getenv("DATA_DIR"))
-    max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 10000))
+    logger.info("🚀 Starting Amazon Product Recommendation System")
+
+    # Configure Gemini API key
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    logger.info("✅ Gemini API configured")
+
+    # Load product data
+    data_path = data_dir or os.getenv("DATA_DIR")
+    if not data_path or not Path(data_path).exists():
+        logger.error(f"❌ Data path not found: {data_path}")
+        raise FileNotFoundError(f"Data directory not found: {data_path}")
+
+    loader = DataLoader(data_path)
+    max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", "10000"))
     products = loader.load_data()[:max_products]
-    logger.info(f"Loaded {len(products)} products")
-    
-    # Initialize category tree
+    logger.info(f"📦 Loaded {len(products)} products")
+
+    # Build category tree
     category_tree = CategoryTree(products)
     category_tree.build_tree()
-    
-    # Configure LLM and memory
+    logger.info("🌲 Category tree built")
+
+    # Initialize Gemini LLM
     llm = ChatGoogleGenerativeAI(
-        model="gemini-pro",
-        temperature=0.7,
-        convert_system_message_to_human=True
+    model="gemini-pro",  # Puedes cambiar a "gemini-1.5-pro" o "gemini-1.5-flash" si lo prefieres
+    google_api_key=os.getenv("GEMINI_API_KEY")
     )
+    logger.info("🤖 Gemini LLM (2.0-pro-exp) initialized")
+
+    # Initialize memory for RLHF interaction
     memory = ConversationBufferMemory()
     
-    # Configure RAG agent
+    # Setup retriever (RAG backbone)
+    retriever = initialize_retriever(products)
+    logger.info("📚 Retriever ready")
+
+    # Build advanced RAG agent
     rag_agent = AdvancedRAGAgent(
         llm=llm,
-        retriever=initialize_retriever(products),
+        retriever=retriever,
         memory=memory,
         enable_rewrite=True,
         enable_validation=True
     )
-    
-    # Select interface
+    logger.info("🧠 RAG agent initialized")
+
+    # Launch interface
     if enable_ui:
         from src.interfaces.ui import launch_ui
         launch_ui(products, category_tree, rag_agent)
@@ -89,7 +94,9 @@ def initialize_system(data_dir: Optional[str] = None,
         cli.run()
 
 def initialize_retriever(products):
-    """Configure the retrieval system"""
+    """
+    Instantiate and return retriever engine for RAG.
+    """
     from src.core.rag.basic.retriever import Retriever
     return Retriever(
         index_path=os.getenv("VECTOR_INDEX_PATH", "./data/vector_index"),
@@ -97,15 +104,15 @@ def initialize_retriever(products):
     )
 
 def parse_arguments():
-    """Configure command line argument parser"""
-    parser = argparse.ArgumentParser(
-        description="Amazon Product Recommendation System"
-    )
-    
+    """
+    Parse CLI arguments to control system behavior
+    """
+    parser = argparse.ArgumentParser(description="🔎 Amazon Product Recommendation System")
+
     parser.add_argument(
         "--data-dir",
         type=str,
-        help="Directory with product data"
+        help="Path to directory containing JSON/JSONL product files"
     )
     parser.add_argument(
         "--log-level",
@@ -116,23 +123,25 @@ def parse_arguments():
     parser.add_argument(
         "--ui",
         action="store_true",
-        help="Use graphical interface instead of CLI"
+        help="Enable graphical interface (UI)"
     )
     parser.add_argument(
         "--reindex",
         action="store_true",
-        help="Reindex data before starting"
+        help="Force reindexing of product vectors before launch"
     )
-    
+
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_arguments()
-    
+
+    # Optional: force reindexing of product data
     if args.reindex:
         from demo.generator import run_generator
         run_generator(args.data_dir or os.getenv("DATA_DIR"))
     
+    # Initialize core system
     initialize_system(
         data_dir=args.data_dir,
         log_level=args.log_level,
