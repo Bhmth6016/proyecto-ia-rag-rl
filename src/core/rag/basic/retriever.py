@@ -8,13 +8,14 @@ import numpy as np
 import faiss
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores.base import VectorStoreRetriever
 
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 
 logger = get_logger(__name__)
+
 
 class Retriever:
     def __init__(
@@ -37,7 +38,7 @@ class Retriever:
                 model_kwargs={"device": self.device},
                 encode_kwargs={"normalize_embeddings": True}
             )
-            
+
             if self.vectorstore_type == "chroma":
                 self.vectorstore = Chroma(
                     persist_directory=str(self.index_path),
@@ -47,7 +48,7 @@ class Retriever:
             else:
                 self.faiss_index = faiss.read_index(str(self.index_path / "faiss_index.index"))
                 self._load_faiss_documents()
-                
+
             logger.info(f"Loaded {self.vectorstore_type} index from {self.index_path}")
         except Exception as e:
             logger.error(f"Error loading index: {str(e)}")
@@ -117,17 +118,17 @@ class Retriever:
     def _retrieve_faiss(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
         query_embedding = np.array(self.embedder.embed_query(query)).astype('float32')
         distances, indices = self.faiss_index.search(np.array([query_embedding]), k)
-        
+
         results = []
         for idx, score in zip(indices[0], distances[0]):
             if idx < len(self.faiss_documents):
                 doc = self.faiss_documents[idx]
                 doc.metadata["score"] = float(1 - score)
                 results.append(doc)
-        
+
         if filters:
             results = [doc for doc in results if self._matches_filters(doc.metadata, filters)]
-            
+
         return sorted(results, key=lambda x: x.metadata["score"], reverse=True)[:k]
 
     def _load_faiss_documents(self) -> None:

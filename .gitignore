@@ -4,6 +4,8 @@
 # Entorno virtual
 venv/
 .env
+myenv/
+.myenv
 
 # Datos y modelos
 data/processed/

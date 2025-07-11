@@ -16,7 +16,7 @@ from transformers import (
 from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
 from datasets import Dataset, load_dataset
 from peft import LoraConfig, get_peft_model
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 
 from src.core.utils.logger import get_logger

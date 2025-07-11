@@ -1,9 +1,10 @@
 # src/core/category_search/filters.py
-from typing import Dict, List, Optional, Set, Union, Any, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
 import logging
 from functools import singledispatchmethod
+from typing import Dict, List, Optional, Set, Union, Any, Tuple
+from collections.abc import Sequence 
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +37,11 @@ class ProductFilter:
     
     @singledispatchmethod
     def apply(self, product: Dict[str, Any]) -> bool:
-        """Aplica todos los filtros a un producto"""
+        """Base implementation for single product filtering"""
         if not isinstance(product, dict):
             return False
             
-        # Filtro por precio
+        # Your existing filter logic here
         if self.price_range and not self.price_range.contains(product.get('price')):
             return False
             
@@ -63,9 +64,9 @@ class ProductFilter:
         return True
 
     @apply.register
-    def _(self, products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Versión optimizada para filtrar listas de productos"""
-        return [p for p in products if self.apply(p)]
+    def _(self, products: list) -> list:
+        """Handle both List[Dict] and plain list"""
+        return [p for p in products if isinstance(p, dict) and self.apply(p)]
 
     def add_price_filter(self, min_price: float, max_price: float):
         """Añade filtro por rango de precios"""

@@ -5,11 +5,7 @@ from langchain_core.language_models import BaseLLM
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.memory import BaseMemory
 from langchain_core.output_parsers import StrOutputParser
-from src.core.rag.advanced.prompts import (
-    RAG_PROMPT_TEMPLATE,
-    REWRITE_PROMPT,
-    VALIDATION_PROMPT
-)
+from src.core.rag.advanced.prompts import RAG_PROMPT_TEMPLATE
 
 class RAGAdvancedAgent:
     def __init__(

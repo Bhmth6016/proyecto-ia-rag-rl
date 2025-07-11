@@ -1,4 +1,5 @@
 # src/core/rag/basic/indexer.py
+
 import json
 import logging
 import os
@@ -11,9 +12,18 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
 from src.core.utils.logger import get_logger
-from src.core.data.product import AmazonProduct, products_to_documents, validate_product_data
+from src.core.data.product import Product
 
 logger = get_logger(__name__)
+
+
+def validate_product_data(data: dict) -> Optional[Product]:
+    try:
+        return Product(**data)
+    except Exception as e:
+        logger.warning(f"Producto inválido: {e}")
+        return None
+
 
 class Indexer:
     def __init__(
@@ -27,28 +37,30 @@ class Indexer:
             model_kwargs={"device": device},
             encode_kwargs={"normalize_embeddings": True}
         )
-        self.vectorstore_type = vectorstore_type.lower() 
+        self.vectorstore_type = vectorstore_type.lower()
         if self.vectorstore_type not in ["chroma", "faiss"]:
             raise ValueError("Vectorstore must be 'chroma' or 'faiss'")
 
     def build_index_from_products(
         self,
-        products: List[Union[Dict, AmazonProduct]],
+        products: List[Union[Dict, Product]],
         persist_dir: Union[str, Path],
         batch_size: int = 1000
     ) -> None:
-        """Main indexing method that handles both raw dicts and AmazonProduct objects"""
         persist_dir = Path(persist_dir)
         os.makedirs(persist_dir, exist_ok=True)
-        
-        # Convert to documents
-        if isinstance(products[0], AmazonProduct):
-            documents = [product.to_document() for product in products]
-        else:
-            documents = products_to_documents([p for p in products if validate_product_data(p)])
-        
-        logger.info(f"Indexing {len(documents)} documents...")
-        
+
+        documents = []
+        for p in products:
+            if isinstance(p, Product):
+                documents.append(Document(**p.to_document()))
+            elif isinstance(p, dict):
+                validated = validate_product_data(p)
+                if validated:
+                    documents.append(Document(**validated.to_document()))
+
+        logger.info(f"Indexando {len(documents)} documentos...")
+
         if self.vectorstore_type == "chroma":
             self._build_chroma_index(documents, persist_dir, batch_size)
         else:
@@ -62,20 +74,20 @@ class Indexer:
     ) -> None:
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
-        
+
         # Batch embeddings to avoid memory issues
         embeddings = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             embeddings.extend(self.embedder.embed_documents(batch))
-        
+
         Chroma.from_texts(
             texts=texts,
             embedding=self.embedder,
             metadatas=metadatas,
             persist_directory=str(persist_dir)
         )
-        logger.info(f"Chroma index built at {persist_dir}")
+        logger.info(f"Índice Chroma guardado en {persist_dir}")
 
     def _build_faiss_index(
         self,
@@ -84,25 +96,21 @@ class Indexer:
         batch_size: int
     ) -> None:
         texts = [doc.page_content for doc in documents]
-        
-        # Generate embeddings in batches
+
         embeddings = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             embeddings.extend(self.embedder.embed_documents(batch))
-        
-        # Convert to numpy array
+
         embeddings_np = np.array(embeddings).astype('float32')
         dim = embeddings_np.shape[1]
-        
-        # Build and save index
+
         index = faiss.IndexFlatL2(dim)
         index.add(embeddings_np)
         faiss.write_index(index, str(persist_dir / "faiss_index.index"))
-        
-        # Save documents with metadata
+
         self._save_faiss_documents(documents, persist_dir)
-        logger.info(f"FAISS index built at {persist_dir}")
+        logger.info(f"Índice FAISS guardado en {persist_dir}")
 
     def _save_faiss_documents(self, documents: List[Document], persist_dir: Path) -> None:
         docs_path = persist_dir / "faiss_documents.json"
@@ -122,10 +130,8 @@ class Indexer:
         max_products: Optional[int] = None,
         **kwargs
     ) -> None:
-        """Convenience method to index directly from JSONL file"""
         indexer = cls(**kwargs)
-        
-        # Load and validate products
+
         products = []
         with open(jsonl_path, "r", encoding="utf-8") as f:
             for i, line in enumerate(f):
@@ -133,9 +139,11 @@ class Indexer:
                     break
                 try:
                     product = json.loads(line)
-                    if validate_product_data(product):
-                        products.append(product)
-                except json.JSONDecodeError:
+                    validated = validate_product_data(product)
+                    if validated:
+                        products.append(validated)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Error al leer línea {i}: {e}")
                     continue
-        
+
         indexer.build_index_from_products(products, persist_dir)
