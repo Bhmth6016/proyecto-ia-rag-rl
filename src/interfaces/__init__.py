@@ -1,8 +1,5 @@
 #src/interfaces/__init__.py
+from .ui import launch_ui as AmazonProductUI
 from .cli import AmazonRecommendationCLI
-from .ui import AmazonProductUI
 
-__all__ = [
-    'AmazonRecommendationCLI',
-    'AmazonProductUI'
-]
+__all__ = ['AmazonProductUI', 'AmazonRecommendationCLI']

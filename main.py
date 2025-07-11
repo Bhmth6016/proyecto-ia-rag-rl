@@ -47,10 +47,9 @@ def initialize_system(data_dir: Optional[str] = None,
     
     # Selección de interfaz
     if enable_ui:
-        logger.info("Iniciando interfaz gráfica")
-        AmazonProductUI.launch_interface(products, category_tree, rag_agent)
+        from src.interfaces import AmazonProductUI
+        AmazonProductUI(products, category_tree, rag_agent)
     else:
-        logger.info("Iniciando interfaz de línea de comandos")
         cli = AmazonRecommendationCLI(products, category_tree, rag_agent)
         cli.run()
 

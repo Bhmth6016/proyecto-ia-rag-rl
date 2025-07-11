@@ -47,7 +47,7 @@ pandas==2.2.1
 tqdm==4.66.2
 
 # Interfaz
-curses-menu==1.0.0
+textual==0.54.1
 rich==13.7.1
 
 # Machine Learning
