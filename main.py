@@ -69,8 +69,7 @@ def initialize_system(data_dir: Optional[str] = None,
     logger.info("🤖 Gemini LLM (2.0-pro-exp) initialized")
 
     # Initialize memory for RLHF interaction
-    memory = ConversationBufferMemory()
-    
+    memory = ConversationBufferMemory(return_messages=True)    
     # Setup retriever (RAG backbone)
     retriever = initialize_retriever(products)
     logger.info("📚 Retriever ready")
@@ -104,46 +103,40 @@ def initialize_retriever(products):
     )
 
 def parse_arguments():
-    """
-    Parse CLI arguments to control system behavior
-    """
     parser = argparse.ArgumentParser(description="🔎 Amazon Product Recommendation System")
-
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        help="Path to directory containing JSON/JSONL product files"
-    )
-    parser.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default=None,
-        help="Logging level"
-    )
-    parser.add_argument(
-        "--ui",
-        action="store_true",
-        help="Enable graphical interface (UI)"
-    )
-    parser.add_argument(
-        "--reindex",
-        action="store_true",
-        help="Force reindexing of product vectors before launch"
-    )
-
+    
+    # Subcomandos principales
+    subparsers = parser.add_subparsers(dest='command', required=True)
+    
+    # Comando RAG
+    rag_parser = subparsers.add_parser('rag', help='RAG recommendation mode')
+    rag_parser.add_argument('--ui', action='store_true', help='Enable graphical interface')
+    
+    # Comando Category
+    category_parser = subparsers.add_parser('category', help='Category search mode')
+    
+    # Comando Index
+    index_parser = subparsers.add_parser('index', help='Reindex data')
+    index_parser.add_argument('--reindex', action='store_true', help='Force reindexing')
+    
+    # Argumentos comunes a todos los comandos
+    for p in [rag_parser, category_parser, index_parser]:
+        p.add_argument('--data-dir', type=str, help='Custom data directory path')
+        p.add_argument('--log-level', choices=['DEBUG','INFO','WARNING','ERROR'], help='Logging level')
+    
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_arguments()
-
-    # Optional: force reindexing of product data
-    if args.reindex:
+    
+    # Force reindex if requested
+    if hasattr(args, 'reindex') and args.reindex:
         from demo.generator import run_generator
         run_generator(args.data_dir or os.getenv("DATA_DIR"))
     
-    # Initialize core system
+    # Initialize system based on command
     initialize_system(
         data_dir=args.data_dir,
         log_level=args.log_level,
-        enable_ui=args.ui
+        enable_ui=getattr(args, 'ui', False)  # Only available for rag command
     )
