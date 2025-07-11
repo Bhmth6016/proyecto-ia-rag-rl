@@ -1,6 +1,6 @@
 #src/core/data/__init__.py
 # Exporta las principales funcionalidades del core
-from .rag import Retriever, Indexer, RAGAdvancedAgent
+from .rag import Retriever, Indexer, AdvancedRAGAgent
 from .category_search import CategoryTree
 from .data import DataLoader
 from .utils import get_logger
@@ -8,7 +8,7 @@ from .utils import get_logger
 __all__ = [
     'Retriever',
     'Indexer',
-    'RAGAdvancedAgent',
+    'AdvancedRAGAgent',
     'CategoryTree',
     'DataLoader',
     'AmazonProduct',
