@@ -1,184 +1,193 @@
+# demo/generator.py
+#!/usr/bin/env python3
+"""
+Data Generator and Indexing Pipeline
+
+This script handles:
+1. Conversion of raw JSONL to processed JSON
+2. Cleaning and validation of product data
+3. Generation of vector embeddings
+4. Creation of ChromaDB indexes
+"""
+
 import os
 import json
-import sys
 import logging
+from pathlib import Path
 from typing import List, Dict, Optional
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from tqdm import tqdm
+
 from langchain_core.documents import Document
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from src.data.loader import DataLoader
+from src.core.utils.logger import get_logger
+from src.core.utils.validators import validate_product
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    handlers=[
-        logging.FileHandler("generator.log", encoding='utf-8'),
-        # This will handle Unicode characters in Windows console
-        logging.StreamHandler(stream=sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-def convertir_jsonl_a_json(ruta_entrada: str, ruta_salida: str) -> List[Dict]:
-    """
-    Convierte archivo JSONL a JSON con manejo de errores
-    
-    Args:
-        ruta_entrada: Ruta del archivo JSONL de entrada
-        ruta_salida: Ruta donde guardar el JSON resultante
-    
-    Returns:
-        Lista de productos procesados
-    """
-    productos = []
-    try:
-        with open(ruta_entrada, 'r', encoding='utf-8') as f:
-            for i, linea in enumerate(f, 1):
+class DataGenerator:
+    def __init__(self, data_dir: str = None):
+        self.base_dir = Path(__file__).parent.parent.parent.resolve()
+        self.data_dir = Path(data_dir) if data_dir else (self.base_dir / "data")
+        self.raw_dir = self.data_dir / "raw"
+        self.processed_dir = self.data_dir / "processed"
+        self.index_dir = self.data_dir / "chroma_indexes"
+        
+        self._ensure_directories()
+        self.embedder = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+
+    def _ensure_directories(self):
+        """Create required directories if they don't exist"""
+        os.makedirs(self.raw_dir, exist_ok=True)
+        os.makedirs(self.processed_dir, exist_ok=True)
+        os.makedirs(self.index_dir, exist_ok=True)
+
+    def _convert_jsonl_to_json(self, input_file: Path) -> Optional[Path]:
+        """
+        Convert JSONL file to formatted JSON with validation
+        Returns path to output file
+        """
+        output_file = self.processed_dir / f"{input_file.stem}.json"
+        valid_products = []
+        
+        try:
+            with open(input_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                
+            for line in tqdm(lines, desc=f"Processing {input_file.name}"):
                 try:
-                    producto = json.loads(linea.strip())
-                    if isinstance(producto, dict):  # Validación básica
-                        productos.append(producto)
+                    product = json.loads(line)
+                    if validate_product(product):
+                        valid_products.append(product)
                 except json.JSONDecodeError:
-                    logger.warning(f"Línea {i} inválida en {os.path.basename(ruta_entrada)}")
-                except Exception as e:
-                    logger.error(f"Error procesando línea {i}: {str(e)}")
-        
-        os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
-        with open(ruta_salida, 'w', encoding='utf-8') as out_file:
-            json.dump(productos, out_file, indent=2, ensure_ascii=False)
+                    logger.warning(f"Invalid JSON line in {input_file.name}")
+                    continue
             
-        logger.info(f"Conversión completada: {len(productos)} productos -> {os.path.basename(ruta_salida)}")        
-        return productos
-        
-    except Exception as e:
-        logger.error(f"Error en convertir_jsonl_a_json: {str(e)}")
-        raise
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(valid_products, f, indent=2, ensure_ascii=False)
+                
+            logger.info(f"Converted {len(valid_products)} products to {output_file.name}")
+            return output_file
+            
+        except Exception as e:
+            logger.error(f"Failed to convert {input_file.name}: {str(e)}")
+            return None
 
-def producto_a_documento(producto: Dict) -> Document:
-    """Transforma un producto en un Documento de LangChain"""
-    try:
-        detalles = producto.get("details", {})
-        texto = "\n".join([
-            f"Título: {producto.get('title', '')}",
-            f"Categoría: {producto.get('main_category', '')}",
-            f"Precio: {producto.get('price', 'No disponible')}",
-            f"Valoración: {producto.get('average_rating', '')}",
-            "Detalles: " + ", ".join([f"{k}: {v}" for k, v in detalles.items()])
-        ])
+    def _product_to_document(self, product: Dict) -> Document:
+        """Convert product dict to LangChain Document"""
+        details = product.get('details', {})
+        
+        # Build page content
+        content_parts = [
+            f"Title: {product.get('title', 'N/A')}",
+            f"Category: {product.get('main_category', 'N/A')}",
+            f"Price: ${product.get('price', 'N/A')}",
+            f"Rating: {product.get('average_rating', 'N/A')}"
+        ]
+        
+        if details:
+            content_parts.append("Details:")
+            for k, v in details.items():
+                content_parts.append(f"- {k}: {v}")
+        
+        # Build metadata
+        metadata = {
+            'title': product.get('title', ''),
+            'category': product.get('main_category', ''),
+            'price': product.get('price'),
+            'rating': product.get('average_rating')
+        }
+        
         return Document(
-            page_content=texto,
-            metadata={
-                "title": producto.get("title", "Sin título"),
-                "price": producto.get("price"),
-                "category": producto.get("main_category")
-            }
+            page_content="\n".join(content_parts),
+            metadata=metadata
         )
-    except Exception as e:
-        logger.error(f"Error creando documento para producto: {str(e)}")
-        raise
 
-def procesar_archivo(archivo: str, input_dir: str, output_dir: str, index_dir: str) -> int:
-    """
-    Procesa un archivo individual y crea su índice Chroma
-    
-    Args:
-        archivo: Nombre del archivo a procesar
-        input_dir: Directorio de entrada
-        output_dir: Directorio para JSON procesados
-        index_dir: Directorio para índices Chroma
-    
-    Returns:
-        Número de documentos indexados
-    """
-    try:
-        nombre_base = os.path.splitext(archivo)[0]
-        ruta_entrada = os.path.join(input_dir, archivo)
-        ruta_salida = os.path.join(output_dir, f"{nombre_base}.json")
-        persist_directory = os.path.join(index_dir, f"chroma_{nombre_base}")
+    def _generate_index(self, json_file: Path) -> int:
+        """Generate vector index from JSON file"""
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                products = json.load(f)
+            
+            documents = []
+            invalid_count = 0
+            
+            for product in tqdm(products, desc="Creating documents"):
+                try:
+                    if validate_product(product):
+                        documents.append(self._product_to_document(product))
+                    else:
+                        invalid_count += 1
+                except Exception as e:
+                    logger.warning(f"Invalid product skipped: {str(e)}")
+                    invalid_count += 1
+            
+            if invalid_count > 0:
+                logger.warning(f"Skipped {invalid_count} invalid products")
+            
+            if not documents:
+                logger.error("No valid documents to index")
+                return 0
+                
+            # Create index per category
+            collection_name = json_file.stem.replace("meta_", "").replace("_processed", "")
+            
+            vectordb = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embedder,
+                persist_directory=str(self.index_dir),
+                collection_name=collection_name
+            )
+            
+            logger.info(f"Created index for {collection_name} with {len(documents)} documents")
+            return len(documents)
+            
+        except Exception as e:
+            logger.error(f"Indexing failed for {json_file.name}: {str(e)}")
+            return 0
 
-        # Paso 1: Cargar datos
-        if archivo.endswith('.jsonl'):
-            productos = convertir_jsonl_a_json(ruta_entrada, ruta_salida)
-        elif archivo.endswith('.json'):
-            with open(ruta_entrada, 'r', encoding='utf-8') as f:
-                productos = json.load(f)
-        else:
-            raise ValueError(f"Formato no soportado: {archivo}")
-
-        # Paso 2: Crear documentos
-        documentos = []
-        for prod in productos:
-            try:
-                documentos.append(producto_a_documento(prod))
-            except Exception as e:
-                logger.warning(f"Producto omitido por error: {str(e)}")
+    def run_pipeline(self) -> int:
+        """Run complete data processing pipeline"""
+        total_docs = 0
+        
+        # Process all JSONL files in raw directory
+        for file in self.raw_dir.glob("*.jsonl"):
+            logger.info(f"Processing {file.name}...")
+            
+            # Step 1: Convert JSONL to cleaned JSON
+            json_file = self._convert_jsonl_to_json(file)
+            if not json_file:
                 continue
-
-        # Paso 3: Indexar
-        vectordb = Chroma.from_documents(
-            documents=documentos,
-            embedding=HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cpu'}
-            ),
-            persist_directory=persist_directory
-        )
-        
-        logger.info(f"Índice creado: {len(documentos)} documentos en {persist_directory}")
-        return len(documentos)
-        
-    except Exception as e:
-        logger.error(f"Error procesando archivo {archivo}: {str(e)}")
-        raise
+                
+            # Step 2: Generate vector index
+            docs_indexed = self._generate_index(json_file)
+            total_docs += docs_indexed
+            
+        return total_docs
 
 def run_generator(data_dir: str = None) -> int:
     """
-    Función principal para procesar todos los archivos en el directorio raw
+    Run the data generation and indexing pipeline
     
     Args:
-        data_dir: Ruta base del directorio de datos (opcional)
-    
+        data_dir: Path to data directory (optional)
+        
     Returns:
-        Total de documentos procesados
+        Total number of documents indexed
     """
     try:
-        # Configuración de rutas
-        if not data_dir:
-            data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        
-        raw_dir = os.path.join(data_dir, "raw")
-        processed_dir = os.path.join(data_dir, "processed")
-        index_dir = os.path.join(data_dir, "chroma_indexes")
-
-        # Crear directorios si no existen
-        os.makedirs(processed_dir, exist_ok=True)
-        os.makedirs(index_dir, exist_ok=True)
-
-        logger.info("Iniciando procesamiento de archivos...")
-        total_docs = 0
-
-        # Procesar cada archivo
-        for archivo in os.listdir(raw_dir):
-            if archivo.endswith(('.json', '.jsonl')):
-                try:
-                    docs_procesados = procesar_archivo(archivo, raw_dir, processed_dir, index_dir)
-                    total_docs += docs_procesados
-                    logger.info(f"Archivo {archivo} procesado: {docs_procesados} documentos")
-                except Exception as e:
-                    logger.error(f"Error procesando {archivo}: {str(e)}")
-                    continue
-
-        logger.info(f"Procesamiento completado. Total documentos indexados: {total_docs}")
-        return total_docs
-        
+        generator = DataGenerator(data_dir)
+        return generator.run_pipeline()
     except Exception as e:
-        logger.error(f"Error en run_generator: {str(e)}")
-        raise
+        logger.critical(f"Data generation failed: {str(e)}", exc_info=True)
+        return 0
 
 if __name__ == "__main__":
-    # Solo para pruebas directas
-    try:
-        total = run_generator()
-        print(f"Procesamiento completado. Documentos indexados: {total}")
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        exit(1)
+    # For direct script execution
+    total = run_generator()
+    print(f"\nProcessing complete. Total documents indexed: {total}")

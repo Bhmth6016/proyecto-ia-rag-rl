@@ -1,21 +1,25 @@
+# Ignorar todo el directorio data/ (relativo al raíz del proyecto)
+/data/
+
 # Entorno virtual
-ambiente/
 venv/
 .env
 
-# Datos y caché
-data/
+# Datos y modelos
+data/processed/
 *.pkl
+*.index
+
+# Logs
+logs/
 *.log
 
-# Python
-__pycache__/
-*.py[cod]
-*.so
-.Python
-
-# Editor/IDE
+# IDE
 .vscode/
 .idea/
-*.swp
-*.swo
+__pycache__/
+*.py[cod]
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
