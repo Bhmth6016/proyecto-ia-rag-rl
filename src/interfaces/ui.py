@@ -134,13 +134,14 @@ class AmazonProductUI(App):
                 f"${product.get('price', 'N/A')}",
                 str(product.get('average_rating', 'N/A')))
     
-    @on(SelectionList.Selected, "#category-list")
-    def category_selected(self, event: SelectionList.Selected):
-        selected_category = event.selection_list.selected[0]
-        if isinstance(selected_category, CategoryNode):
-            self.current_category = selected_category
-            self.filtered_products = selected_category.products
+    @on(SelectionList.SelectedChanged, "#category-list")
+    def category_selected(self, event: SelectionList.SelectedChanged):
+        selected = event.item
+        if isinstance(selected, CategoryNode):
+            self.current_category = selected
+            self.filtered_products = selected.products
             self._update_product_table(self.filtered_products)
+
 
     @on(Input.Changed, "#search-input")
     def on_search_changed(self, event: Input.Changed):
