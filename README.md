@@ -31,8 +31,6 @@ venv\Scripts\activate
 pip install --upgrade pip
 
 3. Verificar que se tenga el archivo requeriments.txt
-En la carpeta raíz del proyecto, actualizado sino.
-crea un archivo llamado requirements.txt y agrega las siguientes líneas:
 # Core dependencies
 langchain==0.1.13
 openai==1.12.0
@@ -47,11 +45,11 @@ pandas==2.2.1
 tqdm==4.66.2
 
 # Interfaz
-textual==0.54.1
+textual==0.54.0
 rich==13.7.1
 
 # Machine Learning
-torch==2.2.1
+torch==2.7.1
 transformers==4.38.2
 sentence-transformers==2.5.1
 peft==0.9.0
