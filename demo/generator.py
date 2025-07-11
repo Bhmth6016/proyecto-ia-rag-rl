@@ -18,9 +18,9 @@ from typing import List, Dict, Optional
 from tqdm import tqdm
 
 from langchain_core.documents import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from src.data.loader import DataLoader
+from src.core.data.loader import DataLoader
 from src.core.utils.logger import get_logger
 from src.core.utils.validators import validate_product
 

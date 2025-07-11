@@ -21,9 +21,11 @@ class AdvancedRAGAgent:
         llm: BaseLLM,
         retriever: BaseRetriever,
         memory: BaseMemory,
+        feedback_processor: Optional[Any] = None,
         prompt_template: ChatPromptTemplate = RAG_PROMPT_TEMPLATE,
         enable_rewrite: bool = True,
-        enable_validation: bool = True
+        enable_validation: bool = True,
+        top_k: int = 5
     ):
         """
         Agente RAG avanzado con capacidades mejoradas.
@@ -32,16 +34,20 @@ class AdvancedRAGAgent:
             llm: Modelo de lenguaje para generación
             retriever: Módulo de recuperación de documentos
             memory: Sistema de memoria para contexto conversacional
+            feedback_processor: Procesador de feedback para aprendizaje
             prompt_template: Plantilla para el prompt principal
             enable_rewrite: Habilitar reescritura de consultas
             enable_validation: Habilitar validación de respuestas
+            top_k: Número de documentos a recuperar
         """
         self.llm = llm
         self.retriever = retriever
         self.memory = memory
+        self.feedback_processor = feedback_processor
         self.prompt_template = prompt_template
         self.enable_rewrite = enable_rewrite
         self.enable_validation = enable_validation
+        self.top_k = top_k
         self.output_parser = StrOutputParser()
         self.setup_chains()
 
@@ -55,10 +61,11 @@ class AdvancedRAGAgent:
             | self.output_parser
         )
         
-        # Cadena de recuperación de documentos
+        # Cadena de recuperación de documentos (ahora usa top_k)
         self.retrieval_chain = RunnableLambda(
             lambda x: self.retrieve_documents(
-                x.get("rewritten_question", x["question"])
+                x.get("rewritten_question", x["question"]),
+                k=self.top_k
             )
         )
         
@@ -66,7 +73,7 @@ class AdvancedRAGAgent:
         self.rag_chain = (
             RunnablePassthrough.assign(
                 rewritten_question=lambda x: self.rewrite_query(x["question"]) if self.enable_rewrite else x["question"],
-                context=lambda x: self.retrieve_documents(x["rewritten_question"]),
+                context=lambda x: self.retrieve_documents(x["rewritten_question"], k=self.top_k),
                 chat_history=lambda x: self.load_memory()
             )
             | self.prompt_template
@@ -84,9 +91,10 @@ class AdvancedRAGAgent:
         """Reescribe la consulta del usuario para mejor recuperación."""
         return self.rewrite_chain.invoke(query)
 
-    def retrieve_documents(self, query: str) -> List[Document]:
+    def retrieve_documents(self, query: str, k: Optional[int] = None) -> List[Document]:
         """Recupera documentos relevantes para la consulta."""
-        return self.retriever.get_relevant_documents(query)
+        k = k or self.top_k
+        return self.retriever.get_relevant_documents(query)[:k]
 
     def load_memory(self) -> str:
         """Carga el historial de conversación desde la memoria."""
@@ -99,6 +107,15 @@ class AdvancedRAGAgent:
             "answer": answer
         })
         return "yes" in validation.lower()
+
+    def process_feedback(self, question: str, response: str, feedback: Dict[str, Any]) -> None:
+        """Procesa el feedback del usuario si está disponible el procesador."""
+        if self.feedback_processor:
+            self.feedback_processor.process(
+                question=question,
+                response=response,
+                feedback=feedback
+            )
 
     def invoke(self, question: str, **kwargs) -> Dict[str, Any]:
         """
@@ -134,7 +151,8 @@ class AdvancedRAGAgent:
             "context": inputs.get("context", []),
             "is_valid": is_valid,
             "rewritten_question": inputs.get("rewritten_question", ""),
-            "chat_history": inputs.get("chat_history", "")
+            "chat_history": inputs.get("chat_history", ""),
+            "top_k": self.top_k
         }
         
         return {

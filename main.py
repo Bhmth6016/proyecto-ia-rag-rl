@@ -130,13 +130,14 @@ if __name__ == "__main__":
     args = parse_arguments()
     
     # Force reindex if requested
-    if hasattr(args, 'reindex') and args.reindex:
-        from demo.generator import run_generator
-        run_generator(args.data_dir or os.getenv("DATA_DIR"))
-    
-    # Initialize system based on command
-    initialize_system(
-        data_dir=args.data_dir,
-        log_level=args.log_level,
-        enable_ui=getattr(args, 'ui', False)  # Only available for rag command
-    )
+    # Ejecutar según el subcomando
+    if args.command == "index":
+        if args.reindex:
+            from demo.generator import run_generator
+            run_generator(args.data_dir or os.getenv("DATA_DIR"))
+    elif args.command in {"rag", "category"}:
+        initialize_system(
+            data_dir=args.data_dir,
+            log_level=args.log_level,
+            enable_ui=getattr(args, 'ui', False)  # Solo válido para 'rag'
+        )

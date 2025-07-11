@@ -10,9 +10,12 @@ from src.core.utils.logger import get_logger
 from src.core.utils.parsers import parse_binary_score, BinaryScore
 from src.core.data.loader import DataLoader
 from src.core.rag.advanced.agent import AdvancedRAGAgent
+from src.core.rag.basic.retriever import Retriever  # Changed from VectorRetriever
 from src.core.category_search.category_tree import CategoryTree
 
 logger = get_logger(__name__)
+llm = ChatOpenAI(temperature=0, model="gpt-3.5-turbo")  # o tu modelo favorito
+memory = ConversationBufferMemory(return_messages=True)
 
 class CLIMode(Enum):
     RAG = auto()
@@ -20,7 +23,7 @@ class CLIMode(Enum):
     INDEX = auto()
 
 class AmazonRecommendationCLI:
-    def __init__(self, products, category_tree, agent):
+    def __init__(self):
         self.parser = self._setup_parser()
         self.args = None
         self.agent: Optional[AdvancedRAGAgent] = None
@@ -123,20 +126,23 @@ class AmazonRecommendationCLI:
     def _setup_rag_mode(self):
         """Initialize components for RAG mode"""
         logger.info("Initializing RAG system...")
-        products = self.loader.load_data()
         
-        # Initialize RAG components
-        from src.core.rag.basic.retriever import VectorRetriever
-        from src.core.rag.advanced.feedback_processor import FeedbackProcessor
+        # Initialize retriever
+        retriever = Retriever(
+            index_path="data/processed/chroma_db",
+            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            vectorstore_type="chroma"
+        )
         
-        retriever = VectorRetriever(products)
-        feedback_processor = None if self.args.no_feedback else FeedbackProcessor()
-        
+        # Initialize agent without feedback processor
         self.agent = AdvancedRAGAgent(
             retriever=retriever,
-            feedback_processor=feedback_processor,
-            top_k=self.args.top_k
+            product_selector=product_selector,
+            llm=llm,
+            memory=memory
         )
+
+        
         logger.info("RAG system ready")
 
     def _run_rag_mode(self):
