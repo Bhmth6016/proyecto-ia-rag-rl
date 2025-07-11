@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-# main.py - Punto de entrada principal del sistema de recomendación de Amazon
+# main.py - Amazon Recommendation System Entry Point
 
 import argparse
 import logging
+import os
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
+from google.api_core.exceptions import InvalidArgument
+import google.generativeai as genai
+from langchain.memory import ConversationBufferMemory
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.core.data.loader import DataLoader
 from src.core.rag.advanced.agent import AdvancedRAGAgent
@@ -12,82 +18,110 @@ from src.core.category_search.category_tree import CategoryTree
 from src.interfaces.cli import AmazonRecommendationCLI
 from src.core.utils.logger import configure_root_logger
 
+# Load environment variables
+load_dotenv()
+
 def initialize_system(data_dir: Optional[str] = None, 
-                     log_level: str = "INFO",
-                     enable_ui: bool = False):
+                    log_level: Optional[str] = None,
+                    enable_ui: bool = False):
     """
-    Inicializa todos los componentes del sistema
+    Initialize all system components
     
     Args:
-        data_dir: Directorio con los datos (opcional)
-        log_level: Nivel de logging (DEBUG, INFO, WARNING, ERROR)
-        enable_ui: Si se habilita la interfaz gráfica
+        data_dir: Directory with product data (optional)
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        enable_ui: Whether to enable graphical interface
     """
-    # Configuración inicial
-    configure_root_logger(level=log_level)
+    # Configure logging
+    configure_root_logger(
+        level=log_level or os.getenv("LOG_LEVEL", "INFO"),
+        log_file=os.getenv("LOG_FILE")
+    )
     logger = logging.getLogger(__name__)
-    logger.info("Inicializando sistema de recomendación de Amazon")
+    logger.info("Initializing Amazon Recommendation System")
     
-    # Carga de datos
-    loader = DataLoader(data_dir)
-    products = loader.load_data()
-    logger.info(f"Cargados {len(products)} productos")
+    # Configure Gemini - MODIFIED VERSION
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-pro",
+            temperature=0.7,
+            convert_system_message_to_human=True,
+            google_api_key=os.getenv("GEMINI_API_KEY")  # Explicitly pass the key
+        )
+    except InvalidArgument as e:
+        logger.error(f"Failed to configure Gemini: {str(e)}")
+        raise
     
-    # Inicialización del árbol de categorías
+    # Load data
+    loader = DataLoader(data_dir or os.getenv("DATA_DIR"))
+    max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 10000))
+    products = loader.load_data()[:max_products]
+    logger.info(f"Loaded {len(products)} products")
+    
+    # Initialize category tree
     category_tree = CategoryTree(products)
     category_tree.build_tree()
     
-    # Configuración del agente RAG
+    # Configure LLM and memory
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-pro",
+        temperature=0.7,
+        convert_system_message_to_human=True
+    )
+    memory = ConversationBufferMemory()
+    
+    # Configure RAG agent
     rag_agent = AdvancedRAGAgent(
+        llm=llm,
         retriever=initialize_retriever(products),
-        feedback_processor=initialize_feedback(),
-        top_k=5
+        memory=memory,
+        enable_rewrite=True,
+        enable_validation=True
     )
     
-    # Selección de interfaz
+    # Select interface
     if enable_ui:
         from src.interfaces.ui import launch_ui
         launch_ui(products, category_tree, rag_agent)
     else:
-        cli = AmazonRecommendationCLI()
+        cli = AmazonRecommendationCLI(products, category_tree, rag_agent)
         cli.run()
 
 def initialize_retriever(products):
-    """Configura el sistema de recuperación"""
-    from src.core.rag.basic.retriever import VectorRetriever
-    return VectorRetriever(products)
-
-def initialize_feedback():
-    """Inicializa el componente de retroalimentación"""
-    from src.core.rag.advanced.feedback_processor import FeedbackProcessor
-    return FeedbackProcessor()
+    """Configure the retrieval system"""
+    from src.core.rag.basic.retriever import Retriever
+    return Retriever(
+        index_path=os.getenv("VECTOR_INDEX_PATH", "./data/vector_index"),
+        embedding_model=os.getenv("EMBEDDING_MODEL")
+    )
 
 def parse_arguments():
-    """Configura el parser de argumentos de línea de comandos"""
+    """Configure command line argument parser"""
     parser = argparse.ArgumentParser(
-        description="Sistema de Recomendación de Productos Amazon"
+        description="Amazon Product Recommendation System"
     )
     
     parser.add_argument(
         "--data-dir",
         type=str,
-        help="Directorio con los datos de productos"
+        help="Directory with product data"
     )
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Nivel de logging"
+        default=None,
+        help="Logging level"
     )
     parser.add_argument(
         "--ui",
         action="store_true",
-        help="Usar interfaz gráfica en lugar de CLI"
+        help="Use graphical interface instead of CLI"
     )
     parser.add_argument(
         "--reindex",
         action="store_true",
-        help="Reindexar los datos antes de iniciar"
+        help="Reindex data before starting"
     )
     
     return parser.parse_args()
@@ -97,7 +131,7 @@ if __name__ == "__main__":
     
     if args.reindex:
         from demo.generator import run_generator
-        run_generator(args.data_dir)
+        run_generator(args.data_dir or os.getenv("DATA_DIR"))
     
     initialize_system(
         data_dir=args.data_dir,

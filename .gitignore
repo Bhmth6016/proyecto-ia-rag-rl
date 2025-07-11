@@ -1,5 +1,6 @@
 # Ignorar todo el directorio data/ (relativo al raíz del proyecto)
 /data/
+src/data/
 
 # Entorno virtual
 venv/
