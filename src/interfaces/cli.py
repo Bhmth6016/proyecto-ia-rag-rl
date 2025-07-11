@@ -20,7 +20,7 @@ class CLIMode(Enum):
     INDEX = auto()
 
 class AmazonRecommendationCLI:
-    def __init__(self):
+    def __init__(self, products, category_tree, agent):
         self.parser = self._setup_parser()
         self.args = None
         self.agent: Optional[AdvancedRAGAgent] = None

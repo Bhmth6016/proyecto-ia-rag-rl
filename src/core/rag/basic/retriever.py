@@ -1,4 +1,5 @@
 # src/core/rag/basic/retriever.py
+
 import json
 import logging
 from pathlib import Path
@@ -11,7 +12,7 @@ from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores.base import VectorStoreRetriever
 
 from src.core.utils.logger import get_logger
-from src.core.data.product import AmazonProduct, validate_product_data
+from src.core.data.product import Product
 
 logger = get_logger(__name__)
 
@@ -58,15 +59,15 @@ class Retriever:
         k: int = 5,
         filters: Optional[Dict] = None,
         score_threshold: Optional[float] = None
-    ) -> List[AmazonProduct]:
+    ) -> List[Product]:
         docs = self.retrieve(query, k, filters, score_threshold)
         return [self._document_to_product(doc) for doc in docs]
 
-    def _document_to_product(self, doc: Document) -> AmazonProduct:
+    def _document_to_product(self, doc: Document) -> Product:
         metadata = doc.metadata
         content = doc.page_content
-        
-        # Extract specifications
+
+        # Extract specifications from content
         specs = {}
         if "Specs:" in content:
             specs_section = content.split("Specs:")[1].strip()
@@ -75,29 +76,22 @@ class Retriever:
                     key, val = line.split(":", 1)
                     specs[key.strip()] = val.strip()
 
-        # Build product data structure
         product_data = {
-            "asin": metadata["asin"],
+            "id": metadata.get("id", ""),
             "title": metadata.get("title", ""),
-            "main_category": metadata["main_category"],
-            "price": {
-                "amount": metadata["price"],
-                "currency": metadata.get("currency", "USD")
-            },
+            "main_category": metadata.get("category", ""),
+            "categories": [metadata.get("category", "")],
+            "price": metadata.get("price"),
+            "average_rating": metadata.get("rating"),
+            "rating_count": metadata.get("rating_count", 0),
+            "images": None,
             "details": {
                 "brand": metadata.get("brand"),
                 "specifications": specs
             }
         }
-        
-        # Add optional fields
-        if "rating" in metadata:
-            product_data["rating"] = {
-                "average": metadata["rating"],
-                "count": metadata.get("rating_count", 0)
-            }
-            
-        return AmazonProduct(**product_data)
+
+        return Product(**product_data)
 
     def retrieve(
         self,

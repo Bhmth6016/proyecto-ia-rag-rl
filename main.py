@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import Optional
 
 from src.core.data.loader import DataLoader
-from src.core.rag.advanced import RAGAdvancedAgent
+from src.core.rag.advanced.agent import AdvancedRAGAgent
 from src.core.category_search.category_tree import CategoryTree
 from src.interfaces.cli import AmazonRecommendationCLI
-from src.interfaces.ui import AmazonProductUI
 from src.core.utils.logger import configure_root_logger
 
 def initialize_system(data_dir: Optional[str] = None, 
@@ -34,49 +33,34 @@ def initialize_system(data_dir: Optional[str] = None,
     products = loader.load_data()
     logger.info(f"Cargados {len(products)} productos")
     
-    # Inicialización de componentes principales
+    # Inicialización del árbol de categorías
     category_tree = CategoryTree(products)
     category_tree.build_tree()
     
     # Configuración del agente RAG
-    rag_agent = RAGAdvancedAgent(
-        llm=initialize_llm(),
+    rag_agent = AdvancedRAGAgent(
         retriever=initialize_retriever(products),
-        memory=initialize_memory()
+        feedback_processor=initialize_feedback(),
+        top_k=5
     )
     
     # Selección de interfaz
     if enable_ui:
-        from src.interfaces import AmazonProductUI
-        AmazonProductUI(products, category_tree, rag_agent)
+        from src.interfaces.ui import launch_ui
+        launch_ui(products, category_tree, rag_agent)
     else:
-        cli = AmazonRecommendationCLI(products, category_tree, rag_agent)
+        cli = AmazonRecommendationCLI()
         cli.run()
-
-def initialize_llm():
-    """Configura el modelo de lenguaje"""
-    from langchain_community.llms import OpenAI
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    return OpenAI(
-        model_name="gpt-3.5-turbo-instruct",
-        temperature=0.3,
-        max_tokens=500
-    )
 
 def initialize_retriever(products):
     """Configura el sistema de recuperación"""
     from src.core.rag.basic.retriever import VectorRetriever
     return VectorRetriever(products)
 
-def initialize_memory():
-    """Configura la memoria para conversaciones"""
-    from langchain.memory import ConversationBufferMemory
-    return ConversationBufferMemory(
-        memory_key="chat_history",
-        return_messages=True
-    )
+def initialize_feedback():
+    """Inicializa el componente de retroalimentación"""
+    from src.core.rag.advanced.feedback_processor import FeedbackProcessor
+    return FeedbackProcessor()
 
 def parse_arguments():
     """Configura el parser de argumentos de línea de comandos"""
