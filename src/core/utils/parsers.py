@@ -1,229 +1,173 @@
 # src/core/utils/parsers.py
-from typing import Union, Optional, Dict, Any, List
+"""
+Reusable text-parsing helpers used across the stack
+(RAG evaluator, RLHF reward models, feedback scoring, etc.).
+
+Supports:
+• Binary scores (yes/no/unknown)  
+• Numeric ranges with safe bounds  
+• JSON, list and boolean extraction  
+• All functions return Pydantic models for type safety
+"""
+
+from __future__ import annotations
+
+import json
 import re
 from enum import Enum
-import logging
-from pydantic import BaseModel, validator
+from typing import Any, Dict, List, Optional, Union
 
-logger = logging.getLogger(__name__)
+from pydantic import BaseModel, ValidationError, Field
 
+from src.core.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# ------------------------------------------------------------------
+# Domain types
+# ------------------------------------------------------------------
 class BinaryScore(str, Enum):
     YES = "yes"
     NO = "no"
     UNKNOWN = "unknown"
 
-class ParsingResult(BaseModel):
-    success: bool
+
+class ParseResult(BaseModel):
+    """Typed result container for every parser."""
+    success: bool = True
     value: Optional[Any] = None
     error: Optional[str] = None
-    original: Optional[str] = None
+    original: Optional[str] = Field(None, description="Original input text")
 
-def parse_binary_score(text: str, strict: bool = False) -> BinaryScore:
+    class Config:
+        extra = "forbid"
+
+
+# ------------------------------------------------------------------
+# Low-level parsers
+# ------------------------------------------------------------------
+def parse_binary_score(text: Union[str, Any], *, strict: bool = False) -> BinaryScore:
     """
-    Parsea texto a resultado binario estandarizado con opción de modo estricto.
-    
-    Args:
-        text: Texto a parsear
-        strict: Si True, solo acepta "yes"/"no" exactos
-        
-    Returns:
-        BinaryScore (Enum): YES, NO o UNKNOWN
+    Convert free-form text to a canonical BinaryScore.
+
+    Parameters
+    ----------
+    text   : raw LLM output
+    strict : if True, only the exact words 'yes'/'no' are accepted
     """
     if not isinstance(text, str):
-        logger.warning(f"Input no es texto: {type(text)}")
+        logger.warning("Binary-score input is not str: %s", type(text))
         return BinaryScore.UNKNOWN
-    
-    clean_text = text.strip().lower()
-    
+
+    cleaned = text.strip().lower()
+
     if strict:
-        if clean_text == "yes":
+        if cleaned == "yes":
             return BinaryScore.YES
-        if clean_text == "no":
+        if cleaned == "no":
             return BinaryScore.NO
         return BinaryScore.UNKNOWN
-    
-    # Lógica no estricta (por defecto)
-    if "yes" in clean_text:
+
+    # Relaxed mode: substring + negation heuristics
+    if "yes" in cleaned:
         return BinaryScore.YES
-    if "no" in clean_text:
+    if "no" in cleaned:
         return BinaryScore.NO
-    
-    # Detección de negaciones
-    negations = {"nunca", "no", "not", "ningún", "ninguna", "incorrecto"}
-    if any(neg in clean_text for neg in negations):
+
+    # Spanish & English negation cues
+    negations = {"no", "not", "nunca", "ningún", "ninguna", "incorrect"}
+    if any(neg in cleaned for neg in negations):
         return BinaryScore.NO
-        
+
     return BinaryScore.UNKNOWN
 
-def parse_score_range(
+
+def parse_numeric_range(
     text: str,
+    *,
     min_val: Union[int, float],
     max_val: Union[int, float],
-    default: Optional[Union[int, float]] = None
-) -> ParsingResult:
+    default: Optional[Union[int, float]] = None,
+) -> ParseResult:
     """
-    Extrae puntuación numérica de texto con manejo robusto de errores.
-    
-    Args:
-        text: Texto a analizar
-        min_val: Valor mínimo aceptable
-        max_val: Valor máximo aceptable
-        default: Valor por defecto si no se puede parsear (opcional)
-        
-    Returns:
-        ParsingResult con:
-        - success: bool
-        - value: Valor parseado (si success)
-        - error: Mensaje de error (si no success)
-        - original: Texto original
+    Extract the first valid number in a range.
+
+    Returns ParseResult(success=True, value=<float>) or an explanatory error.
     """
-    if default is None:
-        default = min_val
-    
     try:
-        # Buscar números en el texto
-        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-        
-        for num_str in numbers:
-            try:
-                score = float(num_str)
-                if min_val <= score <= max_val:
-                    return ParsingResult(
-                        success=True,
-                        value=score,
-                        original=text
-                    )
-            except ValueError:
-                continue
-                
-        return ParsingResult(
+        numbers = re.findall(r"[-+]?\d+(?:\.\d+)?", str(text))
+        for n_str in numbers:
+            val = float(n_str)
+            if min_val <= val <= max_val:
+                return ParseResult(value=val, original=text)
+        return ParseResult(
             success=False,
-            value=default,
-            error=f"No se encontró valor en rango {min_val}-{max_val}",
-            original=text
+            error=f"No value in range {min_val}-{max_val} found",
+            original=text,
         )
-        
-    except Exception as e:
-        logger.error(f"Error parseando score: {str(e)}")
-        return ParsingResult(
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected numeric parsing error")
+        return ParseResult(
             success=False,
-            value=default,
-            error=str(e),
-            original=text
+            error=str(exc),
+            original=text,
         )
 
-def parse_list(text: str, delimiter: str = ",") -> ParsingResult:
-    """
-    Parsea texto a lista, manejando diferentes formatos.
-    
-    Args:
-        text: Texto con elementos separados
-        delimiter: Separador (por defecto ",")
-        
-    Returns:
-        ParsingResult con lista parseada
-    """
-    try:
-        if not text.strip():
-            return ParsingResult(
-                success=True,
-                value=[],
-                original=text
-            )
-            
-        items = [item.strip() for item in text.split(delimiter) if item.strip()]
-        return ParsingResult(
-            success=True,
-            value=items,
-            original=text
-        )
-    except Exception as e:
-        return ParsingResult(
-            success=False,
-            error=str(e),
-            original=text
-        )
 
-def parse_dict(text: str) -> ParsingResult:
-    """
-    Intenta parsear texto como diccionario JSON.
-    
-    Args:
-        text: Texto en formato JSON
-        
-    Returns:
-        ParsingResult con diccionario parseado
-    """
-    import json
+def parse_list(text: str, *, delimiter: str = ",") -> ParseResult:
+    """Split text by delimiter and trim whitespace."""
     try:
-        data = json.loads(text)
+        items = [item.strip() for item in str(text).split(delimiter) if item.strip()]
+        return ParseResult(value=items, original=text)
+    except Exception as exc:  # noqa: BLE001
+        return ParseResult(success=False, error=str(exc), original=text)
+
+
+def parse_json(text: str) -> ParseResult:
+    """Safely parse JSON text into a dict."""
+    try:
+        data = json.loads(text.strip())
         if not isinstance(data, dict):
-            raise ValueError("El texto no representa un diccionario")
-            
-        return ParsingResult(
-            success=True,
-            value=data,
-            original=text
-        )
-    except Exception as e:
-        return ParsingResult(
-            success=False,
-            error=str(e),
-            original=text
-        )
+            raise ValueError("Top-level JSON object expected")
+        return ParseResult(value=data, original=text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return ParseResult(success=False, error=str(exc), original=text)
 
-def parse_boolean(text: str) -> ParsingResult:
-    """
-    Parsea texto a booleano con múltiples formatos soportados.
-    
-    Args:
-        text: Texto a evaluar
-        
-    Returns:
-        ParsingResult con valor booleano
-    """
-    true_values = {"true", "yes", "si", "sí", "1", "verdadero"}
-    false_values = {"false", "no", "0", "falso"}
-    
-    clean_text = text.strip().lower()
-    
-    if clean_text in true_values:
-        return ParsingResult(
-            success=True,
-            value=True,
-            original=text
-        )
-    elif clean_text in false_values:
-        return ParsingResult(
-            success=True,
-            value=False,
-            original=text
-        )
-        
-    return ParsingResult(
+
+def parse_boolean(text: str) -> ParseResult:
+    """Flexible boolean conversion."""
+    true_vals = {"true", "yes", "si", "sí", "1", "verdadero", "on"}
+    false_vals = {"false", "no", "0", "falso", "off"}
+    cleaned = str(text).strip().lower()
+    if cleaned in true_vals:
+        return ParseResult(value=True, original=text)
+    if cleaned in false_vals:
+        return ParseResult(value=False, original=text)
+    return ParseResult(
         success=False,
-        error="Valor booleano no reconocido",
-        original=text
+        error="Unrecognised boolean string",
+        original=text,
     )
 
-def safe_parse(parse_func, text: str, *args, **kwargs) -> ParsingResult:
+
+# ------------------------------------------------------------------
+# Safe wrapper
+# ------------------------------------------------------------------
+def safe_parse(
+    parser: Any,
+    text: str,
+    *args: Any,
+    **kwargs: Any,
+) -> ParseResult:
     """
-    Wrapper seguro para funciones de parseo.
-    
-    Args:
-        parse_func: Función de parseo
-        text: Texto a parsear
-        *args, **kwargs: Argumentos adicionales
-        
-    Returns:
-        ParsingResult estandarizado
+    Wrap any parser with uniform error handling.
+
+    Example
+    -------
+    result = safe_parse(parse_numeric_range, "score is 4.5", min_val=0, max_val=5)
     """
     try:
-        return parse_func(text, *args, **kwargs)
-    except Exception as e:
-        logger.error(f"Error en safe_parse: {str(e)}")
-        return ParsingResult(
-            success=False,
-            error=str(e),
-            original=text
-        )
+        return parser(text, *args, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Parser crashed")
+        return ParseResult(success=False, error=str(exc), original=text)

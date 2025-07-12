@@ -13,6 +13,7 @@ from langchain.vectorstores.base import VectorStoreRetriever
 
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
+from src.core.config import settings  # Importa settings
 
 logger = get_logger(__name__)
 
@@ -20,10 +21,10 @@ logger = get_logger(__name__)
 class Retriever:
     def __init__(
         self,
-        index_path: Union[str, Path],
-        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
-        vectorstore_type: str = "chroma",
-        device: str = "cpu"
+        index_path: Union[str, Path] = settings.VEC_DIR / settings.INDEX_NAME,
+        embedding_model: str = settings.EMBEDDING_MODEL,
+        vectorstore_type: str = settings.VECTOR_BACKEND,
+        device: str = getattr(settings, "DEVICE", "cpu")  # fallback a 'cpu'
     ):
         self.index_path = Path(index_path)
         self.embedding_model = embedding_model
@@ -100,10 +101,10 @@ class Retriever:
             # First get category matches
             base_results = self.retriever.invoke(
                 query,
-                k=k*3,  # Get more for filtering
+                k=k * 3,
                 filter={"category": {"$eq": "Beauty"}}
             )
-            
+
             # Then filter by price
             filtered = []
             for doc in base_results:
@@ -113,14 +114,13 @@ class Retriever:
                         filtered.append(doc)
                 except (ValueError, AttributeError):
                     continue
-                    
+
             return filtered[:k]
         except Exception as e:
             logger.error(f"Retrieval error: {str(e)}")
             return []
 
     def _filter_by_price(self, docs: List[Document], max_price: float) -> List[Document]:
-        """Filter documents by maximum price"""
         filtered = []
         for doc in docs:
             try:
@@ -132,7 +132,7 @@ class Retriever:
         return filtered
 
     def _retrieve_faiss(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
-        query_embedding = np.array(self.embedder.embed_query(query)).astype('float32')
+        query_embedding = np.array(self.embedder.embed_query(query)).astype("float32")
         distances, indices = self.faiss_index.search(np.array([query_embedding]), k)
 
         results = []
@@ -177,7 +177,7 @@ class Retriever:
             elif metadata[field] != value:
                 return False
         return True
-    
+
     def debug_index(self, category="Beauty", limit=5):
         """Debug what's actually in the index"""
         results = self.vectorstore.get(

@@ -1,255 +1,226 @@
 # src/core/rag/advanced/agent.py
-from typing import Dict, Any, Optional, List
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import time
+"""
+Unified RAG agent for the Amazon catalog.
+
+Features
+--------
+• Category-aware retrieval (CategoryTree)
+• Runtime filtering (ProductFilter)
+• Context-rich feedback (FeedbackProcessor)
+• Optional RLHF fine-tuned model (LoRA checkpoint)
+"""
+
+from __future__ import annotations
+
 import logging
-from google.api_core import exceptions as google_exceptions
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.language_models import BaseLLM
-from langchain_core.retrievers import BaseRetriever
-from langchain_core.memory import BaseMemory
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.documents import Document
-from src.core.utils.logger import configure_root_logger
+import sys
+from pathlib import Path
+from typing import List, Dict, Optional
 
-from src.core.rag.advanced.prompts import (
-    RAG_PROMPT_TEMPLATE,
-    QUERY_REWRITE_PROMPT,
-    VALIDATION_PROMPT,
-    RELEVANCE_PROMPT,
-    HALLUCINATION_PROMPT,
-    ANSWER_QUALITY_PROMPT
+import torch
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.chains import ConversationalRetrievalChain
+from langchain.prompts import PromptTemplate
+
+# Internal imports
+from src.core.category_search.category_tree import CategoryTree, ProductFilter
+from src.core.rag.advanced.feedback_processor import FeedbackProcessor
+from src.core.llms.local_llm import local_llm
+from src.core.prompts.product import ProductPrompts
+from src.core.config import settings
+
+# ------------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
+logging.getLogger("transformers").setLevel(logging.WARNING)
 
-class RateLimiter:
-    """Clase para manejar rate limiting"""
-    def __init__(self, calls_per_minute: int = 60):
-        self.calls_per_minute = calls_per_minute
-        self.last_calls = []
+# ------------------------------------------------------------------
+# Agent
+# ------------------------------------------------------------------
+class RAGAgent:
+    """
+    One-stop RAG agent that is aware of:
+    • product categories
+    • user filters
+    • feedback collection
+    • RLHF checkpoints
+    """
 
-    def wait_if_needed(self):
-        now = time.time()
-        # Eliminar llamadas antiguas (más de 1 minuto)
-        self.last_calls = [t for t in self.last_calls if now - t < 60]
-        
-        if len(self.last_calls) >= self.calls_per_minute:
-            sleep_time = 60 - (now - self.last_calls[0])
-            time.sleep(max(0, sleep_time))
-        
-        self.last_calls.append(time.time())
-
-class AdvancedRAGAgent:
     def __init__(
         self,
-        llm: BaseLLM,
-        retriever: BaseRetriever,
-        memory: BaseMemory,
-        feedback_processor: Optional[Any] = None,
-        prompt_template: ChatPromptTemplate = RAG_PROMPT_TEMPLATE,
-        enable_rewrite: bool = True,
-        enable_validation: bool = True,
-        top_k: int = 5,
-        rate_limit: int = 60  # Llamadas por minuto
+        *,
+        products: List[Dict],
+        lora_checkpoint: Optional[Path] = None,
     ):
-        self.llm = llm
-        self.retriever = retriever
-        self.memory = memory
-        self.feedback_processor = feedback_processor
-        self.prompt_template = prompt_template
-        self.enable_rewrite = enable_rewrite
-        self.enable_validation = enable_validation
-        self.top_k = top_k
-        self.rate_limiter = RateLimiter(calls_per_minute=rate_limit)
-        self.output_parser = StrOutputParser()
-        self.setup_chains()
+        self.products = products
+        self.embedder = HuggingFaceEmbeddings(
+            model_name=settings.EMBEDDING_MODEL,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type(google_exceptions.ResourceExhausted)
-    )
-    def invoke(self, question: str, **kwargs) -> Dict[str, Any]:
-        """Versión protegida contra rate limiting y con retry"""
-        try:
-            self.rate_limiter.wait_if_needed()
-            return self._invoke_impl(question, **kwargs)
-        except google_exceptions.ResourceExhausted as e:
-            logger.error(f"Quota exceeded, retrying: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            return {
-                "response": "Disculpa, estamos experimentando problemas técnicos. Por favor intenta nuevamente más tarde.",
-                "metadata": {"error": str(e)}
-            }
+        # Build category tree + filters
+        self.tree = CategoryTree(products).build_tree()
+        self.active_filter = ProductFilter()
 
-    def _invoke_impl(self, question: str, **kwargs) -> Dict[str, Any]:
-        """Implementación principal del invoke"""
-        inputs = {"question": question, **kwargs}
-        
-        # Get the effective query (rewritten if available, original otherwise)
-        effective_query = question
-        if self.enable_rewrite:
+        # Vector store
+        self.vector_store = self._build_vector_store()
+
+        # LLM (LoRA-aware)
+        self.llm = local_llm(
+            base_model_name=settings.BASE_LLM,
+            lora_checkpoint=lora_checkpoint,
+        )
+
+        # LangChain memory
+        self.memory = ConversationBufferWindowMemory(
+            memory_key="chat_history",
+            k=5,
+            return_messages=True,
+        )
+
+        # LangChain chain
+        self.chain = self._build_chain()
+
+        # Feedback
+        self.feedback = FeedbackProcessor(feedback_dir=str(settings.DATA_DIR / "feedback"))
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+    def _build_vector_store(self) -> FAISS:
+        texts = [
+            f"{p.get('title', '')} {' '.join(f'{k}:{v}' for k, v in p.get('details', {}).items())}"
+            for p in self.products
+        ]
+        return FAISS.from_texts(texts=texts, embedding=self.embedder)
+
+    def _build_chain(self) -> ConversationalRetrievalChain:
+        prompt = PromptTemplate(
+            input_variables=["chat_history", "question", "context"],
+            template=ProductPrompts.SIMPLE_PROMPT_TEMPLATE,
+        )
+        retriever = self.vector_store.as_retriever(
+            search_kwargs={"k": 5, "filter": self.active_filter.apply}
+        )
+        return ConversationalRetrievalChain.from_llm(
+            llm=self.llm,
+            retriever=retriever,
+            memory=self.memory,
+            combine_docs_chain_kwargs={"prompt": prompt},
+            return_source_documents=False,
+        )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def ask(self, query: str) -> str:
+        """
+        Run retrieval + generation and store feedback skeleton.
+        """
+        answer = self.chain({"question": query})["answer"]
+
+        # Fire-and-forget feedback record
+        retrieved_titles = [
+            doc.metadata.get("title", "No title")
+            for doc in self.vector_store.similarity_search(query, k=5)
+        ]
+        self.feedback.save_feedback(
+            query=query,
+            answer=answer,
+            rating=0,  # placeholder; user will update via CLI
+            retrieved_docs=retrieved_titles,
+            category_tree=self.tree,
+            active_filter=self.active_filter,
+        )
+        return answer
+
+    def set_filters(
+        self,
+        *,
+        price_range: Optional[tuple] = None,
+        rating_range: Optional[tuple] = None,
+        brands: Optional[list] = None,
+    ) -> None:
+        """Runtime filter update (hot-swapped in retriever)."""
+        self.active_filter.clear_filters()
+        if price_range:
+            self.active_filter.add_price_filter(*price_range)
+        if rating_range:
+            self.active_filter.add_rating_filter(*rating_range)
+        if brands:
+            self.active_filter.add_brand_filter(brands)
+
+    # ------------------------------------------------------------------
+    # CLI
+    # ------------------------------------------------------------------
+    def chat_loop(self) -> None:
+        """Interactive CLI exactly like the old rag_agent.py"""
+        print("\n🧠 Agente listo. Escribe 'salir' para terminar.\n")
+
+        while True:
             try:
-                inputs["rewritten_question"] = self.rewrite_query(question)
-                effective_query = inputs["rewritten_question"]
+                query = input("🧑 Tú: ").strip()
+                if query.lower() in {"salir", "exit", "q"}:
+                    print("👋 ¡Hasta luego!")
+                    break
+
+                answer = self.ask(query)
+                print(f"\n🤖 Asistente:\n{answer}\n")
+
+                # Ask user for rating
+                rating = None
+                while rating not in {"1", "2", "3", "4", "5"}:
+                    rating = input("¿Qué tan útil? (1-5): ").strip()
+                comment = input("¿Comentarios? (opcional): ").strip()
+
+                self.feedback.save_feedback(
+                    query=query,
+                    answer=answer,
+                    rating=int(rating),
+                    extra_meta={"comment": comment or None},
+                )
+
+            except KeyboardInterrupt:
+                print("\n🛑 Cancelado")
+                break
             except Exception as e:
-                logger.warning(f"Query rewriting failed: {str(e)}")
-                effective_query = question
-        
-        # Retrieve documents with the effective query
-        inputs["context"] = self.retrieve_documents(effective_query, k=self.top_k)
-        
-        # Load conversation history
-        inputs["chat_history"] = self.load_memory()
-        
-        # Generate response
-        response = self.rag_chain.invoke(inputs)
-        
-        # Validate response if enabled
-        is_valid = True
-        if self.enable_validation:
-            context = "\n\n".join([doc.page_content for doc in inputs.get("context", [])])
-            is_valid = self.validate_response(context, response)
-            if not is_valid:
-                response = "No puedo verificar completamente esta información. ¿Deseas que investigue más?"
+                logger.error("Error in chat loop: %s", e, exc_info=True)
+                print("⚠️ Error, inténtalo de nuevo.")
 
-        # Update memory
-        self.memory.save_context(
-            {"input": question},
-            {"output": response}
+    # ------------------------------------------------------------------
+    # Entry-point
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_pickle_dir(
+        cls,
+        pickle_dir: Path = settings.PROC_DIR,
+        lora_checkpoint: Optional[Path] = settings.RLHF_CHECKPOINT,
+    ) -> "RAGAgent":
+        """Factory that loads products from the canonical .pkl files."""
+        from src.core.data.loader import DataLoader
+
+        products = DataLoader().load_data(
+            raw_dir=settings.RAW_DIR,
+            processed_dir=pickle_dir,
+            cache_enabled=settings.CACHE_ENABLED,
         )
-        
-        return {
-            "response": response,
-            "metadata": {
-                "context": inputs.get("context", []),
-                "is_valid": is_valid,
-                "rewritten_question": inputs.get("rewritten_question", ""),
-                "chat_history": inputs.get("chat_history", ""),
-                "top_k": self.top_k
-            }
-        }
+        if not products:
+            raise RuntimeError("No products found")
+        return cls(products=products, lora_checkpoint=lora_checkpoint)
 
-    def setup_chains(self) -> None:
-        """Configura todas las cadenas de procesamiento."""
-        # Cadena para reescritura de consultas
-        self.rewrite_chain = (
-            {"query": RunnablePassthrough()}
-            | QUERY_REWRITE_PROMPT
-            | self.llm
-            | self.output_parser
-        )
-        
-        # Cadena principal RAG
-        self.rag_chain = (
-            RunnablePassthrough.assign(
-                context=lambda x: self.retrieve_documents(
-                    x.get("rewritten_question", x["question"]), 
-                    k=self.top_k
-                ),
-                chat_history=lambda x: self.load_memory()
-            )
-            | self.prompt_template
-            | self.llm
-            | self.output_parser
-        )
-        
-        # Cadena de recuperación de documentos (ahora usa top_k)
-        self.retrieval_chain = RunnableLambda(
-            lambda x: self.retriever.retrieve(
-                x.get("rewritten_question", x["question"]),
-                k=self.top_k
-            )
-        )
-        
-        
-        # Cadenas de validación
-        self.validation_chain = VALIDATION_PROMPT | self.llm | self.output_parser
-        self.relevance_chain = RELEVANCE_PROMPT | self.llm | self.output_parser
-        self.hallucination_chain = HALLUCINATION_PROMPT | self.llm | self.output_parser
-        self.quality_chain = ANSWER_QUALITY_PROMPT | self.llm | self.output_parser
 
-    def rewrite_query(self, query: str) -> str:
-        """Reescribe la consulta del usuario para mejor recuperación."""
-        return self.rewrite_chain.invoke(query)
-
-    def retrieve_documents(self, query: str, k: Optional[int] = None) -> List[Document]:
-        """Recupera documentos relevantes para la consulta."""
-        k = k or self.top_k
-        return self.retriever.retrieve(query, k=k)  # Changed from get_relevant_documents to retrieve
-
-    def load_memory(self) -> str:
-        """Carga el historial de conversación desde la memoria."""
-        return self.memory.load_memory_variables({}).get("chat_history", "")
-
-    def validate_response(self, context: str, answer: str) -> bool:
-        """Valida si la respuesta está soportada por el contexto."""
-        validation = self.validation_chain.invoke({
-            "context": context,
-            "answer": answer
-        })
-        return "yes" in validation.lower()
-
-    def process_feedback(self, question: str, response: str, feedback: Dict[str, Any]) -> None:
-        """Procesa el feedback del usuario si está disponible el procesador."""
-        if self.feedback_processor:
-            self.feedback_processor.process(
-                question=question,
-                response=response,
-                feedback=feedback
-            )
-
-    def invoke(self, question: str, **kwargs) -> Dict[str, Any]:
-        """
-        Ejecuta el flujo completo del agente.
-        
-        Args:
-            question: Consulta del usuario
-            **kwargs: Argumentos adicionales
-            
-        Returns:
-            Dict con respuesta y metadatos
-        """
-        # Preparar y ejecutar cadena RAG
-        inputs = {"question": question, **kwargs}
-        response = self.rag_chain.invoke(inputs)
-        
-        # Validar respuesta si está habilitado
-        is_valid = True
-        if self.enable_validation:
-            context = "\n\n".join([doc.page_content for doc in inputs.get("context", [])])
-            is_valid = self.validate_response(context, response)
-            if not is_valid:
-                response = "No puedo verificar completamente esta información. ¿Deseas que investigue más?"
-
-        # Actualizar memoria
-        self.memory.save_context(
-            {"input": question},
-            {"output": response}
-        )
-        
-        # Preparar metadatos
-        metadata = {
-            "context": inputs.get("context", []),
-            "is_valid": is_valid,
-            "rewritten_question": inputs.get("rewritten_question", ""),
-            "chat_history": inputs.get("chat_history", ""),
-            "top_k": self.top_k
-        }
-        
-        return {
-            "response": response,
-            "metadata": metadata
-        }
-
-    async def ainvoke(self, question: str, **kwargs) -> Dict[str, Any]:
-        """Versión asíncrona del método invoke."""
-        # Implementación básica - adaptar para operaciones async reales
-        return self.invoke(question, **kwargs)
-
-    def stream(self, question: str, **kwargs):
-        """Versión streaming del método invoke."""
-        result = self.invoke(question, **kwargs)
-        yield result["response"]
+# ------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------
+if __name__ == "__main__":
+    agent = RAGAgent.from_pickle_dir()
+    agent.chat_loop()

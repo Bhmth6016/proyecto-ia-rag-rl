@@ -1,245 +1,184 @@
 # src/interfaces/cli.py
+"""
+Amazon product recommendation CLI (headless).
+
+Commands
+--------
+$ python -m src.cli rag          # interactive Q&A
+$ python -m src.cli category     # browse category tree
+$ python -m src.cli index        # (re)build index & cache
+"""
+
+from __future__ import annotations
+
 import argparse
 import logging
+import sys
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-from enum import Enum, auto
-from textwrap import dedent
+from typing import List, Optional
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.memory import ConversationBufferMemory
-from src.core.utils.logger import get_logger
-from src.core.rag.basic.retriever import Retriever
-from src.core.rag.advanced.agent import AdvancedRAGAgent
-from src.core.category_search.category_tree import CategoryTree
+from src.core.config import settings
 from src.core.data.loader import DataLoader
-from src.core.utils.parsers import parse_binary_score, BinaryScore
+from src.core.data.product import Product
+from src.core.category_search.category_tree import CategoryTree
+from src.core.retrieval.retriever import Retriever
+from src.core.rag.agent import RAGAgent
+from src.core.utils.logger import configure_root_logger
+from src.core.utils.parsers import parse_binary_score
+from src.core.llms.local_llm import local_llm  # <-- your LLM builder
 
-logger = get_logger(__name__)
 
-class CLIMode(Enum):
-    RAG = auto()
-    CATEGORY = auto()
-    INDEX = auto()
+# ------------------------------------------------------------------
+# CLI entry-point
+# ------------------------------------------------------------------
+def main(argv: Optional[List[str]] = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Amazon Product Recommendation CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
 
-class AmazonRecommendationCLI:
-    def __init__(self, products: List[Dict], category_tree: CategoryTree, llm: ChatGoogleGenerativeAI, memory: ConversationBufferMemory):
-        self.parser = self._setup_parser()
-        self.args = None
-        self.products = products
-        self.category_tree = category_tree
-        self.llm = llm
-        self.memory = memory
-        self.loader = DataLoader()
-        self.agent = None  # Se inicializará en _setup_rag_mode
+    # ---- rag -------------------------------------------------------
+    rag = sub.add_parser("rag", help="interactive Q&A")
+    rag.add_argument("-k", "--top-k", type=int, default=5)
+    rag.add_argument("--no-feedback", action="store_true")
 
-    def _setup_parser(self) -> argparse.ArgumentParser:
-        """Configure the command line argument parser"""
-        parser = argparse.ArgumentParser(
-            description="Amazon Recommendation System CLI",
-            formatter_class=argparse.RawTextHelpFormatter
-        )
-        
-        subparsers = parser.add_subparsers(dest='command', required=True)
+    # ---- category --------------------------------------------------
+    cat = sub.add_parser("category", help="browse by category")
+    cat.add_argument("-c", "--category", type=str, help="start category")
 
-        # RAG Mode
-        rag_parser = subparsers.add_parser('rag', help='Run in RAG question-answering mode')
-        rag_parser.add_argument('-k', '--top-k', type=int, default=5, help='Number of results to return')
-        rag_parser.add_argument('--no-feedback', action='store_true', help='Disable feedback collection')
+    # ---- index -----------------------------------------------------
+    idx = sub.add_parser("index", help="(re)build vector-store")
+    idx.add_argument("--clear-cache", action="store_true")
 
-        # Category Mode
-        category_parser = subparsers.add_parser('category', help='Browse products by category')
-        category_parser.add_argument('-c', '--category', type=str, help='Start with specific category')
+    # ---- common ----------------------------------------------------
+    for cmd in (rag, cat, idx):
+        cmd.add_argument("-v", "--verbose", action="store_true")
+        cmd.add_argument("--log-file", type=Path)
 
-        # Index Mode
-        index_parser = subparsers.add_parser('index', help='Reindex data')
-        index_parser.add_argument('--clear-cache', action='store_true', help='Clear existing cache before indexing')
+    args = parser.parse_args(argv)
 
-        # Common arguments
-        for p in [rag_parser, category_parser, index_parser]:
-            p.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
-            p.add_argument('--log-file', type=str, help='Path to log file')
+    # ----------------------------------------------------------------
+    # logging
+    # ----------------------------------------------------------------
+    configure_root_logger(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        log_file=args.log_file,
+        module_levels={"urllib3": logging.WARNING, "transformers": logging.WARNING},
+    )
 
-        return parser
+    # ----------------------------------------------------------------
+    # shared objects
+    # ----------------------------------------------------------------
+    loader = DataLoader(
+        raw_dir=settings.RAW_DIR,
+        processed_dir=settings.PROC_DIR,
+        cache_enabled=settings.CACHE_ENABLED,
+    )
+    products: List[Product] = loader.load_data(use_cache=True)
 
-    def _setup_rag_mode(self):
-        """Initialize components for RAG mode"""
-        logger.info("Initializing RAG system...")
-        
-        retriever = Retriever(
-            index_path="data/processed/chroma_db",
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            vectorstore_type="chroma"
-        )
-        
-        self.agent = AdvancedRAGAgent(
-            llm=self.llm,
-            retriever=retriever,
-            memory=self.memory,
-            feedback_processor=None
-        )
-        
-        logger.info("RAG system ready")
+    if not products:
+        logging.error("No products loaded – aborting.")
+        sys.exit(1)
 
-    def _run_rag_mode(self):
-        """Interactive RAG question-answering loop"""
-        print(dedent("""
-        ===========================================
-        Amazon Product Recommendation - RAG Mode
-        ===========================================
-        Ask questions about products and get recommendations
-        Type 'exit' to quit
-        """))
-        
-        try:
-            while True:
-                query = input("\nYour question: ").strip()
-                if query.lower() in ('exit', 'quit'):
-                    break
-                
-                if not query:
-                    print("Please enter a question")
+    # ----------------------------------------------------------------
+    # dispatch
+    # ----------------------------------------------------------------
+    if args.command == "rag":
+        _run_rag_mode(products, k=args.top_k, feedback=not args.no_feedback)
+
+    elif args.command == "category":
+        _run_category_mode(products, start=args.category)
+
+    elif args.command == "index":
+        _run_index_mode(loader, clear_cache=args.clear_cache)
+
+    logging.info("Done.")
+
+
+# ------------------------------------------------------------------
+# Mode implementations
+# ------------------------------------------------------------------
+def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
+    """Interactive Q&A loop."""
+    logger = logging.getLogger("rag")
+
+    # Build retriever & agent using settings
+    retriever = Retriever(
+        index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        vectorstore_type=settings.VECTOR_BACKEND,
+    )
+    agent = RAGAgent(
+        products=products,
+        lora_checkpoint=settings.RLHF_CHECKPOINT,
+    )
+
+    print("\n=== Amazon RAG mode ===\nType 'exit' to quit.\n")
+    while True:
+        query = input("🧑  You: ").strip()
+        if query.lower() in {"exit", "quit", "q"}:
+            break
+        if not query:
+            continue
+
+        answer = agent.ask(query)
+        print(f"\n🤖  Bot: {answer}\n")
+
+        if feedback:
+            rating = input("Was this helpful? (y/n): ").strip().lower()
+            score = parse_binary_score(rating)
+            logger.info("Feedback: %s -> %s", query, score.name)
+
+    logger.info("Leaving RAG mode.")
+
+
+def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
+    """Interactive category explorer."""
+    tree = CategoryTree(products)
+    tree.build_tree()
+
+    node = tree.root
+    print("\n=== Category Explorer ===\nPress Ctrl+C twice to exit.\n")
+
+    try:
+        while True:
+            if node.children:
+                print(f"\n📂 {node.name} ({len(node.products)} items)")
+                for i, child in enumerate(node.children, 1):
+                    print(f"  {i}. {child.name} ({len(child.products)} items)")
+                print("  0. Back" if node.parent else "  0. Exit")
+
+                choice = input("Select: ").strip()
+                if choice == "0":
+                    node = node.parent or tree.root
                     continue
-                    
-                # Get response from RAG agent using invoke() instead of query()
-                result = self.agent.invoke(query)
-                print(f"\nResponse: {result['response']}")
-                
-                # Collect feedback if enabled
-                if not self.args.no_feedback:
-                    try:
-                        feedback = input("\nWas this helpful? (y/n): ").strip().lower()
-                        score = parse_binary_score(feedback)
-                        if score == BinaryScore.POSITIVE:
-                            logger.info("Positive feedback for: %s", query)
-                        elif score == BinaryScore.NEGATIVE:
-                            logger.warning("Negative feedback for: %s", query)
-                    except Exception as e:
-                        logger.error("Feedback processing error: %s", str(e))
-                    
-        except KeyboardInterrupt:
-            logger.info("\nExiting RAG mode")
-        except Exception as e:
-            logger.error(f"Error in RAG mode: {str(e)}")
-            print(f"\nAn error occurred: {str(e)}")
+                if choice.isdigit() and 1 <= int(choice) <= len(node.children):
+                    node = node.children[int(choice) - 1]
+                    continue
+                print("Invalid choice.")
+            else:
+                print(f"\n🛍️  {node.name} – {len(node.products)} products")
+                for i, p in enumerate(node.products[:20], 1):
+                    print(f"{i:2}. {p.title} – ${p.price}")
+                input("\nPress Enter to go back…")
+                node = node.parent or tree.root
+    except KeyboardInterrupt:
+        print("\nLeaving category mode.")
 
 
-    def run(self):
-        """Main entry point for the CLI"""
-        self.args = self.parser.parse_args()
+def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
+    """(Re)build vector-store and cache."""
+    if clear_cache:
+        deleted = loader.clear_cache()
+        print(f"🗑️  Cleared {deleted} cache files.")
 
-        # Configure logging
-        log_level = logging.DEBUG if self.args.verbose else logging.INFO
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                *(logging.FileHandler(self.args.log_file,) if self.args.log_file else ())
-            ]
-        )
-        
-        try:
-            if self.args.command == 'rag':
-                self._setup_rag_mode()
-                self._run_rag_mode()
-            elif self.args.command == 'category':
-                self._setup_category_mode()
-                self._run_category_mode()
-            elif self.args.command == 'index':
-                self._run_index_mode()
-        except KeyboardInterrupt:
-            logger.info("\nOperation cancelled by user")
-        except Exception as e:
-            logger.error(f"CLI Error: {str(e)}", exc_info=True)
-            raise
+    # Force re-processing (cache disabled)
+    products = loader.load_data(use_cache=False)
+    print(f"✅ Re-indexed {len(products)} products.")
 
 
-    def _setup_category_mode(self):
-        """Initialize components for category browsing"""
-        logger.info("Loading product categories...")
-        products = self.loader.load_data()
-        self.category_tree = CategoryTree(products)
-        self.category_tree.build_tree()
-        logger.info(f"Loaded {len(products)} products across categories")
-
-    def _run_category_mode(self):
-        """Interactive category browsing loop"""
-        print(dedent("""
-        ===========================================
-        Amazon Product Recommendation - Category Mode
-        ===========================================
-        Browse products by category hierarchy
-        Press Ctrl+C twice to exit
-        """))
-        
-        current_node = self.category_tree.root
-        exit_confirmed = False
-        
-        try:
-            while not exit_confirmed:
-                try:
-                    if not current_node.children:
-                        self._show_products(current_node.products)
-                        current_node = current_node.parent
-                        continue
-                    
-                    print(f"\nCurrent category: {current_node.name}")
-                    print("\nSubcategories:")
-                    for i, child in enumerate(current_node.children, 1):
-                        print(f"{i}. {child.name} ({len(child.products)} products)")
-                    print("\n0. Back to parent" if current_node.parent else "0. Exit")
-                    
-                    choice = input("\nSelect category (0-{}): ".format(len(current_node.children)))
-                    
-                    if choice == '0':
-                        if current_node.parent:
-                            current_node = current_node.parent
-                        else:
-                            break
-                    elif choice.isdigit() and 1 <= int(choice) <= len(current_node.children):
-                        current_node = current_node.children[int(choice)-1]
-                    else:
-                        print("Invalid selection")
-                        
-                except KeyboardInterrupt:
-                    print("\nPress Ctrl+C again to confirm exit or Enter to continue...")
-                    try:
-                        input()
-                        exit_confirmed = False
-                    except KeyboardInterrupt:
-                        exit_confirmed = True
-                    except Exception:
-                        continue
-                        
-        except Exception as e:
-            logger.error(f"Fatal error in category mode: {str(e)}")
-            print(f"\nA fatal error occurred: {str(e)}")
-
-    def _show_products(self, products: List[Dict[str, Any]]):
-        """Display products with filtering options"""
-        # Simplified product display - could be enhanced with filters
-        print(f"\nShowing {len(products)} products:")
-        for i, product in enumerate(products[:20], 1):
-            print(f"{i}. {product.get('title', 'Unknown')}")
-            print(f"   Price: ${product.get('price', 'N/A')} | Rating: {product.get('average_rating', 'N/A')}")
-        
-        input("\nPress Enter to continue...")
-
-    def _run_index_mode(self):
-        """Handle data reindexing"""
-        print("\nReindexing product data...")
-        if self.args.clear_cache:
-            cleared = self.loader.clear_cache()
-            print(f"Cleared {cleared} cache files")
-        
-        products = self.loader.load_data(use_cache=False)
-        print(f"Successfully indexed {len(products)} products")
-
-def main():
-    """Entry point for CLI execution"""
-    cli = AmazonRecommendationCLI()
-    cli.run()
-
+# ------------------------------------------------------------------
+# Script entry
+# ------------------------------------------------------------------
 if __name__ == "__main__":
     main()

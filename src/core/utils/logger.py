@@ -1,114 +1,158 @@
 # src/core/utils/logger.py
+"""
+Centralised, reusable logging utilities.
+
+Features
+--------
+• JSON or plain-text formatting  
+• Console + rotating file handlers  
+• Per-module level overrides  
+• Thread-safe, no duplicate handlers
+"""
+
+from __future__ import annotations
+
 import logging
+import logging.handlers
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
-import json
-from datetime import datetime
 
+# --------------------------------------------------
+# JSON formatter
+# --------------------------------------------------
 class JSONFormatter(logging.Formatter):
-    """Formateador personalizado para logs en JSON"""
+    """
+    Emits structured logs – perfect for ingestion by Loki, Datadog, etc.
+    """
+
     def format(self, record: logging.LogRecord) -> str:
-        log_record = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "level": record.levelname,
+        payload: Dict[str, Any] = {
+            "ts": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
+            "lvl": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "msg": record.getMessage(),
             "module": record.module,
-            "line": record.lineno
+            "line": record.lineno,
         }
         if record.exc_info:
-            log_record["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_record)
+            payload["exception"] = self.formatException(record.exc_info)
+        return self._json_dumps(payload)
 
+    @staticmethod
+    def _json_dumps(obj: Any) -> str:
+        import json
+
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+# --------------------------------------------------
+# Logger factory
+# --------------------------------------------------
 def get_logger(
     name: str,
+    *,
     log_file: Optional[str] = None,
     level: int = logging.INFO,
     json_format: bool = False,
-    max_bytes: int = 10 * 1024 * 1024,  # 10MB
-    backup_count: int = 5
+    max_bytes: int = 10 * 1024 * 1024,  # 10 MB
+    backup_count: int = 5,
 ) -> logging.Logger:
     """
-    Configura y retorna un logger con handlers para consola y archivo.
-    
-    Args:
-        name: Nombre del logger (usualmente __name__)
-        log_file: Ruta del archivo de log (opcional)
-        level: Nivel de logging (default: INFO)
-        json_format: Si True, usa formato JSON
-        max_bytes: Tamaño máximo por archivo de log
-        backup_count: Número de archivos de backup a mantener
-        
-    Returns:
-        Logger configurado
+    Obtain or reuse a configured logger.
+
+    Parameters
+    ----------
+    name : str
+        Logger name (usually __name__)
+    log_file : str or Path, optional
+        When given, a RotatingFileHandler is added.
+    level : int
+        Logging level for this logger.
+    json_format : bool
+        Use JSONFormatter instead of plain text.
+    max_bytes : int
+        Max size of each log file before rotation.
+    backup_count : int
+        Number of rotated files to keep.
+
+    Returns
+    -------
+    logging.Logger
+        Ready-to-use logger instance.
     """
     logger = logging.getLogger(name)
-    logger.setLevel(level)
-    
-    # Evitar agregar handlers múltiples
+
+    # Prevent duplicate handlers on reload (Jupyter, pytest, etc.)
     if logger.handlers:
         return logger
-    
-    # Formateador común
-    formatter = (
-        JSONFormatter() if json_format 
-        else logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+
+    formatter = JSONFormatter() if json_format else logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-    
-    # Handler para consola (stderr)
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    # Handler para archivo (si se especifica)
+
+    # Console handler (stderr)
+    console = logging.StreamHandler(sys.stderr)
+    console.setFormatter(formatter)
+    logger.addHandler(console)
+
+    # Optional file handler
     if log_file:
-        log_path = Path(log_file)
+        log_path = Path(log_file).expanduser().resolve()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         file_handler = logging.handlers.RotatingFileHandler(
             filename=log_path,
             maxBytes=max_bytes,
             backupCount=backup_count,
-            encoding='utf-8'
+            encoding="utf-8",
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    
+
+    logger.setLevel(level)
+    logger.propagate = False  # Avoid double logging from root
     return logger
 
+
+# --------------------------------------------------
+# Root logger quick-setup
+# --------------------------------------------------
 def configure_root_logger(
+    *,
     level: int = logging.INFO,
     log_file: Optional[str] = None,
-    modules_levels: Optional[Dict[str, int]] = None
+    module_levels: Optional[Dict[str, int]] = None,
 ) -> None:
     """
-    Configura el logger raíz y niveles específicos para módulos.
-    
-    Args:
-        level: Nivel de logging por defecto
-        log_file: Archivo de log principal
-        modules_levels: Diccionario con niveles específicos por módulo
-                       Ej: {"requests": logging.WARNING}
+    One-call configuration for the root logger (useful for scripts).
+
+    Example
+    -------
+    configure_root_logger(
+        level=logging.INFO,
+        log_file="logs/app.log",
+        module_levels={"urllib3": logging.WARNING, "transformers": logging.ERROR},
+    )
     """
-    # Configurar handler básico para evitar "No handler found" warnings
-    logging.basicConfig(level=level, handlers=[logging.NullHandler()])
-    
-    # Configurar niveles específicos
-    if modules_levels:
-        for module, lvl in modules_levels.items():
+    if module_levels:
+        for module, lvl in module_levels.items():
             logging.getLogger(module).setLevel(lvl)
-    
-    # Configurar logger raíz si se especifica archivo
+
     if log_file:
-        root_logger = logging.getLogger()
-        root_logger.handlers.clear()  # Remover handlers por defecto
-        
-        log_path = Path(log_file)
+        log_path = Path(log_file).expanduser().resolve()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+
+        root = logging.getLogger()
+        root.handlers.clear()  # remove defaults
+
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+            )
         )
-        root_logger.addHandler(file_handler)
+        root.addHandler(handler)
+        root.setLevel(level)
