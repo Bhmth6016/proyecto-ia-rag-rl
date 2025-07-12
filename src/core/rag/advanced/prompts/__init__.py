@@ -1,9 +1,12 @@
-#src/core/rag/advanced/prompts/__init__.py
 # src/core/rag/advanced/prompts/__init__.py
 
 from langchain_core.prompts import ChatPromptTemplate
 
-# Prompt principal para generación RAG
+# ============================================================================
+# 1. PROMPTS DE GENERACIÓN
+# ============================================================================
+
+# 1.1 Prompt principal para generación RAG (atributos dinámicos)
 RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_template("""
 You are an Amazon product recommender. Recommend products matching:
 
@@ -13,13 +16,30 @@ Context:
 {context}
 
 Format each recommendation with:
-1. 🏷️ Product: [Name]
-2. 💵 Price: [Price]
-3. ⭐ Rating: [Rating]/5
-4. 📝 Why Recommended: [Explanation]
+1. 🏷️ **Product**: [Name]
+2. 💵 **Price**: [Price]
+3. ⭐ **Rating**: [Rating]/5
+{dynamic_attributes}
+
+**Why Recommended**: Explain how this product matches the user's criteria (be specific about price, rating, material, brand, etc.). Only include attributes present in the context.
 """)
 
-# Prompt para reescritura de preguntas
+# 1.2 Prompt para extracción dinámica de atributos presentes en el contexto
+DYNAMIC_ATTRIBUTES_EXTRACTOR = ChatPromptTemplate.from_template("""
+Given the context below, return a comma-separated list of available product attributes EXCLUDING name, price, and rating.
+
+Context:
+{context}
+
+Example output: material,color,size,brand,discount
+Only return the attributes list, no extra text.
+""")
+
+# ============================================================================
+# 2. PROMPTS DE PRE-PROCESAMIENTO
+# ============================================================================
+
+# 2.1 Reescritura de preguntas
 QUERY_REWRITE_SYSTEM = """Eres un especialista en mejorar consultas de búsqueda para Amazon. Realiza:
 
 - Expansión de abreviaturas/acrónimos.
@@ -34,113 +54,158 @@ QUERY_REWRITE_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Consulta original: {query}\nConsulta mejorada:")
 ])
 
-# Prompt para validación de respuestas
+# 2.2 Extracción de constraints estructurados
+QUERY_CONSTRAINT_EXTRACTION_PROMPT = ChatPromptTemplate.from_template("""
+Extract structured constraints from the user's Amazon search query.
+
+Query: "{query}"
+
+Return valid JSON with:
+{{
+  "category": "<general category if mentioned>",
+  "attributes": {{"<key>": "<value>"}},
+  "price_range": [min, max] | null,
+  "min_rating": <number> | null,
+  "max_rating": <number> | null,
+  "brand": "<brand name>" | null,
+  "sort_preference": "price_asc" | "price_desc" | "rating_desc" | "relevance" | null
+}}
+
+Only include fields present in the query. Do not invent data.
+""")
+
+# 2.3 Normalización multilingüe (opcional)
+MULTILINGUAL_NORMALIZATION_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """You are a multilingual e-commerce query normalizer. Detect the language and translate the query to English while preserving:
+- Product specifications
+- Brand names
+- Technical terms
+- Numerical values
+
+Return ONLY the English translation."""
+    ),
+    ("human", "Query: {query}")
+])
+
+# ============================================================================
+# 3. PROMPTS DE VALIDACIÓN Y CONTROL DE CALIDAD
+# ============================================================================
+
+# 3.1 Validación de respuestas
 VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        """Evalúa si la respuesta está completamente soportada por el contexto.
+        """Evaluate if the response is fully supported by the context.
 
-Responde EXCLUSIVAMENTE con:
-- 'yes' si toda la información está respaldada.
-- 'no' seguido de los fragmentos no soportados entre paréntesis si hay alucinaciones."""
+Respond EXCLUSIVELY with:
+- 'yes' if all information is backed.
+- 'no' followed by unsupported fragments in parentheses if hallucinations exist."""
     ),
     (
         "human",
-        """Contexto:
+        """Context:
 {context}
 
-Respuesta a evaluar:
+Response to evaluate:
 {answer}
 
-¿Está completamente soportada? Responde (yes/no):"""
+Is fully supported? Answer (yes/no):"""
     )
 ])
 
-# Prompt para evaluación de relevancia
+# 3.2 Evaluación de relevancia
 RELEVANCE_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        """Evalúa la relevancia del documento para responder la pregunta.
+        """Evaluate document relevance for answering the question.
 
-Formato:
-Evaluación: [yes/no] (breve explicación)
+Format:
+Evaluation: [yes/no] (brief explanation)
 
-Ejemplo:
-Documento: "Batería de 4000mAh"
-Pregunta: "¿Cuánto dura la batería?"
-Evaluación: yes (menciona capacidad de batería)"""
+Example:
+Document: "4000mAh battery"
+Question: "How long does the battery last?"
+Evaluation: yes (mentions battery capacity)"""
     ),
     (
         "human",
-        """Documento:
+        """Document:
 {document}
 
-Pregunta:
+Question:
 {question}
 
-Evaluación:"""
+Evaluation:"""
     )
 ])
 
-# Prompt para detección de alucinaciones
+# 3.3 Detección de alucinaciones
 HALLUCINATION_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        """Identifica cualquier información en la respuesta que NO esté respaldada por los documentos.
+        """Identify any information in the response NOT supported by the documents.
 
-Responde con:
-- 'yes' si está completamente respaldada.
-- 'no' seguido de los fragmentos no soportados.
+Respond with:
+- 'yes' if fully supported.
+- 'no' followed by unsupported fragments.
 
-Ejemplo:
-Documentos: "Pantalla de 6.1 pulgadas"
-Respuesta: "Tiene pantalla de 6.1 pulgadas y resistencia al agua"
-Evaluación: no (resistencia al agua)"""
+Example:
+Documents: "6.1 inch screen"
+Response: "Has 6.1 inch screen and water resistance"
+Evaluation: no (water resistance)"""
     ),
     (
         "human",
-        """Documentos de referencia:
+        """Reference documents:
 {documents}
 
-Respuesta a evaluar:
+Response to evaluate:
 {generation}
 
-Evaluación:"""
+Evaluation:"""
     )
 ])
 
-# Prompt para evaluación de calidad de respuestas
+# 3.4 Evaluación de calidad de respuestas
 ANSWER_QUALITY_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        """Evalúa la calidad de la respuesta (1 a 5) basado en:
+        """Evaluate response quality (1-5) based on:
 
-- Precisión (basada en hechos)
-- Completitud (cubre todos los aspectos)
-- Claridad (fácil de entender)
-- Utilidad (resuelve la pregunta)
+- Accuracy (fact-based)
+- Completeness (covers all aspects)
+- Clarity (easy to understand)
+- Usefulness (solves the question)
+- Specificity (addresses user criteria)
 
-Formato:
-Puntuación: [1-5]
-Explicación: [breve justificación]
-Mejoras: [sugerencias si aplica; solo si la puntuación es <4]"""
+Format:
+Score: [1-5]
+Explanation: [brief justification]
+Improvements: [suggestions if score <4]"""
     ),
     (
         "human",
-        """Pregunta original:
+        """Original question:
 {question}
 
-Respuesta evaluada:
+Evaluated response:
 {answer}
 
-Por favor evalúa:"""
+Please evaluate:"""
     )
 ])
 
-# Exportación controlada
+# ============================================================================
+# 4. EXPORTACIÓN
+# ============================================================================
 __all__ = [
     "RAG_PROMPT_TEMPLATE",
+    "DYNAMIC_ATTRIBUTES_EXTRACTOR",
     "QUERY_REWRITE_PROMPT",
+    "QUERY_CONSTRAINT_EXTRACTION_PROMPT",
+    "MULTILINGUAL_NORMALIZATION_PROMPT",
     "VALIDATION_PROMPT",
     "RELEVANCE_PROMPT",
     "HALLUCINATION_PROMPT",
