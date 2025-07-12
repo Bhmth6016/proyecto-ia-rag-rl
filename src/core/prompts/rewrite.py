@@ -1,151 +1,161 @@
 # src/core/prompts/rewrite.py
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from typing import List, Dict, Optional
-import re
-from src.core.utils.logger import get_logger
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    PromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 
-logger = get_logger(__name__)
+class ProductPrompts:
+    """
+    Prompt templates specialized for a **general-purpose Amazon catalog**.
+    Products span every category (electronics, home, sports, fashion, etc.) and are
+    loaded from `.pkl` files located at:
+    C:\Users\evill\OneDrive\Documentos\Github\proyecto-ia-rag-rl\proyecto-ia-rag-rl\data\processed
+    """
 
-class QueryRewriter:
-    """Handles query rewriting for better product search retrieval"""
-    
-    # Main rewrite prompt template
-    REWRITE_PROMPT = ChatPromptTemplate.from_messages([
-        ("system", """You are a search query specialist for Amazon products. Improve queries by:
-1. Expanding abbreviations and acronyms
-2. Adding implicit category context
-3. Clarifying ambiguous terms
-4. Including common synonyms
-5. Preserving the original intent
-
-Return ONLY the improved query, no additional text."""),
-        ("human", "Original query: {query}\nImproved query:")
-    ])
-
-    # Contextual rewrite template
-    CONTEXTUAL_REWRITE_PROMPT = ChatPromptTemplate.from_messages([
-        ("system", """Improve this product search query considering the conversation history.
-Keep it concise while adding necessary context.
-
-Conversation History:
-{history}
+    # ------------------------------------------------------------------
+    # Core system prompt
+    # ------------------------------------------------------------------
+    SYSTEM_PROMPT = """You are an expert Amazon product assistant with deep knowledge of:
+- Product specifications and features across all categories
+- Price comparisons and value assessment
+- User review analysis and sentiment extraction
+- Category-specific recommendations and use-cases
+- Cross-category compatibility (e.g., accessories for devices, replacement parts)
 
 Guidelines:
-- Maintain the current search intent
-- Resolve pronouns (it, they) to actual product names
-- Add only relevant context"""),
-        ("human", "Original query: {query}\nContextual query:")
+1. Always verify claims against the provided context
+2. Keep answers concise yet comprehensive
+3. Highlight key differentiators, pros/cons, and best-use scenarios
+4. Mention price ranges or value statements when available
+5. Note compatibility, required accessories, or bundle opportunities"""
+
+    # ------------------------------------------------------------------
+    # 1. Main Q&A prompt (default)
+    # ------------------------------------------------------------------
+    QA_PROMPT = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(SYSTEM_PROMPT),
+        HumanMessagePromptTemplate.from_template(
+            "Context:\n{context}\n\n"
+            "Question: {question}\n\n"
+            "Structure your answer as:\n"
+            "- Summary: 1–2 sentences\n"
+            "- Key Features: bullet list\n"
+            "- Price/Value: if context provides it\n"
+            "- Best For: user profile or use-case"
+        )
     ])
 
-    # Spelling correction template
-    SPELLING_PROMPT = ChatPromptTemplate.from_messages([
-        ("system", """Correct any spelling mistakes in this Amazon product search query.
-Return ONLY the corrected query, no explanations.
-
-Common corrections:
-- 'hedphones' → 'headphones'
-- 'lapop' → 'laptop'
-- 'samsng' → 'samsung'"""),
-        ("human", "Query: {query}\nCorrected query:")
+    # ------------------------------------------------------------------
+    # 2. Product comparison
+    # ------------------------------------------------------------------
+    COMPARE_PROMPT = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(
+            SYSTEM_PROMPT + "\nCompare the products below objectively."
+        ),
+        HumanMessagePromptTemplate.from_template(
+            "Products:\n{product_list}\n\n"
+            "Focus on: {criteria}\n\n"
+            "Return a markdown table:\n"
+            "| Feature | Product A | Product B |\n"
+            "|---------|-----------|-----------|"
+        )
     ])
 
-    def __init__(self, llm):
-        self.llm = llm
-        self.rewrite_chain = self.REWRITE_PROMPT | self.llm | StrOutputParser()
-        self.contextual_chain = self.CONTEXTUAL_REWRITE_PROMPT | self.llm | StrOutputParser()
-        self.spelling_chain = self.SPELLING_PROMPT | self.llm | StrOutputParser()
+    # ------------------------------------------------------------------
+    # 3. Review summarization
+    # ------------------------------------------------------------------
+    REVIEW_PROMPT = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(
+            SYSTEM_PROMPT + "\nSummarize customer reviews concisely."
+        ),
+        HumanMessagePromptTemplate.from_template(
+            "Product: {product_name}\nReviews:\n{reviews}\n\n"
+            "Output:\n"
+            "- Positives: bullet points\n"
+            "- Negatives: bullet points\n"
+            "- Overall Sentiment: positive / neutral / negative"
+        )
+    ])
 
-    def rewrite_query(
-        self,
-        query: str,
-        history: Optional[List[Dict]] = None,
-        correct_spelling: bool = True
-    ) -> str:
-        """
-        Improve a product search query for better retrieval
-        
-        Args:
-            query: Original search query
-            history: Conversation history for context
-            correct_spelling: Whether to apply spelling correction
-            
-        Returns:
-            Rewritten query optimized for vector search
-        """
-        try:
-            # Step 1: Spelling correction
-            if correct_spelling:
-                query = self.spelling_chain.invoke({"query": query}).strip()
-            
-            # Step 2: Contextual or basic rewrite
-            if history and len(history) > 0:
-                formatted_history = "\n".join(
-                    f"{msg['role']}: {msg['content']}" 
-                    for msg in history
-                )
-                rewritten = self.contextual_chain.invoke({
-                    "query": query,
-                    "history": formatted_history
-                })
-            else:
-                rewritten = self.rewrite_chain.invoke({"query": query})
-            
-            # Clean and validate
-            rewritten = self._clean_query(rewritten)
-            if not self._validate_rewrite(query, rewritten):
-                logger.warning(f"Rewrite validation failed, using original: {query}")
-                return query
-                
-            return rewritten
-            
-        except Exception as e:
-            logger.error(f"Query rewrite failed: {str(e)}")
-            return query
+    # ------------------------------------------------------------------
+    # 4. Personalized recommendations
+    # ------------------------------------------------------------------
+    RECOMMEND_PROMPT = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(
+            SYSTEM_PROMPT + "\nRecommend the best 3 products from the list."
+        ),
+        HumanMessagePromptTemplate.from_template(
+            "User Needs: {user_needs}\n"
+            "Budget: {budget}\n"
+            "Preferred Brands: {brands}\n\n"
+            "Available Products:\n{products}\n\n"
+            "Return:\n"
+            "1. Product Name - Price\n   Reason: …\n   Best For: …\n"
+            "2. Product Name - Price\n   Reason: …\n   Best For: …\n"
+            "3. Product Name - Price\n   Reason: …\n   Best For: …"
+        )
+    ])
 
-    def _clean_query(self, query: str) -> str:
-        """Remove artifacts from LLM output"""
-        # Remove quotes if present
-        query = re.sub(r'^["\']|["\']$', '', query.strip())
-        # Remove any explanatory text
-        query = query.split("\n")[0].split(":")[-1].strip()
-        return query
+    # ------------------------------------------------------------------
+    # 5. Query rewrite for vector retrieval
+    # ------------------------------------------------------------------
+    QUERY_REWRITE_PROMPT = PromptTemplate(
+        input_variables=["query"],
+        template="""Improve this Amazon search query for vector retrieval:
+Original: {query}
 
-    def _validate_rewrite(self, original: str, rewritten: str) -> bool:
-        """Basic validation that rewrite preserves intent"""
-        # Check for empty or extremely short queries
-        if len(rewritten) < 3 or len(rewritten) > 200:
-            return False
-            
-        # Check if rewrite dropped key terms
-        original_terms = set(original.lower().split())
-        rewritten_terms = set(rewritten.lower().split())
-        return not original_terms.isdisjoint(rewritten_terms)
+Actions:
+1. Expand abbreviations
+2. Add implicit category context
+3. Clarify ambiguous terms
 
-    @staticmethod
-    def add_category_context(query: str, category: str) -> str:
-        """Add explicit category context when needed"""
-        ambiguous_terms = {
-            "adapter", "cable", "case", "cover", "stand", 
-            "charger", "battery", "protector"
+Rewritten Query:"""
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Dynamic filtering on PKL metadata
+    # ------------------------------------------------------------------
+    FILTER_PROMPT = PromptTemplate(
+        input_variables=["question", "metadata_fields"],
+        template="""Given the question: "{question}"
+Which metadata fields should be filtered?
+Available Fields: {metadata_fields}
+
+Respond in JSON:
+{{
+  "filter_field": "field_name",
+  "filter_value": ["value1", "value2"] OR "value"
+}}"""
+    )
+
+    # ------------------------------------------------------------------
+    # 7. Legacy simple prompt (backward compatibility)
+    # ------------------------------------------------------------------
+    SIMPLE_PROMPT_TEMPLATE = """You are an expert Amazon product assistant.
+
+User Question:
+{question}
+
+Relevant Products:
+{context}
+
+Provide a concise answer highlighting the key product(s)."""
+
+    # ------------------------------------------------------------------
+    # Prompt selector
+    # ------------------------------------------------------------------
+    @classmethod
+    def get_prompt(cls, prompt_type: str = "qa") -> ChatPromptTemplate:
+        """Return the requested prompt template."""
+        prompts = {
+            "qa": cls.QA_PROMPT,
+            "compare": cls.COMPARE_PROMPT,
+            "review": cls.REVIEW_PROMPT,
+            "recommend": cls.RECOMMEND_PROMPT,
+            "rewrite": cls.QUERY_REWRITE_PROMPT,
+            "filter": cls.FILTER_PROMPT,
+            "simple": PromptTemplate.from_template(cls.SIMPLE_PROMPT_TEMPLATE),
         }
-        
-        query_terms = set(query.lower().split())
-        if (not query_terms.intersection({"for", "in"}) and 
-            query_terms.intersection(ambiguous_terms)):
-            return f"{query} for {category}"
-        return query
-
-# Example usage (would be in __main__ or tests)
-if __name__ == "__main__":
-    from langchain_community.llms import FakeListLLM
-    
-    # Test with mock LLM
-    mock_llm = FakeListLLM(responses=[
-        "wireless headphones with noise cancellation under $100"
-    ])
-    
-    rewriter = QueryRewriter(mock_llm)
-    test_query = "noise cancelling buds under 100 bucks"
-    print(f"Original: {test_query}")
-    print(f"Rewritten: {rewriter.rewrite_query(test_query)}")
+        return prompts.get(prompt_type.lower(), cls.QA_PROMPT)

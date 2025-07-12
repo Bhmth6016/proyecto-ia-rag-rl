@@ -7,8 +7,6 @@ RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_template("""
 You are an Amazon product recommender. Recommend products matching:
 
 User Query: {question}
-Max Price: $30
-Category: Beauty
 
 Context:
 {context}

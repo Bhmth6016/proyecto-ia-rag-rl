@@ -1,20 +1,144 @@
-# src/core/rag/advanced/evaluators.py
-from typing import List, Dict, Any, Optional, Tuple
+# src/core/rag/advanced/evaluator.py
+"""
+Unified evaluation module for RAG.
+Combines:
+  - Generic and evaluator LLM loading (transformers + LangChain)
+  - RAGEvaluator with relevance, hallucination and quality metrics
+  - Auxiliary prompts and utilities
+"""
+
+from typing import List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSeq2SeqLM,
+    pipeline,
+)
+from langchain_huggingface import HuggingFacePipeline
 from langchain_core.language_models import BaseLLM
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from src.core.rag.advanced.prompts import (
-    RELEVANCE_PROMPT,
-    HALLUCINATION_PROMPT,
-    ANSWER_QUALITY_PROMPT
-)
+from langchain_core.pydantic_v1 import BaseModel, Field
 
+
+# ------------------------------------------------------------------
+# Generic LLM loader
+# ------------------------------------------------------------------
+def load_llm(
+    model_name: str = "google/flan-t5-base",
+    max_new_tokens: int = 256,
+    do_sample: bool = True,
+    temperature: float = 0.7,
+    device: int = -1,
+) -> HuggingFacePipeline:
+    """
+    Load a Hugging Face model and wrap it in a LangChain HuggingFacePipeline.
+
+    Parameters
+    ----------
+    model_name : str
+        Hugging Face model identifier.
+    max_new_tokens : int
+        Maximum new tokens to generate.
+    do_sample : bool
+        Whether to use sampling (True) or greedy decoding (False).
+    temperature : float
+        Sampling temperature (only if do_sample=True).
+    device : int
+        Device index (-1 for CPU, 0/1/... for GPUs).
+
+    Returns
+    -------
+    HuggingFacePipeline
+        Ready-to-use LangChain pipeline.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+
+    pipe = pipeline(
+        "text2text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature if do_sample else 0.0,
+        device=device,
+    )
+    return HuggingFacePipeline(pipeline=pipe)
+
+
+# ------------------------------------------------------------------
+# Deterministic evaluator LLM
+# ------------------------------------------------------------------
+def load_evaluator_llm(
+    model_name: str = "google/flan-t5-large",
+    max_new_tokens: int = 256,
+    device: int = -1,
+) -> HuggingFacePipeline:
+    """
+    Load a deterministic LLM for evaluation tasks (relevance, hallucination, etc.).
+    """
+    return load_llm(
+        model_name=model_name,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        temperature=0.0,
+        device=device,
+    )
+
+
+# ------------------------------------------------------------------
+# Default prompts (replace or import your own)
+# ------------------------------------------------------------------
+RELEVANCE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a grader assessing relevance of a retrieved document to a user question. "
+     "If the document contains keyword(s) or semantic meaning related to the user question, "
+     "grade it as relevant. Give a binary score 'yes' or 'no'."),
+    ("human", "Retrieved document: \n\n{document}\n\nUser question: {question}"),
+])
+
+HALLUCINATION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a grader assessing whether an LLM generation is grounded in / supported by "
+     "a set of retrieved facts. Give a binary score 'yes' or 'no'."),
+    ("human", "Set of facts: \n\n{documents}\n\nLLM generation: {generation}"),
+])
+
+ANSWER_QUALITY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a grader assessing whether an answer addresses / resolves a question. "
+     "Rate the response from 1 (worst) to 5 (best) based on accuracy, completeness, "
+     "clarity and usefulness. Provide a brief explanation."),
+    ("human", "User question: \n\n{question}\n\nLLM generation: {answer}"),
+])
+
+
+# ------------------------------------------------------------------
+# Auxiliary binary-grader Pydantic models (kept for compatibility)
+# ------------------------------------------------------------------
+class GradeDocuments(BaseModel):
+    binary_score: str = Field(description="Documents are relevant to the question, 'yes' or 'no'")
+
+
+class GradeHallucinations(BaseModel):
+    binary_score: str = Field(description="Answer is grounded in the facts, 'yes' or 'no'")
+
+
+class GradeAnswer(BaseModel):
+    binary_score: str = Field(description="Answer addresses the question, 'yes' or 'no'")
+
+
+# ------------------------------------------------------------------
+# RAG evaluator
+# ------------------------------------------------------------------
 class EvaluationResult(Enum):
     PASS = "pass"
     FAIL = "fail"
     WARNING = "warning"
+
 
 @dataclass
 class EvaluationMetric:
@@ -27,217 +151,197 @@ class EvaluationMetric:
     def is_pass(self) -> bool:
         return self.result == EvaluationResult.PASS
 
+
 class RAGEvaluator:
+    """
+    Full RAG evaluator with multiple metrics.
+    """
+
     def __init__(
         self,
         llm: BaseLLM,
         relevance_threshold: float = 0.7,
         quality_threshold: float = 3.5,
-        strict_validation: bool = True
+        strict_validation: bool = True,
     ):
         """
-        Evaluador completo para sistemas RAG con múltiples métricas.
-        
         Args:
-            llm: Modelo de lenguaje para realizar evaluaciones
-            relevance_threshold: Umbral para considerar un documento relevante (0-1)
-            quality_threshold: Umbral para considerar una respuesta de calidad (1-5)
-            strict_validation: Si es True, falla con cualquier alucinación
+            llm: Language model for evaluations
+            relevance_threshold: Threshold to deem a document relevant (0-1)
+            quality_threshold: Threshold to deem an answer high-quality (1-5)
+            strict_validation: If True, fail on any hallucination
         """
         self.llm = llm
         self.relevance_threshold = relevance_threshold
         self.quality_threshold = quality_threshold
         self.strict_validation = strict_validation
         self.output_parser = StrOutputParser()
-        
-        # Configurar cadenas de evaluación
+
+        # Configure evaluation chains
         self._setup_evaluation_chains()
 
+    # ------------------- Setup -------------------
     def _setup_evaluation_chains(self):
-        """Configura todas las cadenas de evaluación."""
         self.relevance_evaluator = (
-            RELEVANCE_PROMPT 
-            | self.llm 
+            RELEVANCE_PROMPT
+            | self.llm
             | self.output_parser
             | self._parse_relevance
         )
-        
+
         self.hallucination_detector = (
-            HALLUCINATION_PROMPT 
-            | self.llm 
+            HALLUCINATION_PROMPT
+            | self.llm
             | self.output_parser
             | self._parse_hallucination
         )
-        
+
         self.quality_evaluator = (
-            ANSWER_QUALITY_PROMPT 
-            | self.llm 
+            ANSWER_QUALITY_PROMPT
+            | self.llm
             | self.output_parser
             | self._parse_quality
         )
 
+    # ------------------- Public API -------------------
     def evaluate_all(
         self,
         question: str,
         documents: List[str],
-        answer: str
+        answer: str,
     ) -> Dict[str, Any]:
         """
-        Ejecuta todas las evaluaciones disponibles.
-        
-        Returns:
-            Dict con los resultados de todas las métricas
+        Run all available evaluations.
+
+        Returns
+        -------
+        Dict
+            Results for every metric.
         """
         relevance = self.evaluate_relevance(documents[0], question) if documents else None
         hallucination = self.detect_hallucination(documents, answer) if documents else None
         quality = self.evaluate_answer_quality(question, answer)
-        
+
         return {
             "relevance": relevance,
             "hallucination": hallucination,
             "quality": quality,
-            "overall_pass": all([
-                rel.is_pass() if rel else True for rel in [
-                    relevance,
-                    hallucination,
-                    quality
-                ]
-            ])
+            "overall_pass": all(
+                m.is_pass() if m else True
+                for m in [relevance, hallucination, quality]
+            ),
         }
 
+    # ------------------- Individual evaluations -------------------
     def evaluate_relevance(self, document: str, question: str) -> EvaluationMetric:
-        """
-        Evalúa la relevancia de un documento para una pregunta dada.
-        
-        Returns:
-            EvaluationMetric con score (0-1) y explicación
-        """
         evaluation = self.relevance_evaluator.invoke({
             "document": document,
-            "question": question
+            "question": question,
         })
-        
+
         return EvaluationMetric(
             name="relevance",
             score=evaluation["score"],
             threshold=self.relevance_threshold,
             explanation=evaluation["explanation"],
-            result=EvaluationResult.PASS if evaluation["score"] >= self.relevance_threshold 
-                  else EvaluationResult.FAIL
+            result=EvaluationResult.PASS
+            if evaluation["score"] >= self.relevance_threshold
+            else EvaluationResult.FAIL,
         )
 
     def detect_hallucination(
-        self, 
-        documents: List[str], 
-        generation: str
+        self,
+        documents: List[str],
+        generation: str,
     ) -> EvaluationMetric:
-        """
-        Detecta alucinaciones en una generación comparando con los documentos.
-        
-        Returns:
-            EvaluationMetric con score (0-1) y fragmentos no soportados
-        """
         evaluation = self.hallucination_detector.invoke({
             "documents": "\n\n".join(documents),
-            "generation": generation
+            "generation": generation,
         })
-        
+
         has_hallucination = "no" in evaluation["raw_response"].lower()
         score = 0.0 if has_hallucination else 1.0
-        
+
         return EvaluationMetric(
             name="hallucination",
             score=score,
             threshold=1.0 if self.strict_validation else 0.5,
             explanation=evaluation["explanation"],
-            result=EvaluationResult.FAIL if has_hallucination and self.strict_validation
-                  else EvaluationResult.WARNING if has_hallucination
-                  else EvaluationResult.PASS
+            result=EvaluationResult.FAIL
+            if has_hallucination and self.strict_validation
+            else EvaluationResult.WARNING
+            if has_hallucination
+            else EvaluationResult.PASS,
         )
 
     def evaluate_answer_quality(
-        self, 
-        question: str, 
-        answer: str
+        self,
+        question: str,
+        answer: str,
     ) -> EvaluationMetric:
-        """
-        Evalúa la calidad de una respuesta (1-5) considerando:
-        - Precisión
-        - Completitud
-        - Claridad
-        - Utilidad
-        
-        Returns:
-            EvaluationMetric con score (1-5) y sugerencias de mejora
-        """
         evaluation = self.quality_evaluator.invoke({
             "question": question,
-            "answer": answer
+            "answer": answer,
         })
-        
+
         return EvaluationMetric(
             name="quality",
             score=evaluation["score"],
             threshold=self.quality_threshold,
             explanation=evaluation["explanation"],
-            result=EvaluationResult.PASS if evaluation["score"] >= self.quality_threshold
-                  else EvaluationResult.WARNING if evaluation["score"] >= 2.5
-                  else EvaluationResult.FAIL
+            result=EvaluationResult.PASS
+            if evaluation["score"] >= self.quality_threshold
+            else EvaluationResult.WARNING
+            if evaluation["score"] >= 2.5
+            else EvaluationResult.FAIL,
         )
 
+    # ------------------- Parsing helpers -------------------
     def _parse_relevance(self, response: str) -> Dict[str, Any]:
-        """Parsea la respuesta de evaluación de relevancia."""
         parts = response.split("(", 1)
         score = 1.0 if "yes" in response.lower() else 0.0
         explanation = parts[1][:-1] if len(parts) > 1 else ""
-        
         return {
             "raw_response": response,
             "score": score,
-            "explanation": explanation
+            "explanation": explanation,
         }
 
     def _parse_hallucination(self, response: str) -> Dict[str, Any]:
-        """Parsea la respuesta de detección de alucinaciones."""
         parts = response.split("(", 1)
         is_hallucination = "no" in response.lower()
         explanation = parts[1][:-1] if len(parts) > 1 else ""
-        
         return {
             "raw_response": response,
             "is_hallucination": is_hallucination,
-            "explanation": explanation
+            "explanation": explanation,
         }
 
     def _parse_quality(self, response: str) -> Dict[str, Any]:
-        """Parsea la respuesta de evaluación de calidad."""
-        # Extraer puntuación numérica (ej. "3", "4.5")
         score_str = ""
         for char in response:
             if char.isdigit() or char == ".":
                 score_str += char
             elif score_str:
                 break
-                
+
         score = float(score_str) if score_str else 1.0
-        
-        # Extraer sugerencias de mejora
         improvements = ""
-        if "Mejoras:" in response:
-            improvements = response.split("Mejoras:")[1].strip()
-        
+        if "Improvements:" in response:
+            improvements = response.split("Improvements:")[1].strip()
+
         return {
             "raw_response": response,
-            "score": min(max(score, 1.0), 5.0),  # Asegurar entre 1-5
-            "explanation": improvements
+            "score": min(max(score, 1.0), 5.0),
+            "explanation": improvements,
         }
 
+    # ------------------- Async stub -------------------
     async def aevaluate_all(
         self,
         question: str,
         documents: List[str],
-        answer: str
+        answer: str,
     ) -> Dict[str, Any]:
-        """Versión asíncrona de evaluate_all."""
-        # Implementación básica - en producción usar llamadas async reales al LLM
+        # production: switch to real async LLM calls
         return self.evaluate_all(question, documents, answer)
