@@ -21,6 +21,7 @@ RAW_DIR    = DATA_DIR / "raw"
 PROC_DIR   = DATA_DIR / "processed"
 VEC_DIR    = DATA_DIR / "vector"          # Chroma / FAISS
 LOG_DIR    = DATA_DIR / "logs"
+DEVICE = os.getenv("DEVICE", "cpu")
 
 for d in (DATA_DIR, RAW_DIR, PROC_DIR, VEC_DIR, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)

@@ -95,27 +95,22 @@ class Retriever:
 
         return Product(**product_data)
 
-    def retrieve(self, query: str, k: int = 5, max_price: float = 30.0) -> List[Document]:
-        """Enhanced retrieval with price filtering"""
+    def retrieve(self, query: str, k: int = 5, filters: Optional[Dict] = None) -> List[Document]:
+        """Enhanced retrieval with filtering"""
         try:
-            # First get category matches
-            base_results = self.retriever.invoke(
-                query,
-                k=k * 3,
-                filter={"category": {"$eq": "Beauty"}}
-            )
-
-            # Then filter by price
-            filtered = []
-            for doc in base_results:
-                try:
-                    price = float(doc.metadata.get("price", "0").replace("$", ""))
-                    if price <= max_price:
-                        filtered.append(doc)
-                except (ValueError, AttributeError):
-                    continue
-
-            return filtered[:k]
+            if self.vectorstore_type == "chroma":
+                if filters:
+                    results = self.vectorstore.similarity_search(
+                        query, 
+                        k=k*3,  # Get more to filter down
+                        filter=self._build_chroma_filter(filters)
+                    )
+                else:
+                    results = self.vectorstore.similarity_search(query, k=k)
+            else:
+                results = self._retrieve_faiss(query, k, filters)
+                
+            return results[:k]
         except Exception as e:
             logger.error(f"Retrieval error: {str(e)}")
             return []

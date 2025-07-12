@@ -1,6 +1,6 @@
 # src/core/rag/advanced/agent.py
 """
-Unified RAG agent for the Amazon catalog.
+Unified RAG agent for the Amazon catalog with multilingual support.
 
 Features
 --------
@@ -8,6 +8,7 @@ Features
 • Runtime filtering (ProductFilter)
 • Context-rich feedback (FeedbackProcessor)
 • Optional RLHF fine-tuned model (LoRA checkpoint)
+• Automatic query/response translation
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 import torch
 from langchain_community.vectorstores import FAISS
@@ -28,8 +29,13 @@ from langchain.prompts import PromptTemplate
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.llms.local_llm import local_llm
-from src.core.prompts.product import ProductPrompts
+from src.core.rag.advanced.prompts import (
+    RAG_PROMPT_TEMPLATE as SIMPLE_PROMPT_TEMPLATE,
+    QUERY_REWRITE_PROMPT,
+    QUERY_CONSTRAINT_EXTRACTION_PROMPT
+)
 from src.core.config import settings
+from src.core.utils.translator import TextTranslator, Language
 
 # ------------------------------------------------------------------
 # Logging
@@ -47,11 +53,8 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 # ------------------------------------------------------------------
 class RAGAgent:
     """
-    One-stop RAG agent that is aware of:
-    • product categories
-    • user filters
-    • feedback collection
-    • RLHF checkpoints
+    Enhanced RAG agent with multilingual support.
+    Handles automatic translation of queries/responses.
     """
 
     def __init__(
@@ -59,13 +62,18 @@ class RAGAgent:
         *,
         products: List[Dict],
         lora_checkpoint: Optional[Path] = None,
+        enable_translation: bool = True
     ):
         self.products = products
+        self.enable_translation = enable_translation
         self.embedder = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True},
         )
+
+        # Translation setup
+        self.translator = TextTranslator() if enable_translation else None
 
         # Build category tree + filters
         self.tree = CategoryTree(products).build_tree()
@@ -93,9 +101,6 @@ class RAGAgent:
         # Feedback
         self.feedback = FeedbackProcessor(feedback_dir=str(settings.DATA_DIR / "feedback"))
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
     def _build_vector_store(self) -> FAISS:
         texts = [
             f"{p.get('title', '')} {' '.join(f'{k}:{v}' for k, v in p.get('details', {}).items())}"
@@ -106,7 +111,7 @@ class RAGAgent:
     def _build_chain(self) -> ConversationalRetrievalChain:
         prompt = PromptTemplate(
             input_variables=["chat_history", "question", "context"],
-            template=ProductPrompts.SIMPLE_PROMPT_TEMPLATE,
+            template=SIMPLE_PROMPT_TEMPLATE,
         )
         retriever = self.vector_store.as_retriever(
             search_kwargs={"k": 5, "filter": self.active_filter.apply}
@@ -119,29 +124,59 @@ class RAGAgent:
             return_source_documents=False,
         )
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
+        """Handle query translation if enabled."""
+        if not self.enable_translation:
+            return query, None
+
+        source_lang = self.translator.detect_language(query)
+        if source_lang == Language.ENGLISH:
+            return query, None
+
+        english_query = self.translator.translate_to_english(query, source_lang)
+        logger.debug(f"Translated query from {source_lang} to English: {english_query}")
+        return english_query, source_lang
+
+    def _process_response(self, answer: str, target_lang: Optional[Language]) -> str:
+        """Handle response translation if needed."""
+        if not target_lang or not self.enable_translation:
+            return answer
+
+        translated = self.translator.translate_from_english(answer, target_lang)
+        logger.debug(f"Translated response back to {target_lang}: {translated}")
+        return translated
+
     def ask(self, query: str) -> str:
         """
-        Run retrieval + generation and store feedback skeleton.
+        Process query with optional translation:
+        1. Detect input language
+        2. Translate to English if needed
+        3. Get LLM response
+        4. Translate back to original language
         """
-        answer = self.chain({"question": query})["answer"]
+        processed_query, source_lang = self._process_query(query)
+        english_answer = self.chain({"question": processed_query})["answer"]
+        final_answer = self._process_response(english_answer, source_lang)
 
-        # Fire-and-forget feedback record
+        # Store feedback with both original and translated versions
         retrieved_titles = [
             doc.metadata.get("title", "No title")
-            for doc in self.vector_store.similarity_search(query, k=5)
+            for doc in self.vector_store.similarity_search(processed_query, k=5)
         ]
         self.feedback.save_feedback(
             query=query,
-            answer=answer,
-            rating=0,  # placeholder; user will update via CLI
+            answer=final_answer,
+            rating=0,
             retrieved_docs=retrieved_titles,
             category_tree=self.tree,
             active_filter=self.active_filter,
+            metadata={
+                "english_query": processed_query if source_lang else None,
+                "english_answer": english_answer if source_lang else None,
+                "detected_language": source_lang.value if source_lang else "en"
+            }
         )
-        return answer
+        return final_answer
 
     def set_filters(
         self,
@@ -159,53 +194,50 @@ class RAGAgent:
         if brands:
             self.active_filter.add_brand_filter(brands)
 
-    # ------------------------------------------------------------------
-    # CLI
-    # ------------------------------------------------------------------
     def chat_loop(self) -> None:
-        """Interactive CLI exactly like the old rag_agent.py"""
-        print("\n🧠 Agente listo. Escribe 'salir' para terminar.\n")
+        """Interactive multilingual chat interface."""
+        print("\n🌍 Multilingual RAG Agent (type 'exit' to quit)\n")
 
         while True:
             try:
-                query = input("🧑 Tú: ").strip()
-                if query.lower() in {"salir", "exit", "q"}:
-                    print("👋 ¡Hasta luego!")
+                query = input("🧑 User: ").strip()
+                if query.lower() in {"exit", "quit", "q"}:
+                    print("👋 Goodbye!")
                     break
 
                 answer = self.ask(query)
-                print(f"\n🤖 Asistente:\n{answer}\n")
+                print(f"\n🤖 Assistant:\n{answer}\n")
 
-                # Ask user for rating
-                rating = None
+                # Feedback collection
+                rating = input("Rating (1-5): ").strip()
                 while rating not in {"1", "2", "3", "4", "5"}:
-                    rating = input("¿Qué tan útil? (1-5): ").strip()
-                comment = input("¿Comentarios? (opcional): ").strip()
-
+                    rating = input("Please rate 1-5: ").strip()
+                
                 self.feedback.save_feedback(
                     query=query,
                     answer=answer,
                     rating=int(rating),
-                    extra_meta={"comment": comment or None},
+                    extra_meta={
+                        "user_rating": rating,
+                        "translation_enabled": self.enable_translation
+                    }
                 )
 
             except KeyboardInterrupt:
-                print("\n🛑 Cancelado")
+                print("\n🛑 Session ended")
                 break
             except Exception as e:
-                logger.error("Error in chat loop: %s", e, exc_info=True)
-                print("⚠️ Error, inténtalo de nuevo.")
+                logger.error("Chat error: %s", str(e))
+                print("⚠️ Error occurred, please try again.")
 
-    # ------------------------------------------------------------------
-    # Entry-point
-    # ------------------------------------------------------------------
     @classmethod
     def from_pickle_dir(
         cls,
         pickle_dir: Path = settings.PROC_DIR,
         lora_checkpoint: Optional[Path] = settings.RLHF_CHECKPOINT,
+        enable_translation: bool = True
     ) -> "RAGAgent":
-        """Factory that loads products from the canonical .pkl files."""
+        """Factory method with translation option."""
         from src.core.data.loader import DataLoader
 
         products = DataLoader().load_data(
@@ -215,12 +247,12 @@ class RAGAgent:
         )
         if not products:
             raise RuntimeError("No products found")
-        return cls(products=products, lora_checkpoint=lora_checkpoint)
+        return cls(
+            products=products,
+            lora_checkpoint=lora_checkpoint,
+            enable_translation=enable_translation
+        )
 
-
-# ------------------------------------------------------------------
-# Main
-# ------------------------------------------------------------------
 if __name__ == "__main__":
-    agent = RAGAgent.from_pickle_dir()
+    agent = RAGAgent.from_pickle_dir(enable_translation=True)
     agent.chat_loop()

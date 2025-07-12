@@ -37,7 +37,7 @@ from sentence_transformers import CrossEncoder
 
 from src.core.config import settings
 from src.core.category_search.category_tree import ProductFilter
-from src.core.rag.advanced.evaluators import RAGEvaluator, load_evaluator_llm
+from src.core.rag.advanced.evaluator import RAGEvaluator, load_evaluator_llm
 from src.core.utils.logger import get_logger
 
 logger = get_logger(__name__)

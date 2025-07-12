@@ -22,6 +22,11 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 
+from src.core.rag.advanced.prompts import (
+    RELEVANCE_PROMPT,
+    HALLUCINATION_PROMPT, 
+    ANSWER_QUALITY_PROMPT
+)
 
 # ------------------------------------------------------------------
 # Generic LLM loader
@@ -87,33 +92,6 @@ def load_evaluator_llm(
         temperature=0.0,
         device=device,
     )
-
-
-# ------------------------------------------------------------------
-# Default prompts (replace or import your own)
-# ------------------------------------------------------------------
-RELEVANCE_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a grader assessing relevance of a retrieved document to a user question. "
-     "If the document contains keyword(s) or semantic meaning related to the user question, "
-     "grade it as relevant. Give a binary score 'yes' or 'no'."),
-    ("human", "Retrieved document: \n\n{document}\n\nUser question: {question}"),
-])
-
-HALLUCINATION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a grader assessing whether an LLM generation is grounded in / supported by "
-     "a set of retrieved facts. Give a binary score 'yes' or 'no'."),
-    ("human", "Set of facts: \n\n{documents}\n\nLLM generation: {generation}"),
-])
-
-ANSWER_QUALITY_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a grader assessing whether an answer addresses / resolves a question. "
-     "Rate the response from 1 (worst) to 5 (best) based on accuracy, completeness, "
-     "clarity and usefulness. Provide a brief explanation."),
-    ("human", "User question: \n\n{question}\n\nLLM generation: {answer}"),
-])
 
 
 # ------------------------------------------------------------------

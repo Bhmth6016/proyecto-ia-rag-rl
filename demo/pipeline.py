@@ -27,6 +27,7 @@ from tqdm import tqdm
 from src.core.config import settings
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
+from src.core.rag.basic.indexer import Indexer
 from src.core.retrieval.retriever import Retriever
 from src.core.utils.logger import get_logger
 
