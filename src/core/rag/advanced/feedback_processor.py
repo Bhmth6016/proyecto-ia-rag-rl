@@ -1,15 +1,6 @@
 # src/core/rag/advanced/feedback_processor.py
 """
 Context-aware feedback processor with RLHF pipeline.
-
-New capabilities
-----------------
-1. Tags every feedback record with the *exact* category path(s) that
-   generated the answer (via CategoryTree).
-2. Stores the ProductFilter state that was active when the answer was produced,
-   enabling reproducible offline re-runs.
-3. Includes the RAG evaluation scores (relevance, hallucination, quality) so
-   downstream RLHF scripts can weight samples by quality.
 """
 
 import json
@@ -20,19 +11,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from pydantic import BaseModel  # Updated import
 
-from src.core.category_search.category_tree import (
-    CategoryTree,
-    ProductFilter,
-)  # ← new dependency
-from src.core.rag.advanced.evaluator import (
-    RAGEvaluator,
-    EvaluationMetric,
-)  # ← new dependency
+from src.core.category_search.category_tree import CategoryTree, ProductFilter
+from src.core.rag.advanced.evaluator import RAGEvaluator, EvaluationMetric
 from src.core.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
 
 class FeedbackProcessor:
     """

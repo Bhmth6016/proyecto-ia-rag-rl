@@ -11,7 +11,7 @@ This model is shared by:
 
 from __future__ import annotations
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from pydantic import BaseModel, Field, validator
 
 # ------------------------------------------------------------------

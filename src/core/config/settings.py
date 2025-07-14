@@ -15,7 +15,9 @@ load_dotenv()  # .env file is optional
 # ------------------------------------------------------------------
 # Base directories (auto-resolve)
 # ------------------------------------------------------------------
-BASE_DIR   = Path(__file__).parent.parent.parent.resolve()
+BASE_DIR = Path.cwd().resolve()  # Or your actual project root
+
+DATA_DIR = BASE_DIR / "data"  # Ensure this matches your structure
 DATA_DIR   = BASE_DIR / "data"
 RAW_DIR    = DATA_DIR / "raw"
 PROC_DIR   = DATA_DIR / "processed"

@@ -10,6 +10,7 @@ Combines:
 from typing import List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field 
 
 from transformers import (
     AutoTokenizer,
@@ -20,7 +21,6 @@ from langchain_huggingface import HuggingFacePipeline
 from langchain_core.language_models import BaseLLM
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
 
 from src.core.rag.advanced.prompts import (
     RELEVANCE_PROMPT,

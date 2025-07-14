@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
+from pydantic import ValidationError
 
 from tqdm import tqdm
 
@@ -55,7 +56,7 @@ class DataLoader:
 
         all_products: List[Product] = []
         for raw_file in files:
-            all_products.extend(self._load_single_file(raw_file, use_cache=use_cache))
+            all_products.extend(self.load_single_file(raw_file, use_cache=use_cache))
         logger.info("Loaded %d products from %d files", len(all_products), len(files))
         return all_products
 
