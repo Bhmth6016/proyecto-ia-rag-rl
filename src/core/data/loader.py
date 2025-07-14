@@ -122,13 +122,15 @@ class DataLoader:
 
         if raw_file.suffix.lower() == ".jsonl":
             with raw_file.open("r", encoding="utf-8") as f:
-                total = sum(1 for _ in f)
-            with raw_file.open("r", encoding="utf-8") as f:
-                for line in tqdm(f, total=total, desc=f"Processing {raw_file.name}"):
+                for idx, line in enumerate(f):
                     try:
                         item = json.loads(line.strip())
+                        # Add debug print for first few items
+                        if idx < 5:
+                            print(f"Sample item {idx}: {item.keys()}")
                         products.append(Product.from_dict(item))
-                    except (json.JSONDecodeError, ValidationError):
+                    except (json.JSONDecodeError, ValidationError) as e:
+                        print(f"Error on line {idx}: {str(e)}")  # Debug print
                         error_count += 1
         else:  # JSON array
             with raw_file.open("r", encoding="utf-8") as f:

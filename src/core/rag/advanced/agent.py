@@ -20,7 +20,7 @@ from typing import List, Dict, Optional, Tuple
 
 import torch
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
@@ -64,29 +64,40 @@ class RAGAgent:
         lora_checkpoint: Optional[Path] = None,
         enable_translation: bool = True
     ):
+        print("Initializing RAGAgent...")  # Debug
         self.products = products
+        print(f"Loaded {len(products)} products")  # Debug
         self.enable_translation = enable_translation
+
         self.embedder = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True},
         )
+        print("Embedder initialized")  # Debug
 
         # Translation setup
         self.translator = TextTranslator() if enable_translation else None
+        print("Translator ready")  # Debug
 
         # Build category tree + filters
         self.tree = CategoryTree(products).build_tree()
+        print("Category tree built")  # Debug
         self.active_filter = ProductFilter()
+        print("ProductFilter ready")  # Debug
 
         # Vector store
+        print("Building vector store...")  # Debug
         self.vector_store = self._build_vector_store()
+        print("Vector store ready")  # Debug
 
         # LLM (LoRA-aware)
+        print("Loading LLM...")  # Debug
         self.llm = local_llm(
             base_model_name=settings.BASE_LLM,
             lora_checkpoint=lora_checkpoint,
         )
+        print("LLM loaded")  # Debug
 
         # LangChain memory
         self.memory = ConversationBufferWindowMemory(
@@ -94,12 +105,18 @@ class RAGAgent:
             k=5,
             return_messages=True,
         )
+        print("Memory initialized")  # Debug
 
         # LangChain chain
+        print("Building chain...")  # Debug
         self.chain = self._build_chain()
+        print("Chain ready")  # Debug
 
         # Feedback
-        self.feedback = FeedbackProcessor(feedback_dir=str(settings.DATA_DIR / "feedback"))
+        self.feedback = FeedbackProcessor(
+            feedback_dir=str(settings.DATA_DIR / "feedback")
+        )
+        print("RAGAgent initialization complete")  # Debug
 
     def _build_vector_store(self) -> FAISS:
         texts = [
