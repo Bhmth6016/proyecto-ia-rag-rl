@@ -125,12 +125,18 @@ class DataLoader:
                 for idx, line in enumerate(f):
                     try:
                         item = json.loads(line.strip())
-                        # Add debug print for first few items
                         if idx < 5:
                             print(f"Sample item {idx}: {item.keys()}")
-                        products.append(Product.from_dict(item))
+                        product = Product.from_dict(item)
+                        if product.title and product.title.strip():
+                            if hasattr(product, "clean_image_urls"):
+                                product.clean_image_urls()
+                            products.append(product)
+                        else:
+                            raise ValidationError("Missing or empty title")
+
                     except (json.JSONDecodeError, ValidationError) as e:
-                        print(f"Error on line {idx}: {str(e)}")  # Debug print
+                        print(f"Error on line {idx}: {str(e)}")
                         error_count += 1
         else:  # JSON array
             with raw_file.open("r", encoding="utf-8") as f:
@@ -140,8 +146,13 @@ class DataLoader:
 
             for item in items:
                 try:
-                    products.append(Product.from_dict(item))
-                except ValidationError:
+                    product = Product.from_dict(item)
+                    if product.title and product.title.strip():  # Validar título no vacío
+                        products.append(product)
+                    else:
+                        raise ValidationError("Missing or empty title")
+                except ValidationError as e:
+                    print(f"Validation error: {e}")
                     error_count += 1
 
         if error_count:
@@ -153,6 +164,7 @@ class DataLoader:
                 100 * len(products) / max(1, len(products) + error_count),
             )
         return products
+
 
     # ------------------------------------------------------------------
     # Cache helpers

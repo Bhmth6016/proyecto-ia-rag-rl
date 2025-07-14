@@ -12,12 +12,15 @@ Features
 """
 
 from __future__ import annotations
-
+import psutil
+import faiss
+from tqdm import tqdm 
 import logging
 import sys
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
-
+import os
+from langchain_google_genai import ChatGoogleGenerativeAI
 import torch
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -92,9 +95,10 @@ class RAGAgent:
 
         # LLM (LoRA-aware)
         print("Loading LLM...")  # Debug
-        self.llm = local_llm(
-            base_model_name=settings.BASE_LLM,
-            lora_checkpoint=lora_checkpoint,
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            google_api_key=os.getenv("GEMINI_API_KEY"),
+            temperature=0.3
         )
         print("LLM loaded")  # Debug
 
@@ -118,11 +122,50 @@ class RAGAgent:
         print("RAGAgent initialization complete")  # Debug
 
     def _build_vector_store(self) -> FAISS:
-        texts = [
-            f"{p.title} {p.details.brand or ''} {p.details.model or ''} {' '.join(f'{k}:{v}' for k, v in (p.details.specifications if p.details else {}).items())}"
-            for p in self.products
-        ]
-        return FAISS.from_texts(texts=texts, embedding=self.embedder)
+        """Build vector store with memory monitoring"""
+        import psutil
+        
+        def log_memory_usage(stage=""):
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            print(f"💾 [Memory] {stage}: {memory_mb:.1f} MB")
+        
+        log_memory_usage("Before processing")
+        
+        # Reduce further for initial testing
+        max_products = min(10000, len(self.products))
+        products_to_process = self.products[:max_products]
+        
+        print(f"🔄 Processing {len(products_to_process)} products...")
+        
+        # Create texts
+        texts = []
+        for p in products_to_process:
+            brand = p.details.brand if p.details and p.details.brand else ""
+            model = p.details.model if p.details and p.details.model else ""
+            text = f"{p.title} {brand} {model}".strip()
+            if text:  # Only add non-empty texts
+                texts.append(text)
+            specs = []
+            if p.details and p.details.specifications:
+                for k, v in p.details.specifications.items():
+                    if any(keyword in k.lower() for keyword in ['size', 'dimension', 'inch']):
+                        specs.append(f"{k}: {v}")
+            
+            text = f"{p.title} - Brand: {brand} - Model: {model} - {' '.join(specs)}"
+            if text.strip():
+                texts.append(text)
+        
+        log_memory_usage("Before vector store creation")
+        
+        # Use simple FAISS creation (fixed)
+        vector_store = FAISS.from_texts(
+            texts=texts,
+            embedding=self.embedder
+        )
+        
+        log_memory_usage("After vector store creation")
+        return vector_store
 
     def _build_chain(self) -> ConversationalRetrievalChain:
         """Build the LangChain conversation chain."""

@@ -154,6 +154,24 @@ class Product(BaseModel):
             "brand": self.details.brand if self.details else None,
             **(self.details.specifications if self.details else {}),
         }
+    
+    @staticmethod
+    def clean_url(url_str):
+        """Clean URL from HTML markup"""
+        import re
+        if not url_str:
+            return ""
+        match = re.search(r'https?://[^\s<>"\']+', str(url_str))
+        return match.group(0) if match else ""
+
+    def clean_image_urls(self):
+        """Clean all image URLs in the product"""
+        if hasattr(self, 'images') and self.images:
+            for key in ['thumb', 'large', 'hi_res', 'medium', 'small']:
+                if hasattr(self.images, key) and getattr(self.images, key):
+                    cleaned = self.clean_url(getattr(self.images, key))
+                    setattr(self.images, key, cleaned)
+
 
     # --------------------------------------------------
     # Dunder utilities

@@ -88,6 +88,8 @@ class FeedbackProcessor:
         active_filter: Optional[ProductFilter] = None,
         extra_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
+        
+        extra_meta = {str(k): str(v) for k, v in extra_meta.items()}
         """
         Store a single feedback record asynchronously.
 
