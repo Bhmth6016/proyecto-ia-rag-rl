@@ -86,13 +86,10 @@ def initialize_system(data_dir: Optional[str] = None,
         from src.interfaces.ui import launch_ui
         launch_ui(products, category_tree, rag_agent)
     else:
-        cli = AmazonRecommendationCLI(
-            products=products,
-            category_tree=category_tree,
-            llm=llm,
-            memory=memory
-        )
-        cli.run()
+        from src.interfaces import cli
+        cli.main()
+
+
 
 def initialize_retriever(products):
     """Instantiate and return retriever engine for RAG."""
