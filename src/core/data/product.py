@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # src/core/data/product.py
 """
 Canonical Amazon product representation.
@@ -9,7 +11,7 @@ This model is shared by:
 - RLHF training
 """
 
-from __future__ import annotations
+import hashlib
 
 from typing import Optional, Dict, List, Any
 from pydantic import BaseModel, Field, validator
@@ -56,13 +58,43 @@ class Product(BaseModel):
     # --------------------------------------------------
     # Constructors
     # --------------------------------------------------
+    
     @classmethod
     def from_dict(cls, raw: Dict) -> "Product":
-        """Build Product from raw dict (handles nested objects)."""
-        # Handle nested Pydantic objects
-        if "details" in raw and isinstance(raw["details"], dict):
+        """Build Product from raw dict (handles nested objects and aliases)."""
+
+        # 1. Crear un id si no existe
+        if "id" not in raw:
+            base = raw.get("title", "") + raw.get("main_category", "")
+            raw["id"] = hashlib.md5(base.encode("utf-8")).hexdigest()
+
+        # 2. Convertir images: list → ProductImage
+        if isinstance(raw.get("images"), list) and raw["images"]:
+            # Elegimos la primera imagen como principal
+            main = raw["images"][0]
+            raw["images"] = {
+                "large": main.get("large"),
+                "medium": main.get("thumb"),
+                "small": main.get("thumb"),
+            }
+
+        # 3. Normalizar details
+        if isinstance(raw.get("details"), dict):
+            details = raw["details"]
+            extracted = {
+                "Brand": details.get("Brand") or details.get("brand"),
+                "Model": details.get("Model") or details.get("model"),
+                "features": raw.get("features", []),
+                "specifications": {
+                    k: v for k, v in details.items() if k not in ["Brand", "brand", "Model", "model"]
+                },
+            }
+            raw["details"] = extracted
+
+        # 4. Validación Pydantic de campos anidados
+        if "details" in raw:
             raw["details"] = ProductDetails(**raw["details"])
-        if "images" in raw and isinstance(raw["images"], dict):
+        if "images" in raw:
             raw["images"] = ProductImage(**raw["images"])
 
         return cls(**raw)
