@@ -12,6 +12,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
     pipeline,
+    GenerationConfig
 )
 from langchain_huggingface import HuggingFacePipeline
 from peft import PeftModel
@@ -43,7 +44,7 @@ def local_llm(
     tokenizer = AutoTokenizer.from_pretrained(
         base_model_name,
         model_max_length=max_new_tokens,
-        legacy=False,
+        use_fast=True,
     )
     
     # Load base model
@@ -62,13 +63,19 @@ def local_llm(
         )
         model = model.merge_and_unload()
     
+    # Configuración de generación para seq2seq
+    generation_config = GenerationConfig(
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        do_sample=True if temperature > 0 else False,
+    )
+
     # Create text generation pipeline
     pipe = pipeline(
         "text2text-generation",
         model=model,
         tokenizer=tokenizer,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
+        generation_config=generation_config,
         device=device,
     )
     

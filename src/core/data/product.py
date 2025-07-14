@@ -38,7 +38,7 @@ class ProductDetails(BaseModel):
 class Product(BaseModel):
     id: str
     title: str
-    main_category: str
+    main_category: Optional[str] = None
     categories: List[str] = Field(default_factory=list)
     price: Optional[float] = None
     average_rating: Optional[float] = Field(None, ge=0, le=5)

@@ -5,8 +5,8 @@ from pathlib import Path
 # Add src to Python path so imports work
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from core.data.loader import DataLoader
-from core.rag.advanced.agent import RAGAgent
+from src.core.data.loader import DataLoader
+from src.core.rag.advanced.agent import RAGAgent
 
 def main():
     print("Loading data...")

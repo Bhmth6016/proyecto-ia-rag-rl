@@ -23,8 +23,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
-
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 # Internal imports
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
@@ -126,13 +125,21 @@ class RAGAgent:
         return FAISS.from_texts(texts=texts, embedding=self.embedder)
 
     def _build_chain(self) -> ConversationalRetrievalChain:
-        prompt = PromptTemplate(
-            input_variables=["chat_history", "question", "context"],
-            template=SIMPLE_PROMPT_TEMPLATE,
+        """Build the LangChain conversation chain."""
+        # Update the prompt template to use ChatPromptTemplate
+        prompt = ChatPromptTemplate.from_template(
+            "Answer the question based on the context below. "
+            "If you don't know the answer, say you don't know. "
+            "Be concise and helpful.\n\n"
+            "Context: {context}\n\n"
+            "Question: {question}\n"
+            "Answer:"
         )
+        
         retriever = self.vector_store.as_retriever(
             search_kwargs={"k": 5, "filter": self.active_filter.apply}
         )
+        
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
             retriever=retriever,
@@ -172,7 +179,7 @@ class RAGAgent:
         4. Translate back to original language
         """
         processed_query, source_lang = self._process_query(query)
-        english_answer = self.chain({"question": processed_query})["answer"]
+        english_answer = self.chain.invoke({"question": processed_query})["answer"]
         final_answer = self._process_response(english_answer, source_lang)
 
         # Store feedback with both original and translated versions
@@ -187,7 +194,7 @@ class RAGAgent:
             retrieved_docs=retrieved_titles,
             category_tree=self.tree,
             active_filter=self.active_filter,
-            metadata={
+            extra_meta={  # ✅ parámetro correcto
                 "english_query": processed_query if source_lang else None,
                 "english_answer": english_answer if source_lang else None,
                 "detected_language": source_lang.value if source_lang else "en"
@@ -261,7 +268,7 @@ class RAGAgent:
             raw_dir=settings.RAW_DIR,
             processed_dir=pickle_dir,
             cache_enabled=settings.CACHE_ENABLED,
-        )
+        )[:50000]
         if not products:
             raise RuntimeError("No products found")
         return cls(
