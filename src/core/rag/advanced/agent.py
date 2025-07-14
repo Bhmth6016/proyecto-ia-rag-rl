@@ -103,7 +103,7 @@ class RAGAgent:
 
     def _build_vector_store(self) -> FAISS:
         texts = [
-            f"{p.get('title', '')} {' '.join(f'{k}:{v}' for k, v in p.get('details', {}).items())}"
+            f"{p.title} {p.details.brand or ''} {p.details.model or ''} {' '.join(f'{k}:{v}' for k, v in (p.details.specifications if p.details else {}).items())}"
             for p in self.products
         ]
         return FAISS.from_texts(texts=texts, embedding=self.embedder)

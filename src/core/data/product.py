@@ -65,17 +65,22 @@ class Product(BaseModel):
 
         # 1. Crear un id si no existe
         if "id" not in raw:
-            base = raw.get("title", "") + raw.get("main_category", "")
+            base = (raw.get("title") or "") + (raw.get("main_category") or "")
             raw["id"] = hashlib.md5(base.encode("utf-8")).hexdigest()
 
         # 2. Convertir images: list → ProductImage
         if isinstance(raw.get("images"), list) and raw["images"]:
-            # Elegimos la primera imagen como principal
             main = raw["images"][0]
             raw["images"] = {
                 "large": main.get("large"),
                 "medium": main.get("thumb"),
                 "small": main.get("thumb"),
+            }
+        else:
+            raw["images"] = {
+                "large": None,
+                "medium": None,
+                "small": None,
             }
 
         # 3. Normalizar details
