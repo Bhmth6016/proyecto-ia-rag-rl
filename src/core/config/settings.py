@@ -1,5 +1,3 @@
-# src/core/config/settings.py
-
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -11,7 +9,6 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ")
 
 # Configuración de ChromaDB
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/processed/chroma_db")
 CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 
 # Configuración de logging
@@ -28,6 +25,9 @@ MAX_QUERY_RESULTS = int(os.getenv("MAX_QUERY_RESULTS", 5))
 
 # Vector Store Configuration
 VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", "./data/processed/chroma_db")
+CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/processed/chroma_db")
+INDEX_NAME = ""  # Empty string since Chroma uses its own structure
+VECTOR_BACKEND = "chroma"
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Rutas de datos
@@ -44,7 +44,6 @@ for d in (DATA_DIR, RAW_DIR, PROC_DIR, VEC_DIR, LOG_DIR):
 
 # Vector Store
 VECTOR_BACKEND = os.getenv("VECTOR_BACKEND", "chroma")
-INDEX_NAME = "products"
 
 # Cache / RLHF
 CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() in {"true", "1", "yes"}

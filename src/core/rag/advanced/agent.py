@@ -11,7 +11,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.prompts import ChatPromptTemplate
-from src.core.config import settings
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.rag.advanced.prompts import (
@@ -22,6 +21,7 @@ from src.core.rag.advanced.prompts import (
 )
 from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
