@@ -127,15 +127,17 @@ class FeedbackProcessor:
                     documents=record["retrieved_docs"],
                     answer=record["answer"],
                 )
+                # Serialize EvaluationMetric objects
                 record["eval_scores"] = {
-                    k: v.__dict__ if isinstance(v, EvaluationMetric) else v
+                    k: {
+                        **{k2: v2.value if str(type(v2)) == "<enum 'EvaluationResult'>" else v2
+                        for k2, v2 in v.__dict__.items()},
+                        "result": v.result.value  # Convert enum to string
+                    } if isinstance(v, EvaluationMetric) else v
                     for k, v in evals.items()
                 }
 
             # 2. Tag category path (if category_tree provided)
-            #    We naively walk the tree and pick the deepest node whose
-            #    filter matches the active_filter.  A more sophisticated
-            #    approach could use the actual product list.
             if record["active_filter"]:
                 record["category_path"] = self._infer_category_path(record["active_filter"])
 

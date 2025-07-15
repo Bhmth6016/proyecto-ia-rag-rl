@@ -311,7 +311,7 @@ class RAGAgent:
             raw_dir=settings.RAW_DIR,
             processed_dir=pickle_dir,
             cache_enabled=settings.CACHE_ENABLED,
-        )[:50000]
+        )
         if not products:
             raise RuntimeError("No products found")
         return cls(

@@ -63,11 +63,15 @@ def local_llm(
         )
         model = model.merge_and_unload()
     
-    # Configuración de generación para seq2seq
+    # Valid generation configuration for seq2seq models
     generation_config = GenerationConfig(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         do_sample=True if temperature > 0 else False,
+        top_p=0.9,
+        repetition_penalty=1.1,
+        pad_token_id=tokenizer.pad_token_id,
+        eos_token_id=tokenizer.eos_token_id,
     )
 
     # Create text generation pipeline
