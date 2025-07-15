@@ -17,8 +17,7 @@ import numpy as np
 import faiss
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma, FAISS  # Cambio importante aquí
-from langchain_community.embeddings import HuggingFaceEmbeddings  # Y aquí
-
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings
