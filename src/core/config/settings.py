@@ -32,8 +32,8 @@ VEC_DIR = DATA_DIR / "vector"  # Chroma / FAISS
 LOG_DIR = DATA_DIR / "logs"
 
 # Vector Store Configuration
-VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", "./data/vector/chroma")  # Specific subfolder
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/vector/chroma")  # Same as above
+VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", str(DATA_DIR / "vector" / "chroma"))
+CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(DATA_DIR / "vector" / "chroma"))
 INDEX_NAME = ""  # Empty string since Chroma uses its own structure
 VECTOR_BACKEND = "chroma"  # Explicitly set to chroma
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

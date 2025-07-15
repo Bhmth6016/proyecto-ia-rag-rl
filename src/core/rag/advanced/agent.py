@@ -9,6 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.prompts import ChatPromptTemplate
+
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.rag.advanced.prompts import (
@@ -49,8 +50,12 @@ class RAGAgent:
         self.active_filter = ProductFilter()
 
         # Vector store via synonym-aware retriever
+        # 🛠️ Forzamos string absoluta y debugamos la ruta
+        index_path_str = str(Path(settings.VECTOR_INDEX_PATH).resolve())
+        logger.info("🔍 Using VECTOR_INDEX_PATH: %r", index_path_str)
+
         self.retriever = Retriever(
-            index_path=settings.VECTOR_INDEX_PATH,
+            index_path=index_path_str,
             vectorstore_type=settings.VECTOR_BACKEND,
             embedding_model=settings.EMBEDDING_MODEL,
             device=settings.DEVICE
@@ -59,7 +64,7 @@ class RAGAgent:
         # Check if the index exists
         if not self.retriever.index_exists():
             raise RuntimeError(
-                f"Vector index not found at {settings.VECTOR_INDEX_PATH}\n"
+                f"Vector index not found at {index_path_str}\n"
                 "Please build the index first with:\n"
                 "python main.py index --data-dir ./data/raw"
             )
@@ -125,12 +130,10 @@ class RAGAgent:
         processed_query, source_lang = self._process_query(query)
 
         products = self.retriever.retrieve(query=processed_query, k=5)
-
         if not products:
             products = self.retriever.retrieve(query=query, k=5)
 
         if not products:
-            # Intentar sugerencias basadas en expansión de consulta
             try:
                 expanded = self._expand_query(processed_query)
                 suggestions = ", ".join(expanded[:3]) if expanded else "backpack, headphones, speaker"
@@ -139,10 +142,7 @@ class RAGAgent:
 
             return NO_RESULTS_TEMPLATE.format(query=query, suggestions=suggestions)
 
-        exact = [
-            p for p in products
-            if self.retriever._score(query, p) > 0
-        ]
+        exact = [p for p in products if self.retriever._score(query, p) > 0]
         if not exact and products:
             titles = [p.title for p in products[:3]]
             return PARTIAL_RESULTS_TEMPLATE.format(
