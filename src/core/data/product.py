@@ -1,20 +1,9 @@
 from __future__ import annotations
 
-# src/core/data/product.py
-"""
-Canonical Amazon product representation.
-
-This model is shared by:
-- Indexers (vector stores)
-- CategoryTree / ProductFilter
-- Feedback pipeline
-- RLHF training
-"""
+# src/core/data/product.py}
 
 import re
-import hashlib
-
-from typing import Optional, Dict, List, Any, ClassVar
+from typing import Optional, Dict, List, Any
 from pydantic import BaseModel, Field, validator
 
 # ------------------------------------------------------------------
@@ -30,7 +19,7 @@ class ProductDetails(BaseModel):
     brand: Optional[str] = Field(None, alias="Brand")
     model: Optional[str] = Field(None, alias="Model")
     features: List[str] = Field(default_factory=list)
-    specifications: Dict[str, Any] = Field(default_factory=dict)  # Changed from Dict[str, str]
+    specifications: Dict[str, Any] = Field(default_factory=dict)
 
     @validator("specifications", pre=True)
     def normalize_specifications(cls, v: Dict[str, Any]) -> Dict[str, Any]:
@@ -39,12 +28,12 @@ class ProductDetails(BaseModel):
         
         normalized = {}
         for key, value in v.items():
-            # Convert Best Sellers Rank dictionary to string
             if key.lower() == "best sellers rank" and isinstance(value, dict):
                 normalized[key] = ", ".join(f"{k}: {v}" for k, v in value.items())
             else:
                 normalized[key] = str(value) if value is not None else ""
         return normalized
+
 
 # ------------------------------------------------------------------
 # Main product entity
@@ -69,6 +58,20 @@ class Product(BaseModel):
     # --------------------------------------------------
     # Validators
     # --------------------------------------------------
+    @validator("price", pre=True)
+    def parse_price(cls, v: Any) -> Optional[float]:
+        if v is None or isinstance(v, float):
+            return v
+        if isinstance(v, str):
+            # Remove common non-numeric characters and extract numbers
+            v = re.sub(r'[^\d.]', '', v)
+            if v:
+                try:
+                    return float(v)
+                except ValueError:
+                    pass
+        return None
+
     @validator("price")
     def non_negative_price(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and v < 0:
@@ -165,12 +168,10 @@ class Product(BaseModel):
         # 3. Normalize details
         if isinstance(raw.get("details"), dict):
             details = raw["details"]
-            # Handle Best Sellers Rank if it exists
             if "Best Sellers Rank" in details and isinstance(details["Best Sellers Rank"], dict):
                 details["Best Sellers Rank"] = ", ".join(
                     f"{k}: {v}" for k, v in details["Best Sellers Rank"].items()
                 )
-                
             extracted = {
                 "Brand": details.get("Brand") or details.get("brand"),
                 "Model": details.get("Model") or details.get("model"),
@@ -233,3 +234,18 @@ class Product(BaseModel):
             raw["images"] = ProductImage(**raw["images"])
 
         return cls(**raw)
+
+    def clean_image_urls(self):
+        """Limpia todas las URLs de imágenes en el producto."""
+        if self.images:
+            self.images.large = self.clean_url(self.images.large)
+            self.images.medium = self.clean_url(self.images.medium)
+            self.images.small = self.clean_url(self.images.small)
+
+    @staticmethod
+    def clean_url(url_str):
+        """Limpia la URL de HTML."""
+        if not url_str:
+            return ""
+        match = re.search(r'https?://[^\s<>"\']+', str(url_str))
+        return match.group(0) if match else ""
