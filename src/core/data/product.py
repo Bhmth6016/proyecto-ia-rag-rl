@@ -14,7 +14,7 @@ This model is shared by:
 import re
 import hashlib
 
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, ClassVar
 from pydantic import BaseModel, Field, validator
 
 # ------------------------------------------------------------------
@@ -30,8 +30,21 @@ class ProductDetails(BaseModel):
     brand: Optional[str] = Field(None, alias="Brand")
     model: Optional[str] = Field(None, alias="Model")
     features: List[str] = Field(default_factory=list)
-    specifications: Dict[str, str] = Field(default_factory=dict)
+    specifications: Dict[str, Any] = Field(default_factory=dict)  # Changed from Dict[str, str]
 
+    @validator("specifications", pre=True)
+    def normalize_specifications(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(v, dict):
+            return {}
+        
+        normalized = {}
+        for key, value in v.items():
+            # Convert Best Sellers Rank dictionary to string
+            if key.lower() == "best sellers rank" and isinstance(value, dict):
+                normalized[key] = ", ".join(f"{k}: {v}" for k, v in value.items())
+            else:
+                normalized[key] = str(value) if value is not None else ""
+        return normalized
 
 # ------------------------------------------------------------------
 # Main product entity
@@ -63,7 +76,7 @@ class Product(BaseModel):
         return v
 
     # --- NEW VALIDATORS --------------------------------------------
-    _SPANISH_TO_ENGLISH = {
+    SPANISH_TO_ENGLISH: ClassVar[Dict[str, str]] = {
         "mochila": "backpack",
         "bolso": "bag",
         "maleta": "luggage",
@@ -75,12 +88,16 @@ class Product(BaseModel):
         "cámara": "camera",
     }
 
+    @classmethod
+    def get_spanish_to_english(cls) -> Dict[str, str]:
+        return cls.SPANISH_TO_ENGLISH
+
     @validator("product_type", pre=True)
     def normalize_product_type(cls, v: Optional[str]) -> Optional[str]:
         if not v:
             return None
         v = v.lower().strip()
-        v = cls._SPANISH_TO_ENGLISH.get(v, v)
+        v = cls.get_spanish_to_english().get(v, v)
         return v.title()
 
     @validator("tags", pre=True)
@@ -90,7 +107,7 @@ class Product(BaseModel):
         normalized = []
         for tag in v:
             tag = tag.lower().strip()
-            tag = cls._SPANISH_TO_ENGLISH.get(tag, tag)
+            tag = cls.get_spanish_to_english().get(tag, tag)
             normalized.append(tag.title())
         return normalized
 
@@ -148,12 +165,19 @@ class Product(BaseModel):
         # 3. Normalize details
         if isinstance(raw.get("details"), dict):
             details = raw["details"]
+            # Handle Best Sellers Rank if it exists
+            if "Best Sellers Rank" in details and isinstance(details["Best Sellers Rank"], dict):
+                details["Best Sellers Rank"] = ", ".join(
+                    f"{k}: {v}" for k, v in details["Best Sellers Rank"].items()
+                )
+                
             extracted = {
                 "Brand": details.get("Brand") or details.get("brand"),
                 "Model": details.get("Model") or details.get("model"),
                 "features": raw.get("features", []),
                 "specifications": {
-                    k: v for k, v in details.items() if k not in ["Brand", "brand", "Model", "model"]
+                    k: v for k, v in details.items() 
+                    if k not in ["Brand", "brand", "Model", "model"]
                 },
             }
             raw["details"] = extracted
@@ -197,7 +221,7 @@ class Product(BaseModel):
         # 4d. Infer product_type if empty
         if not raw.get("product_type"):
             title_lower = raw.get("title", "").lower()
-            for sp, en in cls._SPANISH_TO_ENGLISH.items():
+            for sp, en in cls.get_spanish_to_english().items():
                 if sp in title_lower:
                     raw["product_type"] = en
                     break
@@ -209,92 +233,3 @@ class Product(BaseModel):
             raw["images"] = ProductImage(**raw["images"])
 
         return cls(**raw)
-
-    # --------------------------------------------------
-    # Export helpers
-    # --------------------------------------------------
-    def to_document(self) -> Dict[str, Any]:
-        """
-        Return LangChain-compatible Document dict for indexing.
-
-        Returns
-        -------
-        dict
-            {"page_content": str, "metadata": dict}
-        """
-        return {
-            "page_content": self._build_content(),
-            "metadata": self._build_metadata(),
-        }
-
-    def _build_content(self) -> str:
-        """Human-readable textual description."""
-        parts = [
-            f"Título: {self.title}",
-            f"Categoría: {self.main_category}",
-            f"Precio: ${self.price}" if self.price is not None else "Precio: N/A",
-        ]
-
-        if self.product_type:
-            parts.append(f"Tipo de producto: {self.product_type.title()}")
-        if self.compatible_devices:
-            parts.append(f"Dispositivos compatibles: {', '.join(self.compatible_devices)}")
-        if self.tags:
-            parts.append(f"Etiquetas: {', '.join(self.tags)}")
-        if self.attributes:
-            specs = "\n".join(f"{k}: {v}" for k, v in self.attributes.items())
-            parts.append(f"Atributos:\n{specs}")
-
-        if self.details:
-            if self.details.brand:
-                parts.append(f"Marca: {self.details.brand}")
-            if self.details.model:
-                parts.append(f"Modelo: {self.details.model}")
-            if self.details.features:
-                parts.append(f"Características: {', '.join(self.details.features)}")
-            if self.details.specifications:
-                specs = "\n".join(f"{k}: {v}" for k, v in self.details.specifications.items())
-                parts.append(f"Especificaciones:\n{specs}")
-
-        return "\n".join(parts)
-
-    def _build_metadata(self) -> Dict[str, Any]:
-        """Flat metadata dict for vector-store filtering."""
-        return {
-            "id": self.id,
-            "title": self.title,
-            "category": self.main_category,
-            "price": self.price,
-            "rating": self.average_rating,
-            "rating_count": self.rating_count,
-            "brand": self.details.brand if self.details else None,
-            "product_type": self.product_type,
-            "compatible_devices": self.compatible_devices,
-            "tags": self.tags,
-            **(self.attributes or {}),
-            **(self.details.specifications if self.details else {}),
-        }
-
-    @staticmethod
-    def clean_url(url_str):
-        """Clean URL from HTML markup"""
-        import re
-        if not url_str:
-            return ""
-        match = re.search(r'https?://[^\s<>"\']+', str(url_str))
-        return match.group(0) if match else ""
-
-    def clean_image_urls(self):
-        """Clean all image URLs in the product"""
-        if hasattr(self, 'images') and self.images:
-            for key in ['thumb', 'large', 'hi_res', 'medium', 'small']:
-                if hasattr(self.images, key) and getattr(self.images, key):
-                    cleaned = self.clean_url(getattr(self.images, key))
-                    setattr(self.images, key, cleaned)
-
-    # --------------------------------------------------
-    # Dunder utilities
-    # --------------------------------------------------
-    def __str__(self) -> str:  # noqa: D401
-        """Concise representation."""
-        return f"{self.title} (${self.price}) | {self.main_category}"
