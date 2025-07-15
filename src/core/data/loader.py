@@ -212,6 +212,9 @@ class DataLoader:
                 if not item.get("tags"):
                     item["tags"] = self._extract_tags(item.get("title", ""), specs)
 
+                # Ignore images
+                item["images"] = None
+
                 product = Product.from_dict(item)
                 if product.title and product.title.strip() and product.main_category:
                     product.clean_image_urls()

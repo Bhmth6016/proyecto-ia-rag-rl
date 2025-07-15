@@ -13,6 +13,7 @@ import faiss
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma, FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores.utils import filter_complex_metadata
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings
@@ -140,7 +141,7 @@ class Retriever:
                 return
 
             documents = [
-                Document(page_content=prod.to_text(), metadata=prod.to_metadata())
+                Document(page_content=prod.to_text(), metadata=filter_complex_metadata(prod.to_metadata()))
                 for prod in products
             ]
 

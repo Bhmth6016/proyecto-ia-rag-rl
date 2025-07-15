@@ -48,12 +48,11 @@ class Product(BaseModel):
     rating_count: Optional[int] = Field(None, alias="rating_number", ge=0)
     images: Optional[ProductImage] = None
     details: Optional[ProductDetails] = None
-
-    # --- NEW FIELDS -------------------------------------------------
     product_type: Optional[str] = None
     compatible_devices: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     attributes: Dict[str, str] = Field(default_factory=dict)
+    description: Optional[str] = None
 
     # --------------------------------------------------
     # Validators
@@ -151,19 +150,7 @@ class Product(BaseModel):
             raw["id"] = hashlib.md5(base.encode("utf-8")).hexdigest()
 
         # 2. Convert images: list → ProductImage
-        if isinstance(raw.get("images"), list) and raw["images"]:
-            main = raw["images"][0]
-            raw["images"] = {
-                "large": main.get("large"),
-                "medium": main.get("thumb"),
-                "small": main.get("thumb"),
-            }
-        else:
-            raw["images"] = {
-                "large": None,
-                "medium": None,
-                "small": None,
-            }
+        raw["images"] = None  # Ignorar imágenes
 
         # 3. Normalize details
         if isinstance(raw.get("details"), dict):
@@ -192,11 +179,12 @@ class Product(BaseModel):
         description = raw.get("description", "")
         if isinstance(description, list):
             description = " ".join(desc for desc in description if isinstance(desc, str))
-        
+        raw["description"] = description
+
         # 4a. Build text blob for analysis
         text_blob = " ".join([
             raw.get("title", ""), 
-            description,
+            raw.get("description", ""),
             *[str(v) for v in specs.values()]
         ]).lower()
 
@@ -231,10 +219,9 @@ class Product(BaseModel):
         if "details" in raw:
             raw["details"] = ProductDetails(**raw["details"])
         if "images" in raw:
-            raw["images"] = ProductImage(**raw["images"])
+            raw["images"] = None  # Ensure images are ignored
 
         return cls(**raw)
-
     def clean_image_urls(self):
         """Limpia todas las URLs de imágenes en el producto."""
         if self.images:
@@ -249,3 +236,24 @@ class Product(BaseModel):
             return ""
         match = re.search(r'https?://[^\s<>"\']+', str(url_str))
         return match.group(0) if match else ""
+    
+    def to_text(self) -> str:
+        """Devuelve una representación de texto del producto."""
+        text = f"{self.title} {self.description or ''}"
+        if self.tags:
+            text += " " + " ".join(self.tags)
+        if self.compatible_devices:
+            text += " " + " ".join(self.compatible_devices)
+        return text
+
+    def to_metadata(self) -> dict:
+        """Devuelve los metadatos del producto."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "price": self.price,
+            "average_rating": self.average_rating,
+            "rating_count": self.rating_count,
+            "tags": " ".join(self.tags),  # Convertir lista a cadena
+            "compatible_devices": " ".join(self.compatible_devices),  # Convertir lista a cadena
+        }
