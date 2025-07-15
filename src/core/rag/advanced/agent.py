@@ -1,5 +1,3 @@
-# src/core/rag/advanced/agent.py
-
 from __future__ import annotations
 
 import logging
@@ -50,10 +48,17 @@ class RAGAgent:
         self.active_filter = ProductFilter()
 
         # Vector store via synonym-aware retriever
-        self.retriever = Retriever(
-            index_path=settings.VECTOR_INDEX_PATH,
-            vectorstore_type=settings.VECTOR_BACKEND,
-        )
+        try:
+            self.retriever = Retriever(
+                index_path=settings.VECTOR_INDEX_PATH,
+                vectorstore_type=settings.VECTOR_BACKEND,
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize Retriever: {e}")
+            raise RuntimeError(
+                f"Index not found at {settings.VECTOR_INDEX_PATH}. Please run the following command to build the index:\n"
+                f"python src/interfaces/cli.py index"
+            )
 
         # LLM
         self.llm = ChatGoogleGenerativeAI(
@@ -159,7 +164,6 @@ class RAGAgent:
             },
         )
         return final_answer
-
 
     def set_filters(
         self,

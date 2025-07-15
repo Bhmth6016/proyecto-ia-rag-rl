@@ -19,16 +19,9 @@ LOG_FILE = os.getenv("LOG_FILE", "./logs/amazon_recommendations.log")
 DEVICE = os.getenv("DEVICE", "cuda")
 
 # Límites del sistema
-MAX_PRODUCTS_TO_LOAD = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 1000000))
-MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", 20000))
+MAX_PRODUCTS_TO_LOAD = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 100000000))
+MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", 2000000))
 MAX_QUERY_RESULTS = int(os.getenv("MAX_QUERY_RESULTS", 5))
-
-# Vector Store Configuration
-VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", "./data/processed/chroma_db")
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/processed/chroma_db")
-INDEX_NAME = ""  # Empty string since Chroma uses its own structure
-VECTOR_BACKEND = "chroma"
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Rutas de datos
 BASE_DIR = Path.cwd().resolve()
@@ -37,6 +30,14 @@ RAW_DIR = DATA_DIR / "raw"
 PROC_DIR = DATA_DIR / "processed"
 VEC_DIR = DATA_DIR / "vector"  # Chroma / FAISS
 LOG_DIR = DATA_DIR / "logs"
+
+# Vector Store Configuration
+VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", "./data/vector")
+CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/vector")
+VEC_DIR = DATA_DIR / "vector"  # Now consistent
+INDEX_NAME = ""  # Empty string since Chroma uses its own structure
+VECTOR_BACKEND = "chroma"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Ensure directories exist
 for d in (DATA_DIR, RAW_DIR, PROC_DIR, VEC_DIR, LOG_DIR):

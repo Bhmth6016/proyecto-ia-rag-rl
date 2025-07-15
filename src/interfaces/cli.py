@@ -94,6 +94,12 @@ def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
     """Interactive Q&A loop."""
     logger = logging.getLogger("rag")
 
+    # Check if the index exists
+    index_path = settings.VEC_DIR / settings.INDEX_NAME
+    if not index_path.exists():
+        logger.info("Index not found. Building index...")
+        _run_index_mode(loader, clear_cache=False)
+
     # Build retriever & agent using settings
     retriever = Retriever(
         index_path=settings.VEC_DIR / settings.INDEX_NAME,

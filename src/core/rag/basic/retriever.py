@@ -56,7 +56,7 @@ def _expand_query(query: str) -> List[str]:
 class Retriever:
     def __init__(
         self,
-        index_path: Union[str, Path] = settings.VEC_DIR / settings.INDEX_NAME,
+        index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
         embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         vectorstore_type: str = settings.VECTOR_BACKEND,
         device: str = getattr(settings, "DEVICE", "cpu"),

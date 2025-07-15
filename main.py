@@ -11,9 +11,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from src.core.config import settings
 from src.core.data.loader import DataLoader
-from src.core.rag.advanced.agent import AdvancedRAGAgent
+from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
 from src.interfaces.cli import AmazonRecommendationCLI
 from src.core.utils.logger import configure_root_logger
@@ -73,7 +73,10 @@ def initialize_system(data_dir: Optional[str] = None,
     logger.info("📚 Retriever ready")
 
     # Build advanced RAG agent
-    rag_agent = AdvancedRAGAgent(
+    rag_agent = RAGAgent(
+        products=products,  # Add this required parameter
+        lora_checkpoint=settings.RLHF_CHECKPOINT,
+        enable_translation=True
         llm=llm,
         retriever=retriever,
         memory=memory,
