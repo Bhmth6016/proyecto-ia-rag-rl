@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import pickle
 import logging
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -47,7 +46,6 @@ _TAG_KEYWORDS: Dict[str, List[str]] = {
     "noise-cancelling": ["noise cancelling", "noise reduction", "anc"],
     "fast-charging": ["fast charging", "quick charge", "carga rápida"],
 }
-
 
 class DataLoader:
     """
@@ -181,6 +179,14 @@ class DataLoader:
             idx, line = idx_line
             try:
                 item = json.loads(line.strip())
+                if not isinstance(item, dict):
+                    logger.warning(f"Line {idx}: Expected dict, got {type(item)}")
+                    return None
+
+                # Ensure description is properly formatted
+                if "description" in item and isinstance(item["description"], list):
+                    item["description"] = " ".join(str(x) for x in item["description"] if x)
+
                 # Enrich
                 specs = item.get("details", {}).get("specifications", {})
                 if not item.get("product_type"):
@@ -195,7 +201,8 @@ class DataLoader:
                 else:
                     raise ValidationError("Missing or empty title")
             except (json.JSONDecodeError, ValidationError) as e:
-                return None  # handled below
+                logger.warning(f"Error processing line {idx}: {str(e)}")
+                return None
 
         with raw_file.open("r", encoding="utf-8") as f:
             lines = list(enumerate(f))
@@ -208,7 +215,6 @@ class DataLoader:
                     desc=f"Processing {raw_file.name}",
                 )
             )
-
         for res in results:
             if res is None:
                 error_count += 1

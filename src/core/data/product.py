@@ -125,12 +125,12 @@ class Product(BaseModel):
     def from_dict(cls, raw: Dict) -> "Product":
         """Build Product from raw dict (handles nested objects and aliases)."""
 
-        # 1. Crear un id si no existe
+        # 1. Create id if it doesn't exist
         if "id" not in raw:
             base = (raw.get("title") or "") + (raw.get("main_category") or "")
             raw["id"] = hashlib.md5(base.encode("utf-8")).hexdigest()
 
-        # 2. Convertir images: list → ProductImage
+        # 2. Convert images: list → ProductImage
         if isinstance(raw.get("images"), list) and raw["images"]:
             main = raw["images"][0]
             raw["images"] = {
@@ -145,7 +145,7 @@ class Product(BaseModel):
                 "small": None,
             }
 
-        # 3. Normalizar details
+        # 3. Normalize details
         if isinstance(raw.get("details"), dict):
             details = raw["details"]
             extracted = {
@@ -158,24 +158,35 @@ class Product(BaseModel):
             }
             raw["details"] = extracted
 
-        # 4. Extraer atributos clave automáticamente
+        # 4. Extract key attributes automatically
         specs = (raw.get("details") or {}).get("specifications") or {}
         raw.setdefault("attributes", {})
         raw.setdefault("compatible_devices", [])
 
-        # 4a. Buscar tamaños
+        # Handle description - convert list to string if needed
+        description = raw.get("description", "")
+        if isinstance(description, list):
+            description = " ".join(desc for desc in description if isinstance(desc, str))
+        
+        # 4a. Build text blob for analysis
+        text_blob = " ".join([
+            raw.get("title", ""), 
+            description,
+            *[str(v) for v in specs.values()]
+        ]).lower()
+
+        # 4b. Search for sizes
         for k, v in specs.items():
             if "size" in k.lower() or "dimension" in k.lower():
-                match = re.search(r'(\d+(?:\.\d+)?(?:\s?-?\s?\d+)?(?:\s?inch|in|"))', v, re.IGNORECASE)
+                match = re.search(r'(\d+(?:\.\d+)?(?:\s?-?\s?\d+)?(?:\s?inch|in|"))', str(v), re.IGNORECASE)
                 if match:
                     raw["attributes"]["screen_size"] = match.group(0).strip()
-            elif "pulgadas" in v.lower():
-                match = re.search(r'(\d+(?:\.\d+)?)\s*pulgadas?', v, re.IGNORECASE)
+            elif "pulgadas" in str(v).lower():
+                match = re.search(r'(\d+(?:\.\d+)?)\s*pulgadas?', str(v), re.IGNORECASE)
                 if match:
                     raw["attributes"]["screen_size"] = f"{match.group(1).strip()}-inch"
 
-        # 4b. Inferir dispositivos compatibles
-        text_blob = " ".join([raw.get("title", ""), raw.get("description", "")] + list(specs.values())).lower()
+        # 4c. Infer compatible devices
         if any(kw in text_blob for kw in ["laptop", "notebook", "portátil"]):
             raw["compatible_devices"].append("laptop")
         if any(kw in text_blob for kw in ["tablet", "ipad"]):
@@ -183,7 +194,7 @@ class Product(BaseModel):
         if any(kw in text_blob for kw in ["smartphone", "phone", "teléfono", "móvil"]):
             raw["compatible_devices"].append("smartphone")
 
-        # 4c. Inferir product_type si está vacío
+        # 4d. Infer product_type if empty
         if not raw.get("product_type"):
             title_lower = raw.get("title", "").lower()
             for sp, en in cls._SPANISH_TO_ENGLISH.items():
@@ -191,7 +202,7 @@ class Product(BaseModel):
                     raw["product_type"] = en
                     break
 
-        # 5. Validación Pydantic de campos anidados
+        # 5. Pydantic validation of nested fields
         if "details" in raw:
             raw["details"] = ProductDetails(**raw["details"])
         if "images" in raw:
