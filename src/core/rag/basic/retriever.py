@@ -77,6 +77,12 @@ class Retriever:
         self.store = None
         self.faiss_docs = []
 
+        # Load the index if it exists
+        if self.index_exists():
+            self._load_index()
+        else:
+            logger.warning("No index found at %s. Please build the index first.", self.index_path)
+
     def index_exists(self) -> bool:
         """Check if the vector index exists in the configured path."""
         if self.backend == "chroma":

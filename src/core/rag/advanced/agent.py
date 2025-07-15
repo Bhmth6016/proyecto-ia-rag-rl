@@ -76,19 +76,20 @@ class RAGAgent:
         )
 
     def _build_chain(self) -> ConversationalRetrievalChain:
+        if not self.retriever.store:
+            raise ValueError("Retriever store is not initialized. Please check the index path and ensure the index is built.")
+
         prompt = ChatPromptTemplate.from_template(
-            "Answer the question based on the context below. "
-            "If you don't know the answer, say you don't know. "
-            "Be concise and helpful.\n\n"
-            "Context: {context}\n\n"
-            "Question: {question}\n"
-            "Answer:"
+            "Responde la pregunta basándote en el contexto siguiente. "
+            "Si no sabes la respuesta, di que no sabes. "
+            "Sé conciso y útil.\n\n"
+            "Contexto: {context}\n\n"
+            "Pregunta: {question}\n"
+            "Respuesta:"
         )
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
-            retriever=self.retriever.store.as_retriever(
-                search_kwargs={"k": 5}
-            ),
+            retriever=self.retriever.store.as_retriever(search_kwargs={"k": 5}),
             memory=self.memory,
             combine_docs_chain_kwargs={"prompt": prompt},
             return_source_documents=False,
