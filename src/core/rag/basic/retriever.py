@@ -63,19 +63,21 @@ class Retriever:
         vectorstore_type: str = settings.VECTOR_BACKEND,
         device: str = getattr(settings, "DEVICE", "cpu"),
     ):
-        """Initialize the Retriever with vector store configuration.
-        
-        Args:
-            index_path: Path to the vector index directory
-            embedding_model: Name of the HuggingFace embedding model
-            vectorstore_type: Either 'faiss' or 'chroma'
-            device: Device to run the embedding model on ('cpu' or 'cuda')
-        """
+        """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path)
         self.embedder_name = embedding_model
         self.backend = vectorstore_type.lower()
         self.device = device
-        self._load_index()
+        
+        # Initialize embedder but don't load index yet
+        self.embedder = HuggingFaceEmbeddings(
+            model_name=self.embedder_name,
+            model_kwargs={"device": self.device},
+        )
+        
+        # Initialize store as None - will be set when building or loading index
+        self.store = None
+        self.faiss_docs = []
 
     def index_exists(self) -> bool:
         """Check if the vector index exists in the configured path."""
@@ -128,11 +130,7 @@ class Retriever:
             raise
 
     def build_index(self, products: List[Product]) -> None:
-        """Build and save a new vector index from products.
-        
-        Args:
-            products: List of Product objects to index
-        """
+        """Build and save a new vector index from products."""
         try:
             logger.info("Building index at %s", self.index_path)
             self.index_path.mkdir(parents=True, exist_ok=True)

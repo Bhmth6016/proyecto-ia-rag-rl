@@ -169,13 +169,22 @@ def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
 
     # Build the vector index
     from src.core.rag.basic.retriever import Retriever
+    
+    # First create the index directory if it doesn't exist
+    index_path = settings.VEC_DIR / settings.INDEX_NAME
+    index_path.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize retriever and build index
     retriever = Retriever(
-        index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        index_path=index_path,
         embedding_model=settings.EMBEDDING_MODEL,
         vectorstore_type=settings.VECTOR_BACKEND,
         device=settings.DEVICE
     )
+    
+    # Explicitly build the index with the products
     retriever.build_index(products)
+    print("✅ Successfully built vector index.")
 
 # ------------------------------------------------------------------
 # Script entry
