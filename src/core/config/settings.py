@@ -1,65 +1,47 @@
-#src/core/config/settings.py
-"""
-Central configuration.
-Load once, use everywhere.
-"""
-from __future__ import annotations
+# src/core/config/settings.py
 
 import os
-import yaml
 from pathlib import Path
+
+# Load environment variables from .env file
 from dotenv import load_dotenv
+load_dotenv()
 
-load_dotenv()  # .env file is optional
+# GEMINI API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ")
 
-# ------------------------------------------------------------------
-# Base directories (auto-resolve)
-# ------------------------------------------------------------------
-BASE_DIR = Path.cwd().resolve()  # Or your actual project root
+# Configuración de ChromaDB
+CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./data/processed/chroma_db")
+CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 
+# Configuración de logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_FILE = os.getenv("LOG_FILE", "./logs/amazon_recommendations.log")
+
+# Límites del sistema
+MAX_PRODUCTS_TO_LOAD = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 1000000))
+MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", 20000))
+
+# Vector Store Configuration
+VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", "./data/processed/chroma_db")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
+# Rutas de datos
+BASE_DIR = Path.cwd().resolve() 
 DATA_DIR = BASE_DIR / "data"  # Ensure this matches your structure
-DATA_DIR   = BASE_DIR / "data"
-RAW_DIR    = DATA_DIR / "raw"
-PROC_DIR   = DATA_DIR / "processed"
-VEC_DIR    = DATA_DIR / "vector"          # Chroma / FAISS
-LOG_DIR    = DATA_DIR / "logs"
-DEVICE = os.getenv("DEVICE", "cpu")
+RAW_DIR = DATA_DIR / "raw"
+PROC_DIR = DATA_DIR / "processed"
+VEC_DIR = DATA_DIR / "vector"  # Chroma / FAISS
+LOG_DIR = DATA_DIR / "logs"
 
+# Ensure directories exist
 for d in (DATA_DIR, RAW_DIR, PROC_DIR, VEC_DIR, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-# ------------------------------------------------------------------
-# Models & hyper-params
-# ------------------------------------------------------------------
-EMBEDDING_MODEL  = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-BASE_LLM         = os.getenv("BASE_LLM", "google/flan-t5-base")
-EVAL_LLM         = os.getenv("EVAL_LLM", "google/flan-t5-large")
+# Vector Store
+VECTOR_BACKEND = os.getenv("VECTOR_BACKEND", "chroma")
+INDEX_NAME = "products"
 
-# ------------------------------------------------------------------
-# Vector store
-# ------------------------------------------------------------------
-VECTOR_BACKEND   = os.getenv("VECTOR_BACKEND", "chroma")  # "chroma" | "faiss"
-INDEX_NAME       = "products"
-
-# ------------------------------------------------------------------
 # Cache / RLHF
-# ------------------------------------------------------------------
-CACHE_ENABLED    = os.getenv("CACHE_ENABLED", "true").lower() in {"true", "1", "yes"}
-RLHF_CHECKPOINT  = os.getenv("RLHF_CHECKPOINT")  # Path or None
-
-_RLHF_YAML = BASE_DIR / "rlhf_config.yaml"
-RLHF_CONFIG: dict = {}
-if _RLHF_YAML.exists():
-    with _RLHF_YAML.open() as f:
-        RLHF_CONFIG = yaml.safe_load(f)
-else:
-    # Defaults inline para que nunca falle
-    RLHF_CONFIG = {
-        "base_model": "google/flan-t5-large",
-        "reward_model": "facebook/roberta-hate-speech-dynabench-r4",
-        "device": "cuda",
-        "lora_rank": 8,
-        "batch_size": 8,
-        "learning_rate": 1.41e-5,
-        "epochs": 3,
-    }
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() in {"true", "1", "yes"}
+RLHF_CHECKPOINT = os.getenv("RLHF_CHECKPOINT")

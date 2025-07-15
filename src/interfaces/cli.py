@@ -8,6 +8,7 @@ $ python -m src.cli rag          # interactive Q&A
 $ python -m src.cli category     # browse category tree
 $ python -m src.cli index        # (re)build index & cache
 """
+# src/interfaces/cli.py
 
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from src.core.config import settings
+from src.core.config.settings import *  # Import all settings
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
 from src.core.category_search.category_tree import CategoryTree
@@ -25,6 +26,8 @@ from src.core.rag.basic.retriever import Retriever
 from src.core.rag.advanced.agent import RAGAgent
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
+
+from src.core.config import settings
 
 
 
@@ -110,7 +113,7 @@ def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
     )
     agent = RAGAgent(
         products=products,
-        lora_checkpoint=settings.RLHF_CHECKPOINT,
+        lora_checkpoint=settings.RLHF_CHECKPOINT,  # Asegúrate de que esto esté correcto
     )
 
     print("\n=== Amazon RAG mode ===\nType 'exit' to quit.\n")

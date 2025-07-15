@@ -23,7 +23,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.prompts import ChatPromptTemplate
-
+from src.core.config.settings import *
 # Internal imports
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
@@ -36,6 +36,7 @@ from src.core.rag.advanced.prompts import (
 from src.core.config import settings
 from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever  # synonym-aware retriever
+
 
 # ------------------------------------------------------------------
 # Logging
@@ -52,18 +53,15 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 # Agent
 # ------------------------------------------------------------------
 class RAGAgent:
-    """
-    Enhanced RAG agent with multilingual support and smart fallback.
-    """
-
     def __init__(
         self,
-        *,
         products: List[Dict],
+        lora_checkpoint: Optional[str] = None,
         enable_translation: bool = True,
     ):
         self.products = products
         self.enable_translation = enable_translation
+        self.lora_checkpoint = lora_checkpoint
 
         # Translation
         self.translator = TextTranslator() if enable_translation else None
@@ -73,12 +71,15 @@ class RAGAgent:
         self.active_filter = ProductFilter()
 
         # Vector store via synonym-aware retriever
-        self.retriever = Retriever()
+        self.retriever = Retriever(
+            index_path=VECTOR_INDEX_PATH,
+            vectorstore_type=VECTOR_BACKEND,
+        )
 
         # LLM
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
-            google_api_key=settings.GOOGLE_API_KEY,
+            google_api_key=GEMINI_API_KEY,
             temperature=0.3,
         )
 
@@ -92,7 +93,7 @@ class RAGAgent:
 
         # Feedback
         self.feedback = FeedbackProcessor(
-            feedback_dir=str(settings.DATA_DIR / "feedback")
+            feedback_dir=str(DATA_DIR / "feedback")
         )
 
     # ------------------------------------------------------------------
