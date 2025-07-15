@@ -1,6 +1,6 @@
-# src/interfaces/cli.py
-
 from __future__ import annotations
+
+# src/interfaces/cli.py
 
 import argparse
 import logging
@@ -11,12 +11,11 @@ from typing import List, Optional
 from src.core.config import settings
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
-from src.core.category_search.category_tree import CategoryTree
 from src.core.rag.basic.retriever import Retriever
 from src.core.rag.advanced.agent import RAGAgent
+from src.core.category_search.category_tree import CategoryTree
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
-
 # ------------------------------------------------------------------
 # CLI entry-point
 # ------------------------------------------------------------------
@@ -66,7 +65,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         raw_dir=settings.RAW_DIR,
         processed_dir=settings.PROC_DIR,
         cache_enabled=settings.CACHE_ENABLED,
-        disable_tqdm=getattr(args, 'disable_tqdm', False),  # Pasar la opción
+        disable_tqdm=getattr(args, 'disable_tqdm', False),  # Pass the option
     )
     products: List[Product] = loader.load_data(use_cache=True)
 
@@ -77,14 +76,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     # ----------------------------------------------------------------
     # dispatch
     # ----------------------------------------------------------------
-    if args.command == "rag":
+    if args.command == "index":
+        _run_index_mode(loader, clear_cache=args.clear_cache)
+
+    elif args.command == "rag":
         _run_rag_mode(products, k=args.top_k, feedback=not args.no_feedback)
 
     elif args.command == "category":
         _run_category_mode(products, start=args.category)
-
-    elif args.command == "index":
-        _run_index_mode(loader, clear_cache=args.clear_cache)
 
     logging.info("Done.")
 
@@ -98,7 +97,9 @@ def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
     # Build retriever & agent using settings
     retriever = Retriever(
         index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        embedding_model=settings.EMBEDDING_MODEL,
         vectorstore_type=settings.VECTOR_BACKEND,
+        device=settings.DEVICE
     )
     agent = RAGAgent(
         products=products,
@@ -165,6 +166,16 @@ def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
     # Force re-processing (cache disabled)
     products = loader.load_data(use_cache=False)
     print(f"✅ Re-indexed {len(products)} products.")
+
+    # Build the vector index
+    from src.core.rag.basic.retriever import Retriever
+    retriever = Retriever(
+        index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        embedding_model=settings.EMBEDDING_MODEL,
+        vectorstore_type=settings.VECTOR_BACKEND,
+        device=settings.DEVICE
+    )
+    retriever.build_index(products)
 
 # ------------------------------------------------------------------
 # Script entry

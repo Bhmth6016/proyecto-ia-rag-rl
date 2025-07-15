@@ -196,7 +196,7 @@ class DataLoader:
         return products
 
     def _process_json_array(self, raw_file: Path) -> List[Product]:
-        with raw_file.open("r", encoding="utf-8") as f:
+        with raw_file.open("r", encoding="utf-8-sig") as f:  # Use utf-8-sig to handle BOM
             items = json.load(f)
         if not isinstance(items, list):
             raise ValueError(f"{raw_file.name} debe contener una lista de productos")
