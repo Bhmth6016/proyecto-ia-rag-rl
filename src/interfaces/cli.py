@@ -1,14 +1,4 @@
 # src/interfaces/cli.py
-"""
-Amazon product recommendation CLI (headless).
-
-Commands
---------
-$ python -m src.cli rag          # interactive Q&A
-$ python -m src.cli category     # browse category tree
-$ python -m src.cli index        # (re)build index & cache
-"""
-# src/interfaces/cli.py
 
 from __future__ import annotations
 
@@ -18,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from src.core.config.settings import *  # Import all settings
+from src.core.config import settings
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
 from src.core.category_search.category_tree import CategoryTree
@@ -26,10 +16,6 @@ from src.core.rag.basic.retriever import Retriever
 from src.core.rag.advanced.agent import RAGAgent
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
-
-from src.core.config import settings
-
-
 
 # ------------------------------------------------------------------
 # CLI entry-point
@@ -45,14 +31,17 @@ def main(argv: Optional[List[str]] = None) -> None:
     rag = sub.add_parser("rag", help="interactive Q&A")
     rag.add_argument("-k", "--top-k", type=int, default=5)
     rag.add_argument("--no-feedback", action="store_true")
+    rag.add_argument("--disable-tqdm", action="store_true", help="disable progress bars")
 
     # ---- category --------------------------------------------------
     cat = sub.add_parser("category", help="browse by category")
     cat.add_argument("-c", "--category", type=str, help="start category")
+    cat.add_argument("--disable-tqdm", action="store_true", help="disable progress bars")
 
     # ---- index -----------------------------------------------------
     idx = sub.add_parser("index", help="(re)build vector-store")
     idx.add_argument("--clear-cache", action="store_true")
+    idx.add_argument("--disable-tqdm", action="store_true", help="disable progress bars")
 
     # ---- common ----------------------------------------------------
     for cmd in (rag, cat, idx):
@@ -77,6 +66,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         raw_dir=settings.RAW_DIR,
         processed_dir=settings.PROC_DIR,
         cache_enabled=settings.CACHE_ENABLED,
+        disable_tqdm=getattr(args, 'disable_tqdm', False),  # Pasar la opción
     )
     products: List[Product] = loader.load_data(use_cache=True)
 
@@ -98,7 +88,6 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     logging.info("Done.")
 
-
 # ------------------------------------------------------------------
 # Mode implementations
 # ------------------------------------------------------------------
@@ -113,7 +102,7 @@ def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
     )
     agent = RAGAgent(
         products=products,
-        lora_checkpoint=settings.RLHF_CHECKPOINT,  # Asegúrate de que esto esté correcto
+        lora_checkpoint=settings.RLHF_CHECKPOINT,
     )
 
     print("\n=== Amazon RAG mode ===\nType 'exit' to quit.\n")
@@ -133,7 +122,6 @@ def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
             logger.info("Feedback: %s -> %s", query, score.name)
 
     logger.info("Leaving RAG mode.")
-
 
 def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     """Interactive category explorer."""
@@ -168,7 +156,6 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     except KeyboardInterrupt:
         print("\nLeaving category mode.")
 
-
 def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
     """(Re)build vector-store and cache."""
     if clear_cache:
@@ -178,7 +165,6 @@ def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
     # Force re-processing (cache disabled)
     products = loader.load_data(use_cache=False)
     print(f"✅ Re-indexed {len(products)} products.")
-
 
 # ------------------------------------------------------------------
 # Script entry

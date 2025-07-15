@@ -4,7 +4,6 @@ from enum import Enum
 from transformers import pipeline
 from langdetect import detect
 from src.core.config import settings
-
 class Language(str, Enum):
     ENGLISH = "en"
     SPANISH = "es"
@@ -25,7 +24,6 @@ class TextTranslator:
             model="Helsinki-NLP/opus-mt-en-mul",
             device=settings.DEVICE
         )
-
     def detect_language(self, text: str) -> Language:
         try:
             lang = detect(text)

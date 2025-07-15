@@ -17,7 +17,8 @@ CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 # Configuración de logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "./logs/amazon_recommendations.log")
-
+# Device configuration
+DEVICE = os.getenv("DEVICE", "cpu") 
 # Límites del sistema
 MAX_PRODUCTS_TO_LOAD = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 1000000))
 MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", 20000))

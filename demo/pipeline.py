@@ -22,7 +22,12 @@ import logging
 from pathlib import Path
 from typing import List
 
+from langchain_core.documents import Document
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma, FAISS
 from tqdm import tqdm
+
+import hu
 
 from src.core.config import settings
 from src.core.data.loader import DataLoader
@@ -56,27 +61,45 @@ class Pipeline:
         self.backend = backend.lower()
         self.device = device
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
     def run(self, *, clear_cache: bool = False) -> int:
-        """Execute the full pipeline and return #indexed docs."""
+        """Run the pipeline: load, validate, index."""
         if clear_cache:
-            self.loader.clear_cache()
+            deleted = self.loader.clear_cache()
+            logger.info("Deleted %d cache files", deleted)
 
+        # 1. Cargar y validar productos
         products = self.loader.load_data(use_cache=True)
         if not products:
             logger.error("No products to process.")
             return 0
 
-        logger.info("Indexing %d products with %s...", len(products), self.backend)
-        indexer = Retriever(
-            index_path=self.index_dir,
-            vectorstore_type=self.backend,
-            device=self.device,
+        # 2. Convertir a documentos para el vectorstore
+        docs = [
+            Document(
+                page_content=f"{p.title}\n{p.description}\n{', '.join(p.tags or [])}",
+                metadata=p.dict(),
+            )
+            for p in products
+        ]
+
+        # 3. Crear índice
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            model_kwargs={"device": self.device},
         )
-        # index creation is handled internally in Retriever
-        return len(products)
+
+        if self.backend == "chroma":
+            Chroma.from_documents(
+                documents=docs,
+                embedding=embeddings,
+                persist_directory=str(self.index_dir),
+            )
+        else:  # FAISS
+            faiss_index = FAISS.from_documents(docs, embeddings)
+            faiss_index.save_local(str(self.index_dir))
+
+        logger.info("Indexed %d products with %s", len(docs), self.backend)
+        return len(docs)
 
     def export_clean_json(self, outfile: str | Path) -> None:
         """Write the **validated** product list to a single JSON file."""

@@ -1,16 +1,4 @@
 # src/core/rag/advanced/agent.py
-"""
-Unified RAG agent for the Amazon catalog with multilingual support
-& synonym-aware response templates.
-
-Features
---------
-• Category-aware retrieval (CategoryTree)
-• Runtime filtering (ProductFilter)
-• Context-rich feedback (FeedbackProcessor)
-• Automatic query/response translation
-• Smart fallback when no / partial results
-"""
 
 from __future__ import annotations
 
@@ -23,8 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.prompts import ChatPromptTemplate
-from src.core.config.settings import *
-# Internal imports
+from src.core.config import settings
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.rag.advanced.prompts import (
@@ -33,14 +20,9 @@ from src.core.rag.advanced.prompts import (
     NO_RESULTS_TEMPLATE,
     PARTIAL_RESULTS_TEMPLATE,
 )
-from src.core.config import settings
 from src.core.utils.translator import TextTranslator, Language
-from src.core.rag.basic.retriever import Retriever  # synonym-aware retriever
+from src.core.rag.basic.retriever import Retriever
 
-
-# ------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -49,9 +31,6 @@ logging.basicConfig(
 )
 logging.getLogger("transformers").setLevel(logging.WARNING)
 
-# ------------------------------------------------------------------
-# Agent
-# ------------------------------------------------------------------
 class RAGAgent:
     def __init__(
         self,
@@ -72,14 +51,14 @@ class RAGAgent:
 
         # Vector store via synonym-aware retriever
         self.retriever = Retriever(
-            index_path=VECTOR_INDEX_PATH,
-            vectorstore_type=VECTOR_BACKEND,
+            index_path=settings.VECTOR_INDEX_PATH,
+            vectorstore_type=settings.VECTOR_BACKEND,
         )
 
         # LLM
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
-            google_api_key=GEMINI_API_KEY,
+            google_api_key=settings.GEMINI_API_KEY,
             temperature=0.3,
         )
 
@@ -93,12 +72,9 @@ class RAGAgent:
 
         # Feedback
         self.feedback = FeedbackProcessor(
-            feedback_dir=str(DATA_DIR / "feedback")
+            feedback_dir=str(settings.DATA_DIR / "feedback")
         )
 
-    # ------------------------------------------------------------------
-    # Build chain
-    # ------------------------------------------------------------------
     def _build_chain(self) -> ConversationalRetrievalChain:
         prompt = ChatPromptTemplate.from_template(
             "Answer the question based on the context below. "
@@ -111,18 +87,14 @@ class RAGAgent:
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
             retriever=self.retriever.store.as_retriever(
-                search_kwargs={"k": 5, "filter": self.active_filter.apply}
+                search_kwargs={"k": 5}
             ),
             memory=self.memory,
             combine_docs_chain_kwargs={"prompt": prompt},
             return_source_documents=False,
         )
 
-    # ------------------------------------------------------------------
-    # Query / response helpers
-    # ------------------------------------------------------------------
     def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
-        """Translate to English if needed."""
         if not self.enable_translation:
             return query, None
 
@@ -135,37 +107,28 @@ class RAGAgent:
         return english_query, source_lang
 
     def _process_response(self, answer: str, target_lang: Optional[Language]) -> str:
-        """Translate back if needed."""
         if not target_lang or not self.enable_translation:
             return answer
         return self.translator.translate_from_english(answer, target_lang)
 
-    # ------------------------------------------------------------------
-    # Ask
-    # ------------------------------------------------------------------
     def ask(self, query: str) -> str:
-        """
-        1. Normalise + expand synonyms
-        2. Retrieve
-        3. Generate answer with templates if no / partial results
-        """
         processed_query, source_lang = self._process_query(query)
 
-        # Retrieve products
         products = self.retriever.retrieve(query=processed_query, k=5)
 
-        # --- Fallback & templates ---
         if not products:
-            # fallback with original query
             products = self.retriever.retrieve(query=query, k=5)
 
         if not products:
-            suggestions = ", ".join(
-                self.retriever._expand_query(query)[:3]
-            ) or "backpack, headphones, speaker"
+            # Intentar sugerencias basadas en expansión de consulta
+            try:
+                expanded = self._expand_query(processed_query)
+                suggestions = ", ".join(expanded[:3]) if expanded else "backpack, headphones, speaker"
+            except Exception:
+                suggestions = "backpack, headphones, speaker"
+
             return NO_RESULTS_TEMPLATE.format(query=query, suggestions=suggestions)
 
-        # partial results
         exact = [
             p for p in products
             if self.retriever._score(query, p) > 0
@@ -177,14 +140,11 @@ class RAGAgent:
                 similar_products="\n".join(f"- {t}" for t in titles)
             )
 
-        # Build context
         context = "\n\n".join(p.to_document()["page_content"] for p in products)
 
-        # Generate answer
         llm_answer = self.chain.invoke({"question": processed_query, "context": context})["answer"]
         final_answer = self._process_response(llm_answer, source_lang)
 
-        # Feedback
         self.feedback.save_feedback(
             query=query,
             answer=final_answer,
@@ -199,9 +159,7 @@ class RAGAgent:
         )
         return final_answer
 
-    # ------------------------------------------------------------------
-    # Runtime filters
-    # ------------------------------------------------------------------
+
     def set_filters(
         self,
         *,
@@ -217,9 +175,6 @@ class RAGAgent:
         if brands:
             self.active_filter.add_brand_filter(brands)
 
-    # ------------------------------------------------------------------
-    # Chat loop
-    # ------------------------------------------------------------------
     def chat_loop(self) -> None:
         print("\n🌍 Multilingual RAG Agent (type 'exit' to quit)\n")
         while True:
@@ -250,9 +205,6 @@ class RAGAgent:
                 logger.error("Chat error: %s", e)
                 print("⚠️ Error occurred, please try again.")
 
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
     @classmethod
     def from_pickle_dir(
         cls,
@@ -269,10 +221,3 @@ class RAGAgent:
         if not products:
             raise RuntimeError("No products found")
         return cls(products=products, enable_translation=enable_translation)
-
-# ------------------------------------------------------------------
-# CLI
-# ------------------------------------------------------------------
-if __name__ == "__main__":
-    agent = RAGAgent.from_pickle_dir(enable_translation=True)
-    agent.chat_loop()

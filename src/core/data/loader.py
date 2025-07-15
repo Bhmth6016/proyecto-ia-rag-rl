@@ -243,3 +243,10 @@ class DataLoader:
             )
 
         return products
+    
+    def clear_cache(self) -> int:
+        """Elimina todos los archivos .pkl en el directorio de procesados"""
+        cache_files = list(self.processed_dir.glob("*.pkl"))
+        for f in cache_files:
+            f.unlink()
+        return len(cache_files)
