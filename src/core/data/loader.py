@@ -204,27 +204,28 @@ class DataLoader:
         products: List[Product] = []
         error_count = 0
 
+        @staticmethod
         def _process_item(item: Dict[str, Any]):
             try:
-                specs = item.get("details", {}).get("specifications", {})
-                if not item.get("product_type"):
-                    item["product_type"] = self._infer_product_type(item.get("title", ""), specs)
-                if not item.get("tags"):
-                    item["tags"] = self._extract_tags(item.get("title", ""), specs)
-
-                # Ignore images
-                item["images"] = None
-
+                # Ensure required fields with sensible defaults
+                item.setdefault('title', 'Untitled Product')
+                item.setdefault('main_category', item.get('category', 'Uncategorized'))
+                item.setdefault('description', '')
+                item.setdefault('tags', [])
+                
+                # Process specifications if they exist
+                specs = item.get('details', {}).get('specifications', {})
+                
+                # Infer product type if not specified
+                if not item.get('product_type'):
+                    item['product_type'] = self._infer_product_type(item['title'], specs)
+                
+                # Create product instance
                 product = Product.from_dict(item)
-                if product.title and product.title.strip() and product.main_category:
-                    product.clean_image_urls()
-                    return product, False
-                else:
-                    logger.warning(f"Elemento inválido: título vacío / sin categoría. Item: {item}")
-                    return None, True
-
-            except ValueError as e:
-                logger.warning(f"Error procesando elemento: {e}. Item: {item}")
+                return product, False
+                
+            except Exception as e:
+                logger.warning(f"Error processing item: {e}\nItem: {item}")
                 return None, True
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:

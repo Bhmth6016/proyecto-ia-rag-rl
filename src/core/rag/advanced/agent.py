@@ -29,6 +29,7 @@ logging.basicConfig(
 )
 logging.getLogger("transformers").setLevel(logging.WARNING)
 
+
 class RAGAgent:
     def __init__(
         self,
@@ -48,16 +49,19 @@ class RAGAgent:
         self.active_filter = ProductFilter()
 
         # Vector store via synonym-aware retriever
-        try:
-            self.retriever = Retriever(
-                index_path=settings.VECTOR_INDEX_PATH,
-                vectorstore_type=settings.VECTOR_BACKEND,
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize Retriever: {e}")
+        self.retriever = Retriever(
+            index_path=settings.VECTOR_INDEX_PATH,
+            vectorstore_type=settings.VECTOR_BACKEND,
+            embedding_model=settings.EMBEDDING_MODEL,
+            device=settings.DEVICE
+        )
+
+        # Check if the index exists
+        if not self.retriever.index_exists():
             raise RuntimeError(
-                f"Index not found at {settings.VECTOR_INDEX_PATH}. Please run the following command to build the index:\n"
-                f"python src/interfaces/cli.py index"
+                f"Vector index not found at {settings.VECTOR_INDEX_PATH}\n"
+                "Please build the index first with:\n"
+                "python main.py index --data-dir ./data/raw"
             )
 
         # LLM

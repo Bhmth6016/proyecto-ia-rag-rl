@@ -162,12 +162,20 @@ class Retriever:
                 )
 
             if self.backend == "chroma":
+                # Clear existing index if any
+                if self.index_exists():
+                    import shutil
+                    shutil.rmtree(self.index_path)
+                    self.index_path.mkdir()
+                
+                # Create new Chroma index
                 self.store = Chroma.from_documents(
                     documents=documents,
                     embedding=self.embedder,
                     persist_directory=str(self.index_path)
                 )
                 self.store.persist()
+                logger.info(f"✅ Chroma index built at {self.index_path} with {len(documents)} documents")
             else:  # FAISS
                 self.store = FAISS.from_documents(
                     documents=documents,

@@ -19,6 +19,17 @@ from src.core.utils.parsers import parse_binary_score
 # ------------------------------------------------------------------
 # CLI entry-point
 # ------------------------------------------------------------------
+class AmazonRecommendationCLI:
+    def __init__(self, products, category_tree, rag_agent):
+        self.products = products
+        self.category_tree = category_tree
+        self.rag_agent = rag_agent
+
+    def run(self):
+        """Main entry point for CLI interface"""
+        main()  # Calls your existing main function
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         description="Amazon Product Recommendation CLI",
@@ -80,7 +91,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         _run_index_mode(loader, clear_cache=args.clear_cache)
 
     elif args.command == "rag":
-        _run_rag_mode(products, k=args.top_k, feedback=not args.no_feedback)
+        _run_rag_mode(loader, products, k=args.top_k, feedback=not args.no_feedback)
 
     elif args.command == "category":
         _run_category_mode(products, start=args.category)
@@ -90,7 +101,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 # ------------------------------------------------------------------
 # Mode implementations
 # ------------------------------------------------------------------
-def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
+def _run_rag_mode(loader: DataLoader, products: List[Product], k: int, feedback: bool) -> None:
     """Interactive Q&A loop."""
     logger = logging.getLogger("rag")
 
