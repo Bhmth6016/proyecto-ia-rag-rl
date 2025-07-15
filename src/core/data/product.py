@@ -11,6 +11,7 @@ This model is shared by:
 - RLHF training
 """
 
+import re
 import hashlib
 
 from typing import Optional, Dict, List, Any
@@ -46,6 +47,12 @@ class Product(BaseModel):
     images: Optional[ProductImage] = None
     details: Optional[ProductDetails] = None
 
+    # --- NEW FIELDS -------------------------------------------------
+    product_type: Optional[str] = None
+    compatible_devices: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    attributes: Dict[str, str] = Field(default_factory=dict)
+
     # --------------------------------------------------
     # Validators
     # --------------------------------------------------
@@ -55,10 +62,65 @@ class Product(BaseModel):
             raise ValueError("price cannot be negative")
         return v
 
+    # --- NEW VALIDATORS --------------------------------------------
+    _SPANISH_TO_ENGLISH = {
+        "mochila": "backpack",
+        "bolso": "bag",
+        "maleta": "luggage",
+        "auriculares": "headphones",
+        "altavoz": "speaker",
+        "teclado": "keyboard",
+        "ratón": "mouse",
+        "monitor": "monitor",
+        "cámara": "camera",
+    }
+
+    @validator("product_type", pre=True)
+    def normalize_product_type(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return None
+        v = v.lower().strip()
+        v = cls._SPANISH_TO_ENGLISH.get(v, v)
+        return v.title()
+
+    @validator("tags", pre=True)
+    def normalize_tags(cls, v: List[str]) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        normalized = []
+        for tag in v:
+            tag = tag.lower().strip()
+            tag = cls._SPANISH_TO_ENGLISH.get(tag, tag)
+            normalized.append(tag.title())
+        return normalized
+
+    @validator("compatible_devices", pre=True)
+    def normalize_compatible_devices(cls, v: List[str]) -> List[str]:
+        if not isinstance(v, list):
+            v = []
+        devices = []
+        for item in v:
+            item = item.lower().strip()
+            if item in {"laptop", "laptops", "portátil", "ordenador portátil"}:
+                devices.append("Laptop")
+            elif item in {"tablet", "tablets"}:
+                devices.append("Tablet")
+            elif item in {"smartphone", "phone", "móvil", "teléfono"}:
+                devices.append("Smartphone")
+            else:
+                devices.append(item.title())
+        return sorted(set(devices))
+
+    @validator("attributes", pre=True)
+    def extract_attributes(cls, v: Dict[str, str]) -> Dict[str, str]:
+        if not isinstance(v, dict):
+            v = {}
+        return v
+
     # --------------------------------------------------
     # Constructors
     # --------------------------------------------------
-    
+
     @classmethod
     def from_dict(cls, raw: Dict) -> "Product":
         """Build Product from raw dict (handles nested objects and aliases)."""
@@ -96,7 +158,40 @@ class Product(BaseModel):
             }
             raw["details"] = extracted
 
-        # 4. Validación Pydantic de campos anidados
+        # 4. Extraer atributos clave automáticamente
+        specs = (raw.get("details") or {}).get("specifications") or {}
+        raw.setdefault("attributes", {})
+        raw.setdefault("compatible_devices", [])
+
+        # 4a. Buscar tamaños
+        for k, v in specs.items():
+            if "size" in k.lower() or "dimension" in k.lower():
+                match = re.search(r'(\d+(?:\.\d+)?(?:\s?-?\s?\d+)?(?:\s?inch|in|"))', v, re.IGNORECASE)
+                if match:
+                    raw["attributes"]["screen_size"] = match.group(0).strip()
+            elif "pulgadas" in v.lower():
+                match = re.search(r'(\d+(?:\.\d+)?)\s*pulgadas?', v, re.IGNORECASE)
+                if match:
+                    raw["attributes"]["screen_size"] = f"{match.group(1).strip()}-inch"
+
+        # 4b. Inferir dispositivos compatibles
+        text_blob = " ".join([raw.get("title", ""), raw.get("description", "")] + list(specs.values())).lower()
+        if any(kw in text_blob for kw in ["laptop", "notebook", "portátil"]):
+            raw["compatible_devices"].append("laptop")
+        if any(kw in text_blob for kw in ["tablet", "ipad"]):
+            raw["compatible_devices"].append("tablet")
+        if any(kw in text_blob for kw in ["smartphone", "phone", "teléfono", "móvil"]):
+            raw["compatible_devices"].append("smartphone")
+
+        # 4c. Inferir product_type si está vacío
+        if not raw.get("product_type"):
+            title_lower = raw.get("title", "").lower()
+            for sp, en in cls._SPANISH_TO_ENGLISH.items():
+                if sp in title_lower:
+                    raw["product_type"] = en
+                    break
+
+        # 5. Validación Pydantic de campos anidados
         if "details" in raw:
             raw["details"] = ProductDetails(**raw["details"])
         if "images" in raw:
@@ -129,6 +224,16 @@ class Product(BaseModel):
             f"Precio: ${self.price}" if self.price is not None else "Precio: N/A",
         ]
 
+        if self.product_type:
+            parts.append(f"Tipo de producto: {self.product_type.title()}")
+        if self.compatible_devices:
+            parts.append(f"Dispositivos compatibles: {', '.join(self.compatible_devices)}")
+        if self.tags:
+            parts.append(f"Etiquetas: {', '.join(self.tags)}")
+        if self.attributes:
+            specs = "\n".join(f"{k}: {v}" for k, v in self.attributes.items())
+            parts.append(f"Atributos:\n{specs}")
+
         if self.details:
             if self.details.brand:
                 parts.append(f"Marca: {self.details.brand}")
@@ -152,9 +257,13 @@ class Product(BaseModel):
             "rating": self.average_rating,
             "rating_count": self.rating_count,
             "brand": self.details.brand if self.details else None,
+            "product_type": self.product_type,
+            "compatible_devices": self.compatible_devices,
+            "tags": self.tags,
+            **(self.attributes or {}),
             **(self.details.specifications if self.details else {}),
         }
-    
+
     @staticmethod
     def clean_url(url_str):
         """Clean URL from HTML markup"""
@@ -171,7 +280,6 @@ class Product(BaseModel):
                 if hasattr(self.images, key) and getattr(self.images, key):
                     cleaned = self.clean_url(getattr(self.images, key))
                     setattr(self.images, key, cleaned)
-
 
     # --------------------------------------------------
     # Dunder utilities

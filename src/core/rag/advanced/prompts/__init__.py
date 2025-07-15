@@ -1,11 +1,13 @@
 # src/core/rag/advanced/prompts/__init__.py
+"""
+Centralized prompt templates for the RAG agent.
+"""
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 
 # ============================================================================
 # 1. PROMPTS DE GENERACIÓN
 # ============================================================================
-
 # 1.1 Prompt principal para generación RAG (atributos dinámicos)
 RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_template("""
 You are an Amazon product recommender. Recommend products matching:
@@ -38,7 +40,6 @@ Only return the attributes list, no extra text.
 # ============================================================================
 # 2. PROMPTS DE PRE-PROCESAMIENTO
 # ============================================================================
-
 # 2.1 Reescritura de preguntas
 QUERY_REWRITE_SYSTEM = """Eres un especialista en mejorar consultas de búsqueda para Amazon. Realiza:
 
@@ -92,7 +93,6 @@ Return ONLY the English translation."""
 # ============================================================================
 # 3. PROMPTS DE VALIDACIÓN Y CONTROL DE CALIDAD
 # ============================================================================
-
 # 3.1 Validación de respuestas
 VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
     (
@@ -198,7 +198,21 @@ Please evaluate:"""
 ])
 
 # ============================================================================
-# 4. EXPORTACIÓN
+# 4. PROMPTS DE RESPUESTA
+# ============================================================================
+# 4.1 Plantilla para resultados vacíos
+NO_RESULTS_TEMPLATE = PromptTemplate.from_template(
+    "❌ No encontré productos para '{query}'. "
+    "¿Quizás quisiste decir: {suggestions}?"
+)
+
+# 4.2 Plantilla para resultados parciales
+PARTIAL_RESULTS_TEMPLATE = PromptTemplate.from_template(
+    "📦 No encontré exactamente '{query}', pero aquí tienes opciones similares:\n{similar_products}"
+)
+
+# ============================================================================
+# 5. EXPORTACIÓN
 # ============================================================================
 __all__ = [
     "RAG_PROMPT_TEMPLATE",
@@ -209,5 +223,7 @@ __all__ = [
     "VALIDATION_PROMPT",
     "RELEVANCE_PROMPT",
     "HALLUCINATION_PROMPT",
-    "ANSWER_QUALITY_PROMPT"
+    "ANSWER_QUALITY_PROMPT",
+    "NO_RESULTS_TEMPLATE",
+    "PARTIAL_RESULTS_TEMPLATE",
 ]

@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import pickle
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 from pydantic import ValidationError
 
 from tqdm import tqdm
@@ -20,6 +22,31 @@ from src.core.config import settings
 from src.core.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# ------------------------------------------------------------------
+# Keyword maps
+# ------------------------------------------------------------------
+_CATEGORY_KEYWORDS: Dict[str, List[str]] = {
+    "backpack": ["mochila", "backpack", "bagpack", "laptop bag"],
+    "headphones": ["auriculares", "headphones", "headset", "earbuds"],
+    "speaker": ["altavoz", "speaker", "bluetooth speaker", "portable speaker"],
+    "keyboard": ["teclado", "keyboard", "mechanical keyboard"],
+    "mouse": ["ratón", "mouse", "wireless mouse"],
+    "monitor": ["monitor", "pantalla", "screen", "display"],
+    "camera": ["cámara", "camera", "webcam", "dslr"],
+    "home_appliance": ["aspiradora", "vacuum", "microondas", "microwave"],
+}
+
+_TAG_KEYWORDS: Dict[str, List[str]] = {
+    "waterproof": ["waterproof", "water resistant", "resistente al agua"],
+    "wireless": ["wireless", "bluetooth", "inalámbrico", "wifi"],
+    "portable": ["portable", "pocket", "ligero", "lightweight"],
+    "gaming": ["gaming", "gamer", "rgb", "for gaming"],
+    "travel": ["travel", "viaje", "suitcase", "carry-on"],
+    "usb-c": ["usb-c", "type-c", "usb type c"],
+    "noise-cancelling": ["noise cancelling", "noise reduction", "anc"],
+    "fast-charging": ["fast charging", "quick charge", "carga rápida"],
+}
 
 
 class DataLoader:
@@ -36,10 +63,12 @@ class DataLoader:
         raw_dir: Optional[Union[str, Path]] = None,
         processed_dir: Optional[Union[str, Path]] = None,
         cache_enabled: Optional[bool] = None,
+        max_workers: int = 4,
     ):
         self.raw_dir = Path(raw_dir) if raw_dir else settings.RAW_DIR
         self.processed_dir = Path(processed_dir) if processed_dir else settings.PROC_DIR
         self.cache_enabled = cache_enabled if cache_enabled is not None else settings.CACHE_ENABLED
+        self.max_workers = max_workers
 
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
@@ -55,8 +84,11 @@ class DataLoader:
             return []
 
         all_products: List[Product] = []
-        for raw_file in files:
-            all_products.extend(self.load_single_file(raw_file, use_cache=use_cache))
+        with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
+            future_to_file = {exe.submit(self.load_single_file, f, use_cache=use_cache): f for f in files}
+            for future in tqdm(as_completed(future_to_file), total=len(files), desc="Files"):
+                all_products.extend(future.result())
+
         logger.info("Loaded %d products from %d files", len(all_products), len(files))
         return all_products
 
@@ -117,43 +149,71 @@ class DataLoader:
     # ------------------------------------------------------------------
     def _process_file(self, raw_file: Path) -> List[Product]:
         """JSON/JSONL -> List[Product] with validation."""
+        if raw_file.suffix.lower() == ".jsonl":
+            return self._process_jsonl(raw_file)
+        else:
+            return self._process_json_array(raw_file)
+
+    # ---- NEW: helpers for normalization & tagging --------------------
+    @staticmethod
+    def _infer_product_type(title: str, specs: Dict[str, str]) -> Optional[str]:
+        text = (title + " " + " ".join(specs.values())).lower()
+        for ptype, kw_list in _CATEGORY_KEYWORDS.items():
+            if any(kw in text for kw in kw_list):
+                return ptype
+        return None
+
+    @staticmethod
+    def _extract_tags(title: str, specs: Dict[str, str]) -> List[str]:
+        text = (title + " " + " ".join(specs.values())).lower()
+        tags = []
+        for tag, kw_list in _TAG_KEYWORDS.items():
+            if any(kw in text for kw in kw_list):
+                tags.append(tag)
+        return tags
+
+    # ------------------------------------------------------------------
+    def _process_jsonl(self, raw_file: Path) -> List[Product]:
         products: List[Product] = []
         error_count = 0
 
-        if raw_file.suffix.lower() == ".jsonl":
-            with raw_file.open("r", encoding="utf-8") as f:
-                for idx, line in enumerate(f):
-                    try:
-                        item = json.loads(line.strip())
-                        if idx < 5:
-                            print(f"Sample item {idx}: {item.keys()}")
-                        product = Product.from_dict(item)
-                        if product.title and product.title.strip():
-                            if hasattr(product, "clean_image_urls"):
-                                product.clean_image_urls()
-                            products.append(product)
-                        else:
-                            raise ValidationError("Missing or empty title")
+        def _process_line(idx_line):
+            idx, line = idx_line
+            try:
+                item = json.loads(line.strip())
+                # Enrich
+                specs = item.get("details", {}).get("specifications", {})
+                if not item.get("product_type"):
+                    item["product_type"] = self._infer_product_type(item.get("title", ""), specs)
+                if not item.get("tags"):
+                    item["tags"] = self._extract_tags(item.get("title", ""), specs)
 
-                    except (json.JSONDecodeError, ValidationError) as e:
-                        print(f"Error on line {idx}: {str(e)}")
-                        error_count += 1
-        else:  # JSON array
-            with raw_file.open("r", encoding="utf-8") as f:
-                items = json.load(f)
-            if not isinstance(items, list):
-                raise ValueError(f"{raw_file.name} must contain a list of products")
+                product = Product.from_dict(item)
+                if product.title and product.title.strip():
+                    product.clean_image_urls()
+                    return product
+                else:
+                    raise ValidationError("Missing or empty title")
+            except (json.JSONDecodeError, ValidationError) as e:
+                return None  # handled below
 
-            for item in items:
-                try:
-                    product = Product.from_dict(item)
-                    if product.title and product.title.strip():  # Validar título no vacío
-                        products.append(product)
-                    else:
-                        raise ValidationError("Missing or empty title")
-                except ValidationError as e:
-                    print(f"Validation error: {e}")
-                    error_count += 1
+        with raw_file.open("r", encoding="utf-8") as f:
+            lines = list(enumerate(f))
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
+            results = list(
+                tqdm(
+                    exe.map(_process_line, lines),
+                    total=len(lines),
+                    desc=f"Processing {raw_file.name}",
+                )
+            )
+
+        for res in results:
+            if res is None:
+                error_count += 1
+            else:
+                products.append(res)
 
         if error_count:
             logger.warning(
@@ -165,6 +225,55 @@ class DataLoader:
             )
         return products
 
+    def _process_json_array(self, raw_file: Path) -> List[Product]:
+        with raw_file.open("r", encoding="utf-8") as f:
+            items = json.load(f)
+        if not isinstance(items, list):
+            raise ValueError(f"{raw_file.name} must contain a list of products")
+
+        def _process_item(item: Dict[str, Any]) -> Optional[Product]:
+            try:
+                specs = item.get("details", {}).get("specifications", {})
+                if not item.get("product_type"):
+                    item["product_type"] = self._infer_product_type(item.get("title", ""), specs)
+                if not item.get("tags"):
+                    item["tags"] = self._extract_tags(item.get("title", ""), specs)
+
+                product = Product.from_dict(item)
+                if product.title and product.title.strip() and product.main_category:
+                    product.clean_image_urls()
+                    return product
+                else:
+                    raise ValidationError("Missing or empty title / main_category")
+            except ValidationError:
+                return None
+
+        products: List[Product] = []
+        error_count = 0
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
+            results = list(
+                tqdm(
+                    exe.map(_process_item, items),
+                    total=len(items),
+                    desc=f"Processing {raw_file.name}",
+                )
+            )
+        for res in results:
+            if res is None:
+                error_count += 1
+            else:
+                products.append(res)
+
+        if error_count:
+            logger.warning(
+                "%s: %d/%d invalid (%.1f%% success)",
+                raw_file.name,
+                error_count,
+                len(products) + error_count,
+                100 * len(products) / max(1, len(products) + error_count),
+            )
+        return products
 
     # ------------------------------------------------------------------
     # Cache helpers
