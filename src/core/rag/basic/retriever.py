@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# src/core/rag/basic/retriever.py
-
 import json
 import logging
 import unicodedata
@@ -12,17 +10,16 @@ import numpy as np
 import faiss
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma, FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores.utils import filter_complex_metadata
+from langchain_huggingface import HuggingFaceEmbeddings  # Updated import
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings
 
 logger = get_logger(__name__)
 
-# ----------------------------------------------------------------------
-# Synonyms & helpers
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------- 
+# Synonyms & helpers 
+# ---------------------------------------------------------------------- 
 
 _SYNONYMS: Dict[str, List[str]] = {
     "mochila": ["backpack", "bagpack"],
@@ -52,9 +49,9 @@ def _expand_query(query: str) -> List[str]:
                 expansions.add(key)
     return list(expansions)
 
-# ----------------------------------------------------------------------
-# Retriever
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------- 
+# Retriever 
+# ---------------------------------------------------------------------- 
 
 class Retriever:
     def __init__(
@@ -140,10 +137,23 @@ class Retriever:
                 logger.warning("No products provided to build index")
                 return
 
-            documents = [
-                Document(page_content=prod.to_text(), metadata=filter_complex_metadata(prod.to_metadata()))
-                for prod in products
-            ]
+            documents = []
+            for prod in products:
+                metadata = prod.to_metadata()
+                # If metadata is a string, convert it to a proper dict format
+                if isinstance(metadata, str):
+                    metadata = {"content": metadata}
+                # Ensure metadata is a dictionary before filtering
+                if not isinstance(metadata, dict):
+                    metadata = {"content": str(metadata)}
+                
+                # Now create the document with properly formatted metadata
+                documents.append(
+                    Document(
+                        page_content=prod.to_text(),
+                        metadata=metadata
+                    )
+                )
 
             if self.backend == "chroma":
                 self.store = Chroma.from_documents(
