@@ -15,6 +15,7 @@ from langchain_huggingface import HuggingFaceEmbeddings  # Updated import
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings
+from src.core.rag.basic.index_utils import build_faiss_index
 
 logger = get_logger(__name__)
 
@@ -94,8 +95,6 @@ class Retriever:
         else:  # FAISS
             return (self.index_path / "index.faiss").exists()
 
-
-
     def _load_index(self) -> None:
         """Load the existing vector index from disk."""
         try:
@@ -140,57 +139,43 @@ class Retriever:
             logger.error("Error loading FAISS documents: %s", e)
             raise
 
-    def build_index(self, products: List[Product]) -> None:
-        logger.debug("🛠 build_index arrancó con %d productos", len(products))
+    
+    '''def build_index(self, products: List[Product]) -> None:
+        logger.debug("🛠 build_index started with %d products", len(products))
         if not products:
-            logger.warning("No hay productos; saliendo sin crear índice.")
+            logger.warning("No products; exiting without creating index.")
             return
 
-        # Clear existing index content safely BEFORE building new one
+        # Ensure clean state
+        self.store = None
         if self.index_exists():
-            import os
-            import shutil
-            for f in os.listdir(self.index_path):
-                file_path = os.path.join(self.index_path, f)
-                try:
-                    if os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
-                    else:
-                        os.remove(file_path)
-                except Exception as e:
-                    logger.warning(f"Failed to delete {file_path}. Reason: {e}")
-            logger.info("Cleared existing index content at %s", self.index_path)
+            self._cleanup_existing_index()
 
         try:
             self.index_path.mkdir(parents=True, exist_ok=True)
             
             documents = []
             for prod in products:
-                metadata = prod.to_metadata()
-                # If metadata is a string, convert it to a proper dict format
-                if isinstance(metadata, str):
-                    metadata = {"content": metadata}
-                # Ensure metadata is a dictionary before filtering
-                if not isinstance(metadata, dict):
-                    metadata = {"content": str(metadata)}
-                
-                # Now create the document with properly formatted metadata
                 documents.append(
                     Document(
                         page_content=prod.to_text(),
-                        metadata=metadata
+                        metadata=prod.to_metadata()
                     )
                 )
 
             if self.backend == "chroma":
-                # Create new Chroma index
+                # Explicitly close any existing Chroma connection
+                if hasattr(self, '_chroma_client'):
+                    self._chroma_client.close()
+                
                 self.store = Chroma.from_documents(
                     documents=documents,
                     embedding=self.embedder,
                     persist_directory=str(self.index_path)
                 )
-                logger.info(f"✅ Chroma index built at {self.index_path} with {len(documents)} documents")
-            else:  # FAISS
+                self._chroma_client = self.store._client
+                logger.info(f"✅ Chroma index built at {self.index_path}")
+            else:
                 self.store = FAISS.from_documents(
                     documents=documents,
                     embedding=self.embedder
@@ -210,12 +195,99 @@ class Retriever:
                         indent=2
                     )
 
-            logger.info("✅ Índice construido en %s", self.index_path)
+            logger.info("✅ Index built with %d documents", len(documents))
         except Exception as e:
-            logger.error("Error en build_index: %s", e, exc_info=True)
+            logger.error("Index build error: %s", e, exc_info=True)
+            raise'''
+    
+
+    def build_index(self, products: List[Product]) -> None:
+        logger.debug("🛠 build_index started with %d products", len(products))
+        if not products:
+            logger.warning("No products; exiting without creating index.")
+            return
+
+        # Ensure clean state
+        self.store = None
+        if self.index_exists():
+            self._cleanup_existing_index()
+
+        try:
+            self.index_path.mkdir(parents=True, exist_ok=True)
+            
+            documents = []
+            for prod in products:
+                documents.append(
+                    Document(
+                        page_content=prod.to_text(),
+                        metadata=prod.to_metadata()
+                    )
+                )
+
+            if self.backend == "chroma":
+                # Explicitly close any existing Chroma connection
+                if hasattr(self, '_chroma_client'):
+                    self._chroma_client.close()
+                
+                self.store = Chroma.from_documents(
+                    documents=documents,
+                    embedding=self.embedder,
+                    persist_directory=str(self.index_path)
+                )
+                self._chroma_client = self.store._client
+                logger.info(f"✅ Chroma index built at {self.index_path}")
+            else:
+                # Use the new build_faiss_index function
+                from src.core.retrieval.index_utils import build_faiss_index
+                self.store = build_faiss_index(self.embedder, documents, batch_size=128)
+                self.store.save_local(str(self.index_path))
+
+                # Save document metadata for reloading
+                docs_path = self.index_path / "docs.json"
+                with open(docs_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        [
+                            {"content": d.page_content, "metadata": d.metadata}
+                            for d in documents
+                        ],
+                        f,
+                        ensure_ascii=False,
+                        indent=2
+                    )
+
+            logger.info("✅ Index built with %d documents", len(documents))
+        except Exception as e:
+            logger.error("Index build error: %s", e, exc_info=True)
             raise
-        finally:
-            logger.debug("🛠 build_index finalizó")
+
+    def _cleanup_existing_index(self) -> None:
+        """Thoroughly clean up existing index files"""
+        import shutil
+        import time
+        
+        # Close any existing Chroma connection
+        if self.backend == "chroma" and hasattr(self, '_chroma_client'):
+            try:
+                self._chroma_client.close()
+            except:
+                pass
+        
+        # Wait for resources to be released
+        time.sleep(1)
+        
+        # Remove directory contents
+        for item in self.index_path.glob('*'):
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                try:
+                    item.unlink()
+                except:
+                    pass
+        
+        # Recreate directory
+        shutil.rmtree(self.index_path, ignore_errors=True)
+        self.index_path.mkdir(parents=True, exist_ok=True)
 
     def retrieve(
         self,
