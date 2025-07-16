@@ -296,9 +296,9 @@ def sanitize_category_name(name: Optional[str]) -> str:
 
 def get_safe_filename(raw_category: Optional[str]) -> str:
     if not raw_category:
-        return "meta_other_processed.pkl"
+        return "meta_other_processed.json"
     safe = re.sub(r"\W+", "_", str(raw_category).lower()).strip("_")
-    return f"meta_{safe}_processed.pkl" if safe else "meta_other_processed.pkl"
+    return f"meta_{safe}_processed.joson" if safe else "meta_other_processed.json"
 
 
 def apply_filters(

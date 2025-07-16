@@ -103,7 +103,9 @@ class DataLoader:
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
             future_to_file = {exe.submit(self.load_single_file, f, use_cache=use_cache): f for f in files}
             for future in tqdm(future_to_file, desc="Archivos", total=len(files), disable=self.disable_tqdm):
-                all_products.extend(future.result())
+                result = future.result()
+                if result is not None:
+                    all_products.extend(result)
 
         logger.info("Cargados %d productos de %d archivos", len(all_products), len(files))
         return all_products
@@ -115,29 +117,28 @@ class DataLoader:
         use_cache: bool = True,
     ) -> List[Product]:
         raw_file = Path(raw_file)
-        cache_file = self.processed_dir / f"{raw_file.stem}_processed.pkl"
+        cache_file = self.processed_dir / f"{raw_file.stem}_processed.json"  # Cambiar extensión a .json
 
         if use_cache and self.cache_enabled and cache_file.exists() and cache_file.stat().st_mtime >= raw_file.stat().st_mtime:
             logger.info("Cargando desde caché: %s", cache_file.name)
             try:
-                with cache_file.open("rb") as f:
-                    return pickle.load(f)
+                with cache_file.open("r", encoding="utf-8") as f:  # Cambiar a modo lectura de texto
+                    return [Product.from_dict(item) for item in json.load(f)]  # Cargar JSON y convertir a Product
             except Exception as e:
                 logger.warning("Fallo leyendo caché %s: %s, re-procesando", cache_file.name, e)
 
-        # Procesar sin caché
+        # Procesar sin caché (igual que antes)
         logger.info("Procesando archivo: %s", raw_file.name)
         products = self._process_jsonl(raw_file) if raw_file.suffix.lower() == ".jsonl" else self._process_json_array(raw_file)
 
         if self.cache_enabled and products:
             try:
-                with cache_file.open("wb") as f:
-                    pickle.dump(products, f)
+                with cache_file.open("w", encoding="utf-8") as f:  # Cambiar a modo escritura de texto
+                    json.dump([p.dict() for p in products], f, ensure_ascii=False, indent=2)  # Guardar como JSON
             except Exception as e:
                 logger.error("Error guardando caché %s: %s", cache_file.name, e)
 
-        return products
-
+        return products if products is not None else []  # Asegurar que siempre se devuelve una lista
     # ------------------------------------------------------------------
     def _process_jsonl(self, raw_file: Path) -> List[Product]:
         products: List[Product] = []
@@ -249,8 +250,8 @@ class DataLoader:
         return products
     
     def clear_cache(self) -> int:
-        """Elimina todos los archivos .pkl en el directorio de procesados"""
-        cache_files = list(self.processed_dir.glob("*.pkl"))
+        """Elimina todos los archivos .json en el directorio de procesados"""
+        cache_files = list(self.processed_dir.glob("*.json"))  # Cambiar a .json
         for f in cache_files:
             f.unlink()
         return len(cache_files)
