@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import json  # Add this import statement
 from pathlib import Path
 from typing import List, Optional
 
@@ -175,33 +176,27 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
         print("\nLeaving category mode.")
 
 def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
-    """(Re)build vector-store and cache."""
-    if clear_cache:
-        deleted = loader.clear_cache()
-        print(f"🗑️  Cleared {deleted} cache files.")
-
-    # Force re-processing (cache disabled)
-    products = loader.load_data(use_cache=False)
-    print(f"✅ Loaded {len(products)} products for indexing")
-
-    # Build the vector index
-    from src.core.rag.basic.retriever import Retriever
+    """(Re)build vector-store using unified products.json"""
+    unified_file = settings.PROC_DIR / "products.json"
     
-    # Ensure vector directory exists
-    index_path = settings.VEC_DIR / settings.INDEX_NAME
-    index_path.mkdir(parents=True, exist_ok=True)
-    
-    # Initialize retriever and build index
+    if not unified_file.exists():
+        # Generate unified file first if it doesn't exist
+        products = loader.load_data(use_cache=False)
+        with open(unified_file, 'w', encoding='utf-8') as f:
+            json.dump([p.dict() for p in products], f, ensure_ascii=False, indent=2)
+        print(f"✅ Generated unified products file at {unified_file}")
+
+    # Initialize retriever and build index from unified file
     retriever = Retriever(
-        index_path=index_path,
+        index_path=settings.VEC_DIR / settings.INDEX_NAME,
         embedding_model=settings.EMBEDDING_MODEL,
         vectorstore_type=settings.VECTOR_BACKEND,
         device=settings.DEVICE
     )
     
-    print(f"🛠️ Building vector index at {index_path}...")
-    retriever.build_index(products)
-    print(f"✅ Successfully built vector index with {len(products)} products")
+    print(f"🛠️ Building vector index from {unified_file}...")
+    retriever.build_index(unified_file)  # Pass the path of the unified file
+    print(f"✅ Successfully built vector index")
 
 # ------------------------------------------------------------------
 # Script entry

@@ -200,65 +200,72 @@ class Retriever:
             logger.error("Index build error: %s", e, exc_info=True)
             raise'''
     
+    def build_index(self, products: Union[List[Product], str, Path]) -> None:
+        """Build index from Product list or unified JSON file"""
+        logger.debug("🛠 build_index started")
 
-    def build_index(self, products: List[Product]) -> None:
-        logger.debug("🛠 build_index started with %d products", len(products))
+        # Permitir cargar desde archivo JSON
+        if isinstance(products, (str, Path)):
+            products_path = Path(products)
+            if not products_path.exists():
+                raise FileNotFoundError(f"Products file not found: {products_path}")
+            
+            logger.info(f"📄 Loading products from JSON file: {products_path}")
+            with open(products_path, 'r', encoding='utf-8') as f:
+                products_data = json.load(f)
+            products = [Product.from_dict(item) for item in products_data]
+
+        # Validar que haya productos
         if not products:
             logger.warning("No products; exiting without creating index.")
             return
 
-        # Ensure clean state
+        # Limpiar índice anterior si existe
         self.store = None
         if self.index_exists():
             self._cleanup_existing_index()
 
         try:
             self.index_path.mkdir(parents=True, exist_ok=True)
-            
-            documents = []
-            for prod in products:
-                documents.append(
-                    Document(
-                        page_content=prod.to_text(),
-                        metadata=prod.to_metadata()
-                    )
+
+            documents = [
+                Document(
+                    page_content=prod.to_text(),
+                    metadata=prod.to_metadata()
                 )
+                for prod in products
+            ]
 
             if self.backend == "chroma":
-                # Explicitly close any existing Chroma connection
-                if hasattr(self, '_chroma_client'):
-                    self._chroma_client.close()
-                
+                from langchain_chroma import Chroma  # usar nuevo import si ya hiciste upgrade
                 self.store = Chroma.from_documents(
                     documents=documents,
                     embedding=self.embedder,
                     persist_directory=str(self.index_path)
                 )
-                self._chroma_client = self.store._client
-                logger.info(f"✅ Chroma index built at {self.index_path}")
-            else:
-                # Use the new build_faiss_index function
+                self.store.persist()
+                logger.info(f"✅ Chroma index built at {self.index_path} with {len(documents)} documents")
+
+            else:  # FAISS
                 from src.core.retrieval.index_utils import build_faiss_index
                 self.store = build_faiss_index(self.embedder, documents, batch_size=128)
                 self.store.save_local(str(self.index_path))
 
-                # Save document metadata for reloading
+                # Guardar metadatos para recarga posterior
                 docs_path = self.index_path / "docs.json"
                 with open(docs_path, "w", encoding="utf-8") as f:
                     json.dump(
-                        [
-                            {"content": d.page_content, "metadata": d.metadata}
-                            for d in documents
-                        ],
+                        [{"content": d.page_content, "metadata": d.metadata} for d in documents],
                         f,
                         ensure_ascii=False,
                         indent=2
                     )
+                logger.info(f"✅ FAISS index built at {self.index_path} with {len(documents)} documents")
 
-            logger.info("✅ Index built with %d documents", len(documents))
         except Exception as e:
-            logger.error("Index build error: %s", e, exc_info=True)
+            logger.error("❌ Index build error: %s", e, exc_info=True)
             raise
+
 
     def _cleanup_existing_index(self) -> None:
         """Thoroughly clean up existing index files"""

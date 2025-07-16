@@ -285,6 +285,29 @@ class CategoryTree:
     @staticmethod
     def _split_category_path(category_path: str) -> List[str]:
         return [part.strip() for part in category_path.split(">") if part.strip()]
+    
+
+    @staticmethod
+    def from_unified_json(file_path: Union[str, Path]) -> Optional["CategoryTree"]:
+        """Crea un CategoryTree directamente desde el archivo products.json"""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                products = json.load(f)
+                return CategoryTree(products)
+        except Exception as e:
+            logger.error(f"Error cargando desde archivo unificado: {e}")
+            return None
+
+    # Modificar generate_categories_and_filters para aceptar entrada de archivo
+    def generate_categories_and_filters(
+        products: Union[List[Dict[str, Any]], str, Path] = None,
+        output_file: Optional[Path] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Acepta ahora lista de productos o ruta a archivo unificado"""
+        if isinstance(products, (str, Path)):
+            tree = CategoryTree.from_unified_json(products)
+        else:
+            tree = CategoryTree(products)
 
 
 # ------------------------------------------------------------------
@@ -359,3 +382,4 @@ def generate_categories_and_filters(
     except Exception as e:
         logger.error(f"Error generating categories/filters: {e}", exc_info=True)
         return None
+    

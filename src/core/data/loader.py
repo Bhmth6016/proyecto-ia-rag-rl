@@ -92,7 +92,17 @@ class DataLoader:
         return tags
 
     # ------------------------------------------------------------------
-    def load_data(self, *, use_cache: bool = True) -> List[Product]:
+    def load_data(self, *, use_cache: bool = True, use_unified: bool = True) -> List[Product]:
+        """Cargar todos los archivos en raw_dir o el archivo unificado, devolviendo objetos Product validados."""
+        unified_file = self.processed_dir / "products.json"
+        
+        if use_unified and unified_file.exists():
+            logger.info("Cargando desde archivo unificado: products.json")
+            try:
+                with unified_file.open("r", encoding="utf-8") as f:
+                    return [Product.from_dict(item) for item in json.load(f)]
+            except Exception as e:
+                logger.warning("Fallo leyendo archivo unificado: %s, cargando archivos individuales", e)
         """Cargar todos los archivos en raw_dir, devolviendo objetos Product validados."""
         files = list(self.raw_dir.glob("*.json")) + list(self.raw_dir.glob("*.jsonl"))
         if not files:

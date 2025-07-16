@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import json
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
@@ -162,8 +163,7 @@ class RAGAgent:
             retrieved_docs=[p.title for p in products],
             category_tree=self.tree,
             active_filter=self.active_filter,
-            extra_meta={
-                "english_query": processed_query if source_lang else None,
+            extra_meta={                "english_query": processed_query if source_lang else None,
                 "detected_language": source_lang.value if source_lang else "en",
             },
         )
@@ -220,13 +220,16 @@ class RAGAgent:
         pickle_dir: Path = settings.PROC_DIR,
         enable_translation: bool = True,
     ) -> "RAGAgent":
-        from src.core.data.loader import DataLoader
-
-        products = DataLoader().load_data(
-            raw_dir=settings.RAW_DIR,
-            processed_dir=pickle_dir,
-            cache_enabled=settings.CACHE_ENABLED,
-        )
+        """Load from unified products.json instead of individual files"""
+        unified_file = pickle_dir / "products.json"
+        if not unified_file.exists():
+            raise FileNotFoundError(f"Unified products file not found at {unified_file}")
+        
+        with open(unified_file, 'r', encoding='utf-8') as f:
+            products_data = json.load(f)
+        
+        products = [Product.from_dict(item) for item in products_data]
         if not products:
-            raise RuntimeError("No products found")
+            raise RuntimeError("No products found in unified file")
+        
         return cls(products=products, enable_translation=enable_translation)

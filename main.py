@@ -5,6 +5,7 @@ import argparse
 import logging
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -143,50 +144,25 @@ if __name__ == "__main__":
     args = parse_arguments()
     
     if args.command == "index":
-        # Load products without instantiating RAGAgent
-        data_path = Path(args.data_dir or os.getenv("DATA_DIR") or "./data/raw")
-        loader = DataLoader(
-            raw_dir=data_path,
-            processed_dir=settings.PROC_DIR,
-            cache_enabled=settings.CACHE_ENABLED,
-            disable_tqdm=getattr(args, 'disable_tqdm', False)
-        )
-        
-        # Clear cache if requested
-        if args.reindex:
-            loader.clear_cache()
-        
-        products = loader.load_data(use_cache=not args.reindex)
-        print(f"✅ Loaded {len(products)} products")
+        # Verificar/Crear archivo unificado primero
+        unified_file = settings.PROC_DIR / "products.json"
+        if not unified_file.exists() or args.reindex:
+            data_path = Path(args.data_dir or os.getenv("DATA_DIR") or "./data/raw")
+            loader = DataLoader(
+                raw_dir=data_path,
+                processed_dir=settings.PROC_DIR,
+                cache_enabled=settings.CACHE_ENABLED
+            )
+            products = loader.load_data(use_cache=not args.reindex)
+            
+            with open(unified_file, 'w', encoding='utf-8') as f:
+                json.dump([p.dict() for p in products], f, ensure_ascii=False, indent=2)
+            print(f"✅ Generated unified products file at {unified_file}")
 
-        # Initialize retriever
-        index_path = Path(settings.VECTOR_INDEX_PATH).resolve()
-        print(f"🛠️ Building vector index at {index_path}...")
-        
+        # Construir índice desde el archivo unificado
         retriever = initialize_retriever()
-        
-        # Clear existing index if requested
-        if args.reindex and retriever.index_exists():
-            try:
-                # Close any open connections to Chroma
-                if isinstance(retriever.store, Chroma):
-                    retriever.store._client = None
-                
-                # Wait a moment to ensure resources are released
-                import time
-                time.sleep(1)
-                
-                # Remove the index directory
-                import shutil
-                shutil.rmtree(index_path)
-                index_path.mkdir(parents=True, exist_ok=True)
-                print("♻️  Cleared existing index")
-            except Exception as e:
-                print(f"⚠️  Error clearing index: {e}")
-
-        # Build new index
-        retriever.build_index(products)
-        print(f"✅ Success! Index contains {len(products)} product embeddings")
+        retriever.build_index(unified_file)
+        print(f"✅ Index built from unified file")
         
     elif args.command in {"rag", "category"}:
         initialize_system(
