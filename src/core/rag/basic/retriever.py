@@ -29,7 +29,7 @@ _SYNONYMS: Dict[str, List[str]] = {
     "altavoz": ["speaker", "bluetooth speaker"],
     "teclado": ["keyboard"],
     "ratón": ["mouse"],
-    "monitor": ["screen", "display"],
+    "monitor": ["screen", "display"]
 }
 
 def _normalize(text: str) -> str:
@@ -140,30 +140,29 @@ class Retriever:
             raise
 
     def build_index(self, products: List[Product]) -> None:
-        """Build and save a new vector index from products."""
+        logger.debug("🛠 build_index arrancó con %d productos", len(products))
+        if not products:
+            logger.warning("No hay productos; saliendo sin crear índice.")
+            return
+
+        # Clear existing index content safely BEFORE building new one
+        if self.index_exists():
+            import os
+            import shutil
+            for f in os.listdir(self.index_path):
+                file_path = os.path.join(self.index_path, f)
+                try:
+                    if os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                    else:
+                        os.remove(file_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete {file_path}. Reason: {e}")
+            logger.info("Cleared existing index content at %s", self.index_path)
+
         try:
-            logger.info("Building index at %s", self.index_path)
             self.index_path.mkdir(parents=True, exist_ok=True)
             
-            if not products:
-                logger.warning("No products provided to build index")
-                return
-
-            # Clear existing index content safely
-            if self.index_exists():
-                import os
-                import shutil
-                for f in os.listdir(self.index_path):
-                    file_path = os.path.join(self.index_path, f)
-                    try:
-                        if os.path.isdir(file_path):
-                            shutil.rmtree(file_path)
-                        else:
-                            os.remove(file_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete {file_path}. Reason: {e}")
-                logger.info("Cleared existing index content at %s", self.index_path)
-
             documents = []
             for prod in products:
                 metadata = prod.to_metadata()
@@ -189,7 +188,6 @@ class Retriever:
                     embedding=self.embedder,
                     persist_directory=str(self.index_path)
                 )
-                self.store.persist()
                 logger.info(f"✅ Chroma index built at {self.index_path} with {len(documents)} documents")
             else:  # FAISS
                 self.store = FAISS.from_documents(
@@ -211,10 +209,12 @@ class Retriever:
                         indent=2
                     )
 
-            logger.info("Successfully built index at %s", self.index_path)
+            logger.info("✅ Índice construido en %s", self.index_path)
         except Exception as e:
-            logger.error("Failed to build index: %s", e)
+            logger.error("Error en build_index: %s", e, exc_info=True)
             raise
+        finally:
+            logger.debug("🛠 build_index finalizó")
 
     def retrieve(
         self,
@@ -301,7 +301,7 @@ class Retriever:
         )
 
     # ---------------------- Debug Methods ----------------------
-
+'''
     def debug(self, category: str = "Beauty", limit: int = 3) -> None:
         """Debug method to inspect indexed documents."""
         if self.backend == "chroma":
@@ -316,3 +316,4 @@ class Retriever:
         print(f"Found {len(docs)} documents for '{query}'")
         for doc in docs:
             print(doc.metadata.get("title"), doc.metadata.get("category"))
+            '''

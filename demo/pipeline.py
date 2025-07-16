@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import List
 
 from langchain_core.documents import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma, FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain.vectorstores import Chroma, FAISS
 from tqdm import tqdm
 
 import hu
@@ -32,8 +32,7 @@ import hu
 from src.core.config import settings
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
-from src.core.rag.basic.indexer import Indexer
-from src.core.retrieval.retriever import Retriever
+from src.core.rag.basic.retriever import Retriever
 from src.core.utils.logger import get_logger
 
 logger = get_logger(__name__)

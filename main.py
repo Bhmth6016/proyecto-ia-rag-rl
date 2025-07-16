@@ -9,6 +9,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 import google.generativeai as genai
+from langchain_community.vectorstores import Chroma
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -21,6 +22,8 @@ from src.core.config import settings  # Ensure settings.py is correctly defined
 
 # Load .env configuration
 load_dotenv()
+configure_root_logger
+configure_root_logger(level=logging.DEBUG)
 
 def initialize_system(data_dir: Optional[str] = None,
                      log_level: Optional[str] = None,
