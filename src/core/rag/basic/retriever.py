@@ -1,185 +1,196 @@
-# src/core/rag/basic/retriever.py
+# retriever.py
+from __future__ import annotations
 
 import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Union
-import numpy as np
-import faiss
+
+import unicodedata
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.vectorstores.base import VectorStoreRetriever
-
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
-from src.core.config import settings  # Importa settings
+from src.core.utils import settings
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------- 
+# Synonyms & helpers 
+# ---------------------------------------------------------------------- 
+
+_SYNONYMS: Dict[str, List[str]] = {
+    "mochila": ["backpack", "bagpack"],
+    "computador": ["laptop", "notebook", "pc"],
+    "auriculares": ["headphones", "headset", "earbuds"],
+    "altavoz": ["speaker", "bluetooth speaker"],
+    "teclado": ["keyboard"],
+    "ratón": ["mouse"],
+    "monitor": ["screen", "display"]
+}
+
+def _normalize(text: str) -> str:
+    """Lower-case + strip accents."""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return text.lower().strip()
+
+def _expand_query(query: str) -> List[str]:
+    """Return normalized + synonym-expanded query strings."""
+    base = _normalize(query)
+    expansions = {base}
+    for key, syns in _SYNONYMS.items():
+        if key in base:
+            expansions.update(syns)
+        for s in syns:
+            if s in base:
+                expansions.add(key)
+    return list(expansions)
+
+# ---------------------------------------------------------------------- 
+# Retriever 
+# ---------------------------------------------------------------------- 
 
 class Retriever:
     def __init__(
         self,
-        index_path: Union[str, Path] = settings.VEC_DIR / settings.INDEX_NAME,
-        embedding_model: str = settings.EMBEDDING_MODEL,
-        vectorstore_type: str = settings.VECTOR_BACKEND,
-        device: str = getattr(settings, "DEVICE", "cpu")  # fallback a 'cpu'
+        index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
+        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        device: str = getattr(settings, "DEVICE", "cpu"),
     ):
+        """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path)
-        self.embedding_model = embedding_model
-        self.vectorstore_type = vectorstore_type.lower()
+        self.embedder_name = embedding_model
         self.device = device
-        self._load_index()
+        
+        # Initialize embedder but don't load index yet
+        self.embedder = HuggingFaceEmbeddings(
+            model_name=self.embedder_name,
+            model_kwargs={"device": self.device},
+        )
+        
+        # Initialize store as None - will be set when building or loading index
+        self.store = None
+
+        # Load the index if it exists
+        if self.index_exists():
+            self._load_index()
+        else:
+            logger.warning("No index found at %s. Please build the index first.", self.index_path)
+
+    def index_exists(self) -> bool:
+        """Check if the vector index exists in the configured path."""
+        return (self.index_path / "chroma.sqlite3").exists()
 
     def _load_index(self) -> None:
+        """Load the existing vector index from disk."""
         try:
-            self.embedder = HuggingFaceEmbeddings(
-                model_name=self.embedding_model,
-                model_kwargs={"device": self.device},
-                encode_kwargs={"normalize_embeddings": True}
+            if not self.index_exists():
+                raise FileNotFoundError(f"No Chroma index found at {self.index_path}")
+
+            self.store = Chroma(
+                persist_directory=str(self.index_path),
+                embedding_function=self.embedder,
             )
+            logger.info("Loaded Chroma index from %s", self.index_path)
 
-            if self.vectorstore_type == "chroma":
-                self.vectorstore = Chroma(
-                    persist_directory=str(self.index_path),
-                    embedding_function=self.embedder
-                )
-                self.retriever = self.vectorstore.as_retriever()
-            else:
-                self.faiss_index = faiss.read_index(str(self.index_path / "faiss_index.index"))
-                self._load_faiss_documents()
-
-            logger.info(f"Loaded {self.vectorstore_type} index from {self.index_path}")
         except Exception as e:
-            logger.error(f"Error loading index: {str(e)}")
+            logger.error("Error loading index: %s", e)
             raise
 
-    def retrieve_products(
+    def build_index(self, products_file: Path) -> None:
+        """Carga desde JSON unificado y construye índice"""
+        logger.info("🛠 Building index from %s", products_file)
+        
+        with open(products_file, 'r', encoding='utf-8') as f:
+            products = [Product.from_dict(item) for item in json.load(f)]
+        
+        documents = [
+            Document(
+                page_content=p.to_text(),
+                metadata=p.to_metadata()
+            ) for p in products
+        ]
+        
+        self.store = Chroma.from_documents(
+            documents=documents,
+            embedding=self.embedder,
+            persist_directory=str(self.index_path)
+        )
+        logger.info("✅ Index built at %s with %d documents", self.index_path, len(documents))
+
+    def retrieve(
         self,
         query: str,
         k: int = 5,
         filters: Optional[Dict] = None,
-        score_threshold: Optional[float] = None
     ) -> List[Product]:
-        docs = self.retrieve(query, k, filters, score_threshold)
-        return [self._document_to_product(doc) for doc in docs]
-
-    def _document_to_product(self, doc: Document) -> Product:
-        metadata = doc.metadata
-        content = doc.page_content
-
-        # Extract specifications from content
-        specs = {}
-        if "Specs:" in content:
-            specs_section = content.split("Specs:")[1].strip()
-            for line in specs_section.split("\n"):
-                if ":" in line:
-                    key, val = line.split(":", 1)
-                    specs[key.strip()] = val.strip()
-
-        product_data = {
-            "id": metadata.get("id", ""),
-            "title": metadata.get("title", ""),
-            "main_category": metadata.get("category", ""),
-            "categories": [metadata.get("category", "")],
-            "price": metadata.get("price"),
-            "average_rating": metadata.get("rating"),
-            "rating_count": metadata.get("rating_count", 0),
-            "images": None,
-            "details": {
-                "brand": metadata.get("brand"),
-                "specifications": specs
-            }
-        }
-
-        return Product(**product_data)
-
-    def retrieve(self, query: str, k: int = 5, filters: Optional[Dict] = None) -> List[Document]:
-        """Enhanced retrieval with filtering"""
+        """Retrieve products matching the query.
+        
+        Args:
+            query: Search query string
+            k: Number of results to return
+            filters: Dictionary of filters to apply
+            
+        Returns:
+            List of matching Product objects
+        """
         try:
-            if self.vectorstore_type == "chroma":
-                if filters:
-                    results = self.vectorstore.similarity_search(
-                        query, 
-                        k=k*3,  # Get more to filter down
-                        filter=self._build_chroma_filter(filters)
-                    )
-                else:
-                    results = self.vectorstore.similarity_search(query, k=k)
-            else:
-                results = self._retrieve_faiss(query, k, filters)
-                
-            return results[:k]
+            docs = self._raw_retrieve(query, k * 3, filters)  # Over-fetch
+            products = [self._doc_to_product(d) for d in docs]
+
+            scored = [(p, self._score(query, p)) for p in products]
+            top = sorted(scored, key=lambda t: t[1], reverse=True)[:k]
+            return [p for p, _ in top]
         except Exception as e:
-            logger.error(f"Retrieval error: {str(e)}")
-            return []
+            logger.error("Error during retrieval: %s", e)
+            raise
 
-    def _filter_by_price(self, docs: List[Document], max_price: float) -> List[Document]:
-        filtered = []
-        for doc in docs:
-            try:
-                price = float(doc.metadata.get("price", "0").replace("$", ""))
-                if price <= max_price:
-                    filtered.append(doc)
-            except (ValueError, AttributeError):
-                continue
-        return filtered
-
-    def _retrieve_faiss(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
-        query_embedding = np.array(self.embedder.embed_query(query)).astype("float32")
-        distances, indices = self.faiss_index.search(np.array([query_embedding]), k)
-
-        results = []
-        for idx, score in zip(indices[0], distances[0]):
-            if idx < len(self.faiss_documents):
-                doc = self.faiss_documents[idx]
-                doc.metadata["score"] = float(1 - score)
-                results.append(doc)
+    def _raw_retrieve(
+        self,
+        query: str,
+        k: int,
+        filters: Optional[Dict],
+    ) -> List[Document]:
+        """Internal method for raw document retrieval."""
+        query_expanded = " ".join(_expand_query(query))
 
         if filters:
-            results = [doc for doc in results if self._matches_filters(doc.metadata, filters)]
+            return self.store.similarity_search(
+                query_expanded, 
+                k=k, 
+                filter=self._chroma_filter(filters)
+            )
+        return self.store.similarity_search(query_expanded, k=k)
 
-        return sorted(results, key=lambda x: x.metadata["score"], reverse=True)[:k]
+    def _score(self, query: str, product: Product) -> float:
+        """Calculate relevance score between query and product."""
+        q_words = set(_expand_query(query))
+        tag_hits = len(q_words.intersection({t.lower() for t in (product.tags or [])}))
+        dev_hits = len(q_words.intersection({d.lower() for d in (product.compatible_devices or [])}))
+        return tag_hits + dev_hits
 
-    def _load_faiss_documents(self) -> None:
-        docs_path = self.index_path / "faiss_documents.json"
+    def _doc_to_product(self, doc: Document) -> Product:
+        """Convert Document back to Product."""
         try:
-            with open(docs_path, "r", encoding="utf-8") as f:
-                self.faiss_documents = [
-                    Document(
-                        page_content=item["content"],
-                        metadata=item["metadata"]
-                    ) for item in json.load(f)
-                ]
+            return Product.from_dict(doc.metadata | {"page_content": doc.page_content})
         except Exception as e:
-            logger.error(f"Error loading FAISS documents: {str(e)}")
-            self.faiss_documents = []
+            logger.error("Error converting document to product: %s", e)
+            raise
 
-    def _build_chroma_filter(self, filters: Dict) -> Dict:
+    def _chroma_filter(self, f: Optional[Dict]) -> Dict:
+        """Format filters for ChromaDB."""
         return {
-            field: {"$in": value} if isinstance(value, list) else {"$eq": value}
-            for field, value in filters.items()
+            k: {"$in": v} if isinstance(v, list) else {"$eq": v}
+            for k, v in (f or {}).items()
         }
 
-    def _matches_filters(self, metadata: Dict, filters: Dict) -> bool:
-        for field, value in filters.items():
-            if field not in metadata:
-                return False
-            if isinstance(value, list):
-                if metadata[field] not in value:
-                    return False
-            elif metadata[field] != value:
-                return False
-        return True
-
-    def debug_index(self, category="Beauty", limit=5):
-        """Debug what's actually in the index"""
-        results = self.vectorstore.get(
-            where={"category": category},
-            limit=limit
+    def _matches(self, meta: Dict, f: Optional[Dict]) -> bool:
+        """Check if document matches filters."""
+        if not f:
+            return True
+        return all(
+            meta.get(k) == v or (isinstance(v, list) and meta.get(k) in v)
+            for k, v in f.items()
         )
-        for doc in results["documents"]:
-            print(f"Title: {doc.metadata['title']}")
-            print(f"Price: {doc.metadata.get('price', 'N/A')}")
-            print(f"Content: {doc.page_content[:200]}...\n")

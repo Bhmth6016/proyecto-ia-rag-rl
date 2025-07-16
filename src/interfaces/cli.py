@@ -1,36 +1,36 @@
-# src/interfaces/cli.py
-"""
-Amazon product recommendation CLI (headless).
-
-Commands
---------
-$ python -m src.cli rag          # interactive Q&A
-$ python -m src.cli category     # browse category tree
-$ python -m src.cli index        # (re)build index & cache
-"""
-
 from __future__ import annotations
+
+# src/interfaces/cli.py
 
 import argparse
 import logging
 import sys
+import json  # Add this import statement
 from pathlib import Path
 from typing import List, Optional
 
 from src.core.config import settings
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
-from src.core.category_search.category_tree import CategoryTree
 from src.core.rag.basic.retriever import Retriever
 from src.core.rag.advanced.agent import RAGAgent
+from src.core.category_search.category_tree import CategoryTree
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
-
-
-
 # ------------------------------------------------------------------
 # CLI entry-point
 # ------------------------------------------------------------------
+class AmazonRecommendationCLI:
+    def __init__(self, products, category_tree, rag_agent):
+        self.products = products
+        self.category_tree = category_tree
+        self.rag_agent = rag_agent
+
+    def run(self):
+        """Main entry point for CLI interface"""
+        main()  # Calls your existing main function
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         description="Amazon Product Recommendation CLI",
@@ -42,14 +42,17 @@ def main(argv: Optional[List[str]] = None) -> None:
     rag = sub.add_parser("rag", help="interactive Q&A")
     rag.add_argument("-k", "--top-k", type=int, default=5)
     rag.add_argument("--no-feedback", action="store_true")
+    rag.add_argument("--disable-tqdm", action="store_true", help="disable progress bars")
 
     # ---- category --------------------------------------------------
     cat = sub.add_parser("category", help="browse by category")
     cat.add_argument("-c", "--category", type=str, help="start category")
+    cat.add_argument("--disable-tqdm", action="store_true", help="disable progress bars")
 
     # ---- index -----------------------------------------------------
     idx = sub.add_parser("index", help="(re)build vector-store")
     idx.add_argument("--clear-cache", action="store_true")
+    idx.add_argument("--disable-tqdm", action="store_true", help="disable progress bars")
 
     # ---- common ----------------------------------------------------
     for cmd in (rag, cat, idx):
@@ -74,6 +77,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         raw_dir=settings.RAW_DIR,
         processed_dir=settings.PROC_DIR,
         cache_enabled=settings.CACHE_ENABLED,
+        disable_tqdm=getattr(args, 'disable_tqdm', False),  # Pass the option
     )
     products: List[Product] = loader.load_data(use_cache=True)
 
@@ -84,29 +88,36 @@ def main(argv: Optional[List[str]] = None) -> None:
     # ----------------------------------------------------------------
     # dispatch
     # ----------------------------------------------------------------
-    if args.command == "rag":
-        _run_rag_mode(products, k=args.top_k, feedback=not args.no_feedback)
+    if args.command == "index":
+        _run_index_mode(loader, clear_cache=args.clear_cache)
+
+    elif args.command == "rag":
+        _run_rag_mode(loader, products, k=args.top_k, feedback=not args.no_feedback)
 
     elif args.command == "category":
         _run_category_mode(products, start=args.category)
 
-    elif args.command == "index":
-        _run_index_mode(loader, clear_cache=args.clear_cache)
-
     logging.info("Done.")
-
 
 # ------------------------------------------------------------------
 # Mode implementations
 # ------------------------------------------------------------------
-def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
+def _run_rag_mode(loader: DataLoader, products: List[Product], k: int, feedback: bool) -> None:
     """Interactive Q&A loop."""
     logger = logging.getLogger("rag")
+
+    # Check if the index exists
+    index_path = settings.VEC_DIR / settings.INDEX_NAME
+    if not index_path.exists():
+        logger.info("Index not found. Building index...")
+        _run_index_mode(loader, clear_cache=False)
 
     # Build retriever & agent using settings
     retriever = Retriever(
         index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        embedding_model=settings.EMBEDDING_MODEL,
         vectorstore_type=settings.VECTOR_BACKEND,
+        device=settings.DEVICE
     )
     agent = RAGAgent(
         products=products,
@@ -130,7 +141,6 @@ def _run_rag_mode(products: List[Product], k: int, feedback: bool) -> None:
             logger.info("Feedback: %s -> %s", query, score.name)
 
     logger.info("Leaving RAG mode.")
-
 
 def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     """Interactive category explorer."""
@@ -165,17 +175,28 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     except KeyboardInterrupt:
         print("\nLeaving category mode.")
 
-
 def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
-    """(Re)build vector-store and cache."""
-    if clear_cache:
-        deleted = loader.clear_cache()
-        print(f"🗑️  Cleared {deleted} cache files.")
+    """(Re)build vector-store using unified products.json"""
+    unified_file = settings.PROC_DIR / "products.json"
+    
+    if not unified_file.exists():
+        # Generate unified file first if it doesn't exist
+        products = loader.load_data(use_cache=False)
+        with open(unified_file, 'w', encoding='utf-8') as f:
+            json.dump([p.dict() for p in products], f, ensure_ascii=False, indent=2)
+        print(f"✅ Generated unified products file at {unified_file}")
 
-    # Force re-processing (cache disabled)
-    products = loader.load_data(use_cache=False)
-    print(f"✅ Re-indexed {len(products)} products.")
-
+    # Initialize retriever and build index from unified file
+    retriever = Retriever(
+        index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        embedding_model=settings.EMBEDDING_MODEL,
+        vectorstore_type=settings.VECTOR_BACKEND,
+        device=settings.DEVICE
+    )
+    
+    print(f"🛠️ Building vector index from {unified_file}...")
+    retriever.build_index(unified_file)  # Pass the path of the unified file
+    print(f"✅ Successfully built vector index")
 
 # ------------------------------------------------------------------
 # Script entry

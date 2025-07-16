@@ -1,8 +1,0 @@
-defaults:
-  base_model: "google/flan-t5-large"
-  reward_model: "facebook/roberta-hate-speech-dynabench-r4"
-  device: "cuda"
-  lora_rank: 8
-  batch_size: 8
-  learning_rate: 1.41e-5
-  epochs: 3

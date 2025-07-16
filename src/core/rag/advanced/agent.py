@@ -1,47 +1,28 @@
-# src/core/rag/advanced/agent.py
-"""
-Unified RAG agent for the Amazon catalog with multilingual support.
-
-Features
---------
-• Category-aware retrieval (CategoryTree)
-• Runtime filtering (ProductFilter)
-• Context-rich feedback (FeedbackProcessor)
-• Optional RLHF fine-tuned model (LoRA checkpoint)
-• Automatic query/response translation
-"""
-
 from __future__ import annotations
-import psutil
-import faiss
-from tqdm import tqdm 
+
 import logging
 import sys
+import json
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
-import os
+
 from langchain_google_genai import ChatGoogleGenerativeAI
-import torch
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
-# Internal imports
+from langchain_core.prompts import ChatPromptTemplate
+
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
-from src.core.llms.local_llm import local_llm
 from src.core.rag.advanced.prompts import (
     RAG_PROMPT_TEMPLATE as SIMPLE_PROMPT_TEMPLATE,
     QUERY_REWRITE_PROMPT,
-    QUERY_CONSTRAINT_EXTRACTION_PROMPT
+    NO_RESULTS_TEMPLATE,
+    PARTIAL_RESULTS_TEMPLATE,
 )
-from src.core.config import settings
 from src.core.utils.translator import TextTranslator, Language
+from src.core.rag.basic.retriever import Retriever
+from src.core.config import settings
 
-# ------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -50,149 +31,86 @@ logging.basicConfig(
 )
 logging.getLogger("transformers").setLevel(logging.WARNING)
 
-# ------------------------------------------------------------------
-# Agent
-# ------------------------------------------------------------------
-class RAGAgent:
-    """
-    Enhanced RAG agent with multilingual support.
-    Handles automatic translation of queries/responses.
-    """
 
+class RAGAgent:
     def __init__(
         self,
-        *,
         products: List[Dict],
-        lora_checkpoint: Optional[Path] = None,
-        enable_translation: bool = True
+        lora_checkpoint: Optional[str] = None,
+        enable_translation: bool = True,
     ):
-        print("Initializing RAGAgent...")  # Debug
         self.products = products
-        print(f"Loaded {len(products)} products")  # Debug
         self.enable_translation = enable_translation
+        self.lora_checkpoint = lora_checkpoint
 
-        self.embedder = HuggingFaceEmbeddings(
-            model_name=settings.EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
-        print("Embedder initialized")  # Debug
-
-        # Translation setup
+        # Translation
         self.translator = TextTranslator() if enable_translation else None
-        print("Translator ready")  # Debug
 
-        # Build category tree + filters
+        # Category tree & filters
         self.tree = CategoryTree(products).build_tree()
-        print("Category tree built")  # Debug
         self.active_filter = ProductFilter()
-        print("ProductFilter ready")  # Debug
 
-        # Vector store
-        print("Building vector store...")  # Debug
-        self.vector_store = self._build_vector_store()
-        print("Vector store ready")  # Debug
+        # Vector store via synonym-aware retriever
+        # 🛠️ Forzamos string absoluta y debugamos la ruta
+        index_path_str = str(Path(settings.VECTOR_INDEX_PATH).resolve())
+        logger.info("🔍 Using VECTOR_INDEX_PATH: %r", index_path_str)
 
-        # LLM (LoRA-aware)
-        print("Loading LLM...")  # Debug
+        self.retriever = Retriever(
+            index_path=index_path_str,
+            vectorstore_type=settings.VECTOR_BACKEND,
+            embedding_model=settings.EMBEDDING_MODEL,
+            device=settings.DEVICE
+        )
+
+        # Check if the index exists
+        if not self.retriever.index_exists():
+            raise RuntimeError(
+                f"Vector index not found at {index_path_str}\n"
+                "Please build the index first with:\n"
+                "python main.py index --data-dir ./data/raw"
+            )
+
+        # LLM
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
-            google_api_key=os.getenv("GEMINI_API_KEY"),
-            temperature=0.3
+            google_api_key=settings.GEMINI_API_KEY,
+            temperature=0.3,
         )
-        print("LLM loaded")  # Debug
 
-        # LangChain memory
+        # LangChain memory & chain
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
             return_messages=True,
         )
-        print("Memory initialized")  # Debug
-
-        # LangChain chain
-        print("Building chain...")  # Debug
         self.chain = self._build_chain()
-        print("Chain ready")  # Debug
 
         # Feedback
         self.feedback = FeedbackProcessor(
             feedback_dir=str(settings.DATA_DIR / "feedback")
         )
-        print("RAGAgent initialization complete")  # Debug
-
-    def _build_vector_store(self) -> FAISS:
-        """Build vector store with memory monitoring"""
-        import psutil
-        
-        def log_memory_usage(stage=""):
-            process = psutil.Process()
-            memory_mb = process.memory_info().rss / 1024 / 1024
-            print(f"💾 [Memory] {stage}: {memory_mb:.1f} MB")
-        
-        log_memory_usage("Before processing")
-        
-        # Reduce further for initial testing
-        max_products = min(10000, len(self.products))
-        products_to_process = self.products[:max_products]
-        
-        print(f"🔄 Processing {len(products_to_process)} products...")
-        
-        # Create texts
-        texts = []
-        for p in products_to_process:
-            brand = p.details.brand if p.details and p.details.brand else ""
-            model = p.details.model if p.details and p.details.model else ""
-            text = f"{p.title} {brand} {model}".strip()
-            if text:  # Only add non-empty texts
-                texts.append(text)
-            specs = []
-            if p.details and p.details.specifications:
-                for k, v in p.details.specifications.items():
-                    if any(keyword in k.lower() for keyword in ['size', 'dimension', 'inch']):
-                        specs.append(f"{k}: {v}")
-            
-            text = f"{p.title} - Brand: {brand} - Model: {model} - {' '.join(specs)}"
-            if text.strip():
-                texts.append(text)
-        
-        log_memory_usage("Before vector store creation")
-        
-        # Use simple FAISS creation (fixed)
-        vector_store = FAISS.from_texts(
-            texts=texts,
-            embedding=self.embedder
-        )
-        
-        log_memory_usage("After vector store creation")
-        return vector_store
 
     def _build_chain(self) -> ConversationalRetrievalChain:
-        """Build the LangChain conversation chain."""
-        # Update the prompt template to use ChatPromptTemplate
+        if not self.retriever.store:
+            raise ValueError("Retriever store is not initialized. Please check the index path and ensure the index is built.")
+
         prompt = ChatPromptTemplate.from_template(
-            "Answer the question based on the context below. "
-            "If you don't know the answer, say you don't know. "
-            "Be concise and helpful.\n\n"
-            "Context: {context}\n\n"
-            "Question: {question}\n"
-            "Answer:"
+            "Responde la pregunta basándote en el contexto siguiente. "
+            "Si no sabes la respuesta, di que no sabes. "
+            "Sé conciso y útil.\n\n"
+            "Contexto: {context}\n\n"
+            "Pregunta: {question}\n"
+            "Respuesta:"
         )
-        
-        retriever = self.vector_store.as_retriever(
-            search_kwargs={"k": 5, "filter": self.active_filter.apply}
-        )
-        
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
-            retriever=retriever,
+            retriever=self.retriever.store.as_retriever(search_kwargs={"k": 5}),
             memory=self.memory,
             combine_docs_chain_kwargs={"prompt": prompt},
             return_source_documents=False,
         )
 
     def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
-        """Handle query translation if enabled."""
         if not self.enable_translation:
             return query, None
 
@@ -201,47 +119,53 @@ class RAGAgent:
             return query, None
 
         english_query = self.translator.translate_to_english(query, source_lang)
-        logger.debug(f"Translated query from {source_lang} to English: {english_query}")
+        logger.debug("Translated query: %s -> %s", query, english_query)
         return english_query, source_lang
 
     def _process_response(self, answer: str, target_lang: Optional[Language]) -> str:
-        """Handle response translation if needed."""
         if not target_lang or not self.enable_translation:
             return answer
-
-        translated = self.translator.translate_from_english(answer, target_lang)
-        logger.debug(f"Translated response back to {target_lang}: {translated}")
-        return translated
+        return self.translator.translate_from_english(answer, target_lang)
 
     def ask(self, query: str) -> str:
-        """
-        Process query with optional translation:
-        1. Detect input language
-        2. Translate to English if needed
-        3. Get LLM response
-        4. Translate back to original language
-        """
         processed_query, source_lang = self._process_query(query)
-        english_answer = self.chain.invoke({"question": processed_query})["answer"]
-        final_answer = self._process_response(english_answer, source_lang)
 
-        # Store feedback with both original and translated versions
-        retrieved_titles = [
-            doc.metadata.get("title", "No title")
-            for doc in self.vector_store.similarity_search(processed_query, k=5)
-        ]
+        products = self.retriever.retrieve(query=processed_query, k=5)
+        if not products:
+            products = self.retriever.retrieve(query=query, k=5)
+
+        if not products:
+            try:
+                expanded = self._expand_query(processed_query)
+                suggestions = ", ".join(expanded[:3]) if expanded else "backpack, headphones, speaker"
+            except Exception:
+                suggestions = "backpack, headphones, speaker"
+
+            return NO_RESULTS_TEMPLATE.format(query=query, suggestions=suggestions)
+
+        exact = [p for p in products if self.retriever._score(query, p) > 0]
+        if not exact and products:
+            titles = [p.title for p in products[:3]]
+            return PARTIAL_RESULTS_TEMPLATE.format(
+                query=query,
+                similar_products="\n".join(f"- {t}" for t in titles)
+            )
+
+        context = "\n\n".join(p.to_document()["page_content"] for p in products)
+
+        llm_answer = self.chain.invoke({"question": processed_query, "context": context})["answer"]
+        final_answer = self._process_response(llm_answer, source_lang)
+
         self.feedback.save_feedback(
             query=query,
             answer=final_answer,
             rating=0,
-            retrieved_docs=retrieved_titles,
+            retrieved_docs=[p.title for p in products],
             category_tree=self.tree,
             active_filter=self.active_filter,
-            extra_meta={  # ✅ parámetro correcto
-                "english_query": processed_query if source_lang else None,
-                "english_answer": english_answer if source_lang else None,
-                "detected_language": source_lang.value if source_lang else "en"
-            }
+            extra_meta={                "english_query": processed_query if source_lang else None,
+                "detected_language": source_lang.value if source_lang else "en",
+            },
         )
         return final_answer
 
@@ -252,7 +176,6 @@ class RAGAgent:
         rating_range: Optional[tuple] = None,
         brands: Optional[list] = None,
     ) -> None:
-        """Runtime filter update (hot-swapped in retriever)."""
         self.active_filter.clear_filters()
         if price_range:
             self.active_filter.add_price_filter(*price_range)
@@ -262,9 +185,7 @@ class RAGAgent:
             self.active_filter.add_brand_filter(brands)
 
     def chat_loop(self) -> None:
-        """Interactive multilingual chat interface."""
         print("\n🌍 Multilingual RAG Agent (type 'exit' to quit)\n")
-
         while True:
             try:
                 query = input("🧑 User: ").strip()
@@ -275,51 +196,40 @@ class RAGAgent:
                 answer = self.ask(query)
                 print(f"\n🤖 Assistant:\n{answer}\n")
 
-                # Feedback collection
                 rating = input("Rating (1-5): ").strip()
                 while rating not in {"1", "2", "3", "4", "5"}:
                     rating = input("Please rate 1-5: ").strip()
-                
+
                 self.feedback.save_feedback(
                     query=query,
                     answer=answer,
                     rating=int(rating),
-                    extra_meta={
-                        "user_rating": rating,
-                        "translation_enabled": self.enable_translation
-                    }
+                    extra_meta={"user_rating": rating},
                 )
 
             except KeyboardInterrupt:
                 print("\n🛑 Session ended")
                 break
             except Exception as e:
-                logger.error("Chat error: %s", str(e))
+                logger.error("Chat error: %s", e)
                 print("⚠️ Error occurred, please try again.")
 
     @classmethod
     def from_pickle_dir(
         cls,
         pickle_dir: Path = settings.PROC_DIR,
-        lora_checkpoint: Optional[Path] = settings.RLHF_CHECKPOINT,
-        enable_translation: bool = True
+        enable_translation: bool = True,
     ) -> "RAGAgent":
-        """Factory method with translation option."""
-        from src.core.data.loader import DataLoader
-
-        products = DataLoader().load_data(
-            raw_dir=settings.RAW_DIR,
-            processed_dir=pickle_dir,
-            cache_enabled=settings.CACHE_ENABLED,
-        )
+        """Load from unified products.json instead of individual files"""
+        unified_file = pickle_dir / "products.json"
+        if not unified_file.exists():
+            raise FileNotFoundError(f"Unified products file not found at {unified_file}")
+        
+        with open(unified_file, 'r', encoding='utf-8') as f:
+            products_data = json.load(f)
+        
+        products = [Product.from_dict(item) for item in products_data]
         if not products:
-            raise RuntimeError("No products found")
-        return cls(
-            products=products,
-            lora_checkpoint=lora_checkpoint,
-            enable_translation=enable_translation
-        )
-
-if __name__ == "__main__":
-    agent = RAGAgent.from_pickle_dir(enable_translation=True)
-    agent.chat_loop()
+            raise RuntimeError("No products found in unified file")
+        
+        return cls(products=products, enable_translation=enable_translation)

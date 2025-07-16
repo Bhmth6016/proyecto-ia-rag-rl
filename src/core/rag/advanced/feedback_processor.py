@@ -72,6 +72,10 @@ class FeedbackProcessor:
         self._flush_thread = threading.Thread(target=self._periodic_flush, daemon=True)
         self._flush_thread.start()
 
+        # Failed queries log
+        self.failed_queries_log = self.feedback_dir / "failed_queries.log"
+        self.failed_queries_log.touch(exist_ok=True)
+
         logger.info("FeedbackProcessor v2 initialized at %s", self.feedback_dir)
 
     # ------------------------------------------------------------------
@@ -88,8 +92,6 @@ class FeedbackProcessor:
         active_filter: Optional[ProductFilter] = None,
         extra_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
-        
-        extra_meta = {str(k): str(v) for k, v in extra_meta.items()}
         """
         Store a single feedback record asynchronously.
 
@@ -111,6 +113,11 @@ class FeedbackProcessor:
 
         # Run enrichment in background
         self.executor.submit(self._enrich_and_buffer, record)
+
+        # Log failed queries
+        if rating < 3:
+            with self.failed_queries_log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -294,3 +301,55 @@ class FeedbackProcessor:
                             continue
             except IOError:
                 continue
+
+    # ------------------------------------------------------------------
+    # Weekly review script
+    # ------------------------------------------------------------------
+    def weekly_review(self):
+        """
+        Analyze failed_queries.log to detect new synonyms and uncovered query patterns.
+        """
+        from collections import defaultdict
+        import re
+
+        new_synonyms = defaultdict(set)
+        uncovered_patterns = defaultdict(int)
+
+        with self.failed_queries_log.open("r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                    query = record["query"].lower()
+                    # Detect new synonyms
+                    for word in query.split():
+                        if re.match(r"\b\w+\b", word):
+                            new_synonyms[word].add(query)
+                    # Detect uncovered patterns
+                    if "uncovered" in query:
+                        uncovered_patterns[query] += 1
+                except json.JSONDecodeError:
+                    continue
+
+        # Log new synonyms
+        logger.info("New synonyms detected:")
+        for word, queries in new_synonyms.items():
+            logger.info(f"Word: {word}, Queries: {list(queries)}")
+
+        # Log uncovered patterns
+        logger.info("Uncovered query patterns:")
+        for pattern, count in uncovered_patterns.items():
+            logger.info(f"Pattern: {pattern}, Count: {count}")
+
+        # Optionally, save new synonyms and uncovered patterns to files
+        with open(self.feedback_dir / "new_synonyms.txt", "w", encoding="utf-8") as f:
+            for word, queries in new_synonyms.items():
+                f.write(f"{word}: {list(queries)}\n")
+
+        with open(self.feedback_dir / "uncovered_patterns.txt", "w", encoding="utf-8") as f:
+            for pattern, count in uncovered_patterns.items():
+                f.write(f"{pattern}: {count}\n")
+
+# Example usage of weekly_review
+if __name__ == "__main__":
+    with FeedbackProcessor() as fp:
+        fp.weekly_review()

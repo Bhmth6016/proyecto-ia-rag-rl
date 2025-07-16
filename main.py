@@ -4,28 +4,33 @@
 import argparse
 import logging
 import os
+import sys
+import json
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 import google.generativeai as genai
+from langchain_community.vectorstores import Chroma
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from src.core.rag.basic.retriever import Retriever
 from src.core.data.loader import DataLoader
-from src.core.rag.advanced.agent import AdvancedRAGAgent
+from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
-from src.interfaces.cli import AmazonRecommendationCLI
+from src.interfaces.cli import main as cli_main  # Import the main function from cli.py
 from src.core.utils.logger import configure_root_logger
+from src.core.config import settings  # Ensure settings.py is correctly defined
 
 # Load .env configuration
 load_dotenv()
+configure_root_logger(level=logging.DEBUG)
 
 def initialize_system(data_dir: Optional[str] = None,
                      log_level: Optional[str] = None,
                      enable_ui: bool = False):
     """
-    Initialize system components: logger, data loader, LLM, retriever, agent, and interface.
+    Initialize system components with better default handling
     """
     # Setup logger
     configure_root_logger(
@@ -33,19 +38,27 @@ def initialize_system(data_dir: Optional[str] = None,
         log_file=os.getenv("LOG_FILE", "logs/system.log")
     )
     logger = logging.getLogger(__name__)
-    logger.info("🚀 Starting Amazon Product Recommendation System")
-
+    
+    # Configure data directory with multiple fallbacks
+    data_path = Path(data_dir or os.getenv("DATA_DIR") or "./data/raw")
+    if not data_path.exists():
+        data_path.mkdir(parents=True, exist_ok=True)
+        logger.warning(f"Created data directory at {data_path}")
+    
+    if not any(data_path.glob("*.json")) and not any(data_path.glob("*.jsonl")):
+        logger.error(f"No JSON data files found in {data_path}")
+        raise FileNotFoundError(f"No product data found in {data_path}")
+    
     # Configure Gemini API key
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     logger.info("✅ Gemini API configured")
 
-    # Load product data
-    data_path = data_dir or os.getenv("DATA_DIR")
-    if not data_path or not Path(data_path).exists():
-        logger.error(f"❌ Data path not found: {data_path}")
-        raise FileNotFoundError(f"Data directory not found: {data_path}")
-
-    loader = DataLoader(data_path)
+    loader = DataLoader(
+        raw_dir=data_path,
+        processed_dir=settings.PROC_DIR,
+        cache_enabled=settings.CACHE_ENABLED
+    )
+    
     max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", "10000"))
     products = loader.load_data()[:max_products]
     logger.info(f"📦 Loaded {len(products)} products")
@@ -56,7 +69,6 @@ def initialize_system(data_dir: Optional[str] = None,
     logger.info("🌲 Category tree built")
 
     # Initialize Gemini LLM
-    # En main.py, modifica:
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash",  # Modelo más estable
         google_api_key=os.getenv("GEMINI_API_KEY"),
@@ -66,19 +78,22 @@ def initialize_system(data_dir: Optional[str] = None,
     )
 
     # Initialize memory for RLHF interaction
-    memory = ConversationBufferMemory(return_messages=True)
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True
+    )
     
     # Setup retriever (RAG backbone)
-    retriever = initialize_retriever(products)
+    retriever = initialize_retriever()
     logger.info("📚 Retriever ready")
 
     # Build advanced RAG agent
-    rag_agent = AdvancedRAGAgent(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        rate_limit=30  # 30 llamadas por minuto (dentro del límite gratuito)
+    rag_agent = RAGAgent(
+        products=products,
+        lora_checkpoint=settings.RLHF_CHECKPOINT,
+        enable_translation=True
     )
+
     logger.info("🧠 RAG agent initialized")
 
     # Launch interface
@@ -86,24 +101,22 @@ def initialize_system(data_dir: Optional[str] = None,
         from src.interfaces.ui import launch_ui
         launch_ui(products, category_tree, rag_agent)
     else:
-        from src.interfaces import cli
-        cli.main()
+        cli_main()  # Call the main function from cli.py
 
-
-
-def initialize_retriever(products):
+def initialize_retriever():
     """Instantiate and return retriever engine for RAG."""
-    from src.core.rag.basic.retriever import Retriever
     return Retriever(
-        index_path=os.getenv("VECTOR_INDEX_PATH", "./data/vector_index"),
-        embedding_model=os.getenv("EMBEDDING_MODEL")
+        index_path=settings.VECTOR_INDEX_PATH,  # Use from settings
+        embedding_model=settings.EMBEDDING_MODEL,
+        vectorstore_type=settings.VECTOR_BACKEND,
+        device=settings.DEVICE
     )
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="🔎 Amazon Product Recommendation System")
     
     # Main subcommands
-    subparsers = parser.add_subparsers(dest='command', required=True)
+    subparsers = parser.add_subparsers(dest='command')
     
     # RAG command
     rag_parser = subparsers.add_parser('rag', help='RAG recommendation mode')
@@ -121,15 +134,36 @@ def parse_arguments():
         p.add_argument('--data-dir', type=str, help='Custom data directory path')
         p.add_argument('--log-level', choices=['DEBUG','INFO','WARNING','ERROR'], help='Logging level')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+    return args
 
 if __name__ == "__main__":
     args = parse_arguments()
     
     if args.command == "index":
-        if args.reindex:
-            from demo.generator import run_generator
-            run_generator(args.data_dir or os.getenv("DATA_DIR"))
+        # Verificar/Crear archivo unificado primero
+        unified_file = settings.PROC_DIR / "products.json"
+        if not unified_file.exists() or args.reindex:
+            data_path = Path(args.data_dir or os.getenv("DATA_DIR") or "./data/raw")
+            loader = DataLoader(
+                raw_dir=data_path,
+                processed_dir=settings.PROC_DIR,
+                cache_enabled=settings.CACHE_ENABLED
+            )
+            products = loader.load_data(use_cache=not args.reindex)
+            
+            with open(unified_file, 'w', encoding='utf-8') as f:
+                json.dump([p.dict() for p in products], f, ensure_ascii=False, indent=2)
+            print(f"✅ Generated unified products file at {unified_file}")
+
+        # Construir índice desde el archivo unificado
+        retriever = initialize_retriever()
+        retriever.build_index(unified_file)
+        print(f"✅ Index built from unified file")
+        
     elif args.command in {"rag", "category"}:
         initialize_system(
             data_dir=args.data_dir,

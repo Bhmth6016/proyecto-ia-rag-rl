@@ -54,7 +54,7 @@ def get_logger(
     name: str,
     *,
     log_file: Optional[str] = None,
-    level: int = logging.INFO,
+    level: int = logging.WARNING,  # Cambia de logging.INFO a logging.WARNING
     json_format: bool = False,
     max_bytes: int = 10 * 1024 * 1024,  # 10 MB
     backup_count: int = 5,
@@ -116,13 +116,14 @@ def get_logger(
     logger.propagate = False  # Avoid double logging from root
     return logger
 
-
 # --------------------------------------------------
 # Root logger quick-setup
 # --------------------------------------------------
+# src/core/utils/logger.py
+
 def configure_root_logger(
     *,
-    level: int = logging.INFO,
+    level: int = logging.ERROR,  # Cambia de logging.INFO a logging.ERROR
     log_file: Optional[str] = None,
     module_levels: Optional[Dict[str, int]] = None,
 ) -> None:
@@ -132,7 +133,7 @@ def configure_root_logger(
     Example
     -------
     configure_root_logger(
-        level=logging.INFO,
+        level=logging.ERROR,
         log_file="logs/app.log",
         module_levels={"urllib3": logging.WARNING, "transformers": logging.ERROR},
     )
