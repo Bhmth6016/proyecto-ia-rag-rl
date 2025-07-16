@@ -1,0 +1,32 @@
+# Ignorar todo el directorio data/ (relativo al raíz del proyecto)
+/data/
+src/data/
+/amazon_rag_rlhf.egg-info
+# Entorno virtual
+venv/
+.env
+venv/
+.env
+myenv/
+.myenv
+
+# Datos y modelos
+data/processed/
+*.pkl
+*.index
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+/build
+/env

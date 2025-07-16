@@ -1,0 +1,39 @@
+# ---------- Core ----------
+langchain==0.2.11
+langchain-community==0.2.10
+langchain-huggingface==0.0.3
+langchain-google-genai==1.0.7
+langchain-chroma==0.1.2
+sentence-transformers==3.0.1
+transformers==4.43.2
+tokenizers==0.19.1
+faiss-cpu==1.8.0          # or faiss-gpu==1.8.0 for CUDA
+chromadb==0.5.3
+
+# ---------- LLM / RLHF ----------
+torch==2.3.1
+accelerate==0.31.0
+peft==0.11.1
+trl==0.9.6
+datasets==2.20.0
+sentencepiece>=0.1.99
+
+# ---------- Data & utilities ----------
+pydantic==2.8.2
+PyYAML==6.0.1
+python-dotenv==1.0.1
+tqdm==4.66.4
+click==8.1.7
+
+# ---------- Optional Google ----------
+google-generativeai==0.7.2
+
+# ---------- Optional GPU ----------
+# Uncomment if CUDA available
+# torch --index-url https://download.pytorch.org/whl/cu121
+
+# ---------- Dev ----------
+pytest==8.3.1
+black==24.4.2
+isort==5.13.2
+ruff==0.5.2
