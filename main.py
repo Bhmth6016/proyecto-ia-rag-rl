@@ -4,6 +4,7 @@
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -12,7 +13,7 @@ import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from src.core.rag.basic.retriever import Retriever
 from src.core.data.loader import DataLoader
 from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
@@ -22,7 +23,6 @@ from src.core.config import settings  # Ensure settings.py is correctly defined
 
 # Load .env configuration
 load_dotenv()
-configure_root_logger
 configure_root_logger(level=logging.DEBUG)
 
 def initialize_system(data_dir: Optional[str] = None,
@@ -83,7 +83,7 @@ def initialize_system(data_dir: Optional[str] = None,
     )
     
     # Setup retriever (RAG backbone)
-    retriever = initialize_retriever(products)
+    retriever = initialize_retriever()
     logger.info("📚 Retriever ready")
 
     # Build advanced RAG agent
@@ -102,9 +102,8 @@ def initialize_system(data_dir: Optional[str] = None,
     else:
         cli_main()  # Call the main function from cli.py
 
-def initialize_retriever(products):
+def initialize_retriever():
     """Instantiate and return retriever engine for RAG."""
-    from src.core.rag.basic.retriever import Retriever
     return Retriever(
         index_path=settings.VECTOR_INDEX_PATH,  # Use from settings
         embedding_model=settings.EMBEDDING_MODEL,
@@ -116,7 +115,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="🔎 Amazon Product Recommendation System")
     
     # Main subcommands
-    subparsers = parser.add_subparsers(dest='command', required=True)
+    subparsers = parser.add_subparsers(dest='command')
     
     # RAG command
     rag_parser = subparsers.add_parser('rag', help='RAG recommendation mode')
@@ -134,73 +133,58 @@ def parse_arguments():
         p.add_argument('--data-dir', type=str, help='Custom data directory path')
         p.add_argument('--log-level', choices=['DEBUG','INFO','WARNING','ERROR'], help='Logging level')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+    return args
 
 if __name__ == "__main__":
     args = parse_arguments()
     
     if args.command == "index":
-        # Cargar productos sin instanciar RAGAgent
+        # Load products without instantiating RAGAgent
         data_path = Path(args.data_dir or os.getenv("DATA_DIR") or "./data/raw")
         loader = DataLoader(
             raw_dir=data_path,
             processed_dir=settings.PROC_DIR,
-            cache_enabled=settings.CACHE_ENABLED
+            cache_enabled=settings.CACHE_ENABLED,
+            disable_tqdm=getattr(args, 'disable_tqdm', False)
         )
-        products = loader.load_data(use_cache=True)
-
-        # Inicializar retriever
-        retriever = initialize_retriever(products)
         
-        # Limpiar índice si es necesario
+        # Clear cache if requested
+        if args.reindex:
+            loader.clear_cache()
+        
+        products = loader.load_data(use_cache=not args.reindex)
+        print(f"✅ Loaded {len(products)} products")
+
+        # Initialize retriever
+        index_path = Path(settings.VECTOR_INDEX_PATH).resolve()
+        print(f"🛠️ Building vector index at {index_path}...")
+        
+        retriever = initialize_retriever()
+        
+        # Clear existing index if requested
         if args.reindex and retriever.index_exists():
-            import os
-            import shutil
-            import time
-            
-            index_path = Path(settings.VECTOR_INDEX_PATH)
-            
-            # Intentar cerrar cualquier conexión existente a Chroma
-            if hasattr(retriever, 'store'):
-                if isinstance(retriever.store, Chroma):
-                    try:
-                        retriever.store._client = None
-                    except:
-                        pass
-            
-            # Esperar un momento para que se liberen los recursos
-            time.sleep(1)
-            
-            # Eliminar contenido del directorio de forma segura
             try:
-                for filename in os.listdir(index_path):
-                    file_path = os.path.join(index_path, filename)
-                    try:
-                        if os.path.isfile(file_path) or os.path.islink(file_path):
-                            os.unlink(file_path)
-                        elif os.path.isdir(file_path):
-                            shutil.rmtree(file_path)
-                    except Exception as e:
-                        print(f"Failed to delete {file_path}. Reason: {e}")
-                        # Intento adicional para archivos bloqueados
-                        try:
-                            if os.path.exists(file_path):
-                                os.remove(file_path)
-                        except:
-                            pass
+                # Close any open connections to Chroma
+                if isinstance(retriever.store, Chroma):
+                    retriever.store._client = None
                 
+                # Wait a moment to ensure resources are released
+                import time
+                time.sleep(1)
+                
+                # Remove the index directory
+                import shutil
+                shutil.rmtree(index_path)
+                index_path.mkdir(parents=True, exist_ok=True)
                 print("♻️  Cleared existing index")
             except Exception as e:
-                print(f"Error clearing index: {e}")
-                # Si falla, intentar crear el directorio de nuevo
-                try:
-                    shutil.rmtree(index_path)
-                    os.makedirs(index_path, exist_ok=True)
-                except:
-                    pass
+                print(f"⚠️  Error clearing index: {e}")
 
-        # Crear índice
-        print(f"🛠️ Building vector index at {settings.VECTOR_INDEX_PATH}...")
+        # Build new index
         retriever.build_index(products)
         print(f"✅ Success! Index contains {len(products)} product embeddings")
         

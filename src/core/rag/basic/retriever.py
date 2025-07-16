@@ -86,11 +86,12 @@ class Retriever:
 
     def index_exists(self) -> bool:
         """Check if the vector index exists in the configured path."""
+        if not self.index_path.exists():
+            return False
+            
         if self.backend == "chroma":
-            sqlite_file = self.index_path / "chroma.sqlite3"
-            uuid_dirs = list(self.index_path.glob("*/"))  # Buscar subcarpeta tipo UUID
-            return sqlite_file.exists() and len(uuid_dirs) > 0
-        else:
+            return (self.index_path / "chroma.sqlite3").exists()
+        else:  # FAISS
             return (self.index_path / "index.faiss").exists()
 
 

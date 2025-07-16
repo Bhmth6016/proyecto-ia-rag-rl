@@ -182,12 +182,12 @@ def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
 
     # Force re-processing (cache disabled)
     products = loader.load_data(use_cache=False)
-    print(f"✅ Re-indexed {len(products)} products.")
+    print(f"✅ Loaded {len(products)} products for indexing")
 
     # Build the vector index
     from src.core.rag.basic.retriever import Retriever
     
-    # First create the index directory if it doesn't exist
+    # Ensure vector directory exists
     index_path = settings.VEC_DIR / settings.INDEX_NAME
     index_path.mkdir(parents=True, exist_ok=True)
     
@@ -199,9 +199,9 @@ def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
         device=settings.DEVICE
     )
     
-    # Explicitly build the index with the products
+    print(f"🛠️ Building vector index at {index_path}...")
     retriever.build_index(products)
-    print("✅ Successfully built vector index.")
+    print(f"✅ Successfully built vector index with {len(products)} products")
 
 # ------------------------------------------------------------------
 # Script entry
