@@ -9,7 +9,8 @@ from typing import List, Dict, Optional, Union
 import numpy as np
 import faiss
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma, FAISS
+from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings  # Updated import
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
@@ -86,8 +87,13 @@ class Retriever:
     def index_exists(self) -> bool:
         """Check if the vector index exists in the configured path."""
         if self.backend == "chroma":
-            return any(self.index_path.glob("*.parquet"))
-        return (self.index_path / "index.faiss").exists()
+            sqlite_file = self.index_path / "chroma.sqlite3"
+            uuid_dirs = list(self.index_path.glob("*/"))  # Buscar subcarpeta tipo UUID
+            return sqlite_file.exists() and len(uuid_dirs) > 0
+        else:
+            return (self.index_path / "index.faiss").exists()
+
+
 
     def _load_index(self) -> None:
         """Load the existing vector index from disk."""
@@ -143,6 +149,21 @@ class Retriever:
                 logger.warning("No products provided to build index")
                 return
 
+            # Clear existing index content safely
+            if self.index_exists():
+                import os
+                import shutil
+                for f in os.listdir(self.index_path):
+                    file_path = os.path.join(self.index_path, f)
+                    try:
+                        if os.path.isdir(file_path):
+                            shutil.rmtree(file_path)
+                        else:
+                            os.remove(file_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete {file_path}. Reason: {e}")
+                logger.info("Cleared existing index content at %s", self.index_path)
+
             documents = []
             for prod in products:
                 metadata = prod.to_metadata()
@@ -162,12 +183,6 @@ class Retriever:
                 )
 
             if self.backend == "chroma":
-                # Clear existing index if any
-                if self.index_exists():
-                    import shutil
-                    shutil.rmtree(self.index_path)
-                    self.index_path.mkdir()
-                
                 # Create new Chroma index
                 self.store = Chroma.from_documents(
                     documents=documents,

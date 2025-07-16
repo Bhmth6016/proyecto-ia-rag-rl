@@ -137,31 +137,66 @@ if __name__ == "__main__":
     args = parse_arguments()
     
     if args.command == "index":
-        # Initialize system to load products
-        initialize_system(
-            data_dir=args.data_dir,
-            log_level=args.log_level
-        )
-        
-        # Get the loaded products
+        # Cargar productos sin instanciar RAGAgent
         data_path = Path(args.data_dir or os.getenv("DATA_DIR") or "./data/raw")
         loader = DataLoader(
             raw_dir=data_path,
             processed_dir=settings.PROC_DIR,
             cache_enabled=settings.CACHE_ENABLED
         )
-        products = loader.load_data()
-        
-        # Initialize and build retriever
+        products = loader.load_data(use_cache=True)
+
+        # Inicializar retriever
         retriever = initialize_retriever(products)
         
-        # Clear existing index if reindex flag is set
+        # Limpiar índice si es necesario
         if args.reindex and retriever.index_exists():
+            import os
             import shutil
-            shutil.rmtree(settings.VECTOR_INDEX_PATH)
-            print("♻️  Cleared existing index")
-        
-        # Build the index
+            import time
+            
+            index_path = Path(settings.VECTOR_INDEX_PATH)
+            
+            # Intentar cerrar cualquier conexión existente a Chroma
+            if hasattr(retriever, 'store'):
+                if isinstance(retriever.store, Chroma):
+                    try:
+                        retriever.store._client = None
+                    except:
+                        pass
+            
+            # Esperar un momento para que se liberen los recursos
+            time.sleep(1)
+            
+            # Eliminar contenido del directorio de forma segura
+            try:
+                for filename in os.listdir(index_path):
+                    file_path = os.path.join(index_path, filename)
+                    try:
+                        if os.path.isfile(file_path) or os.path.islink(file_path):
+                            os.unlink(file_path)
+                        elif os.path.isdir(file_path):
+                            shutil.rmtree(file_path)
+                    except Exception as e:
+                        print(f"Failed to delete {file_path}. Reason: {e}")
+                        # Intento adicional para archivos bloqueados
+                        try:
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                        except:
+                            pass
+                
+                print("♻️  Cleared existing index")
+            except Exception as e:
+                print(f"Error clearing index: {e}")
+                # Si falla, intentar crear el directorio de nuevo
+                try:
+                    shutil.rmtree(index_path)
+                    os.makedirs(index_path, exist_ok=True)
+                except:
+                    pass
+
+        # Crear índice
         print(f"🛠️ Building vector index at {settings.VECTOR_INDEX_PATH}...")
         retriever.build_index(products)
         print(f"✅ Success! Index contains {len(products)} product embeddings")
