@@ -3,10 +3,7 @@
 DataLoader con rutas dinámicas y política de caché desde settings.py
 """
 
-from __future__ import annotations
-
 import json
-import pickle
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -58,13 +55,11 @@ class DataLoader:
         *,
         raw_dir: Optional[Union[str, Path]] = None,
         processed_dir: Optional[Union[str, Path]] = None,
-        cache_enabled: Optional[bool] = None,
         max_workers: int = 4,
         disable_tqdm: bool = False,
     ):
         self.raw_dir = Path(raw_dir) if raw_dir else settings.RAW_DIR
         self.processed_dir = Path(processed_dir) if processed_dir else settings.PROC_DIR
-        self.cache_enabled = cache_enabled if cache_enabled is not None else settings.CACHE_ENABLED
         self.max_workers = max_workers
         self.disable_tqdm = disable_tqdm
 
@@ -92,50 +87,29 @@ class DataLoader:
         return tags
 
     # ------------------------------------------------------------------
-    def load_data(self, *, use_cache: bool = True) -> List[Product]:
-        """Cargar todos los archivos en raw_dir, devolviendo objetos Product validados."""
+    def load_data(self, *, output_file: Union[str, Path]) -> None:
+        """Cargar todos los archivos en raw_dir, procesar y guardar en un único JSON."""
         files = list(self.raw_dir.glob("*.json")) + list(self.raw_dir.glob("*.jsonl"))
         if not files:
             logger.warning("No se encontraron archivos de productos en %s", self.raw_dir)
-            return []
+            return
 
         all_products: List[Product] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
-            future_to_file = {exe.submit(self.load_single_file, f, use_cache=use_cache): f for f in files}
+            future_to_file = {exe.submit(self.load_single_file, f): f for f in files}
             for future in tqdm(future_to_file, desc="Archivos", total=len(files), disable=self.disable_tqdm):
                 all_products.extend(future.result())
 
         logger.info("Cargados %d productos de %d archivos", len(all_products), len(files))
-        return all_products
+        self.save_standardized_json(all_products, output_file)
 
     def load_single_file(
         self,
         raw_file: Union[str, Path],
-        *,
-        use_cache: bool = True,
     ) -> List[Product]:
         raw_file = Path(raw_file)
-        cache_file = self.processed_dir / f"{raw_file.stem}_processed.pkl"
-
-        if use_cache and self.cache_enabled and cache_file.exists() and cache_file.stat().st_mtime >= raw_file.stat().st_mtime:
-            logger.info("Cargando desde caché: %s", cache_file.name)
-            try:
-                with cache_file.open("rb") as f:
-                    return pickle.load(f)
-            except Exception as e:
-                logger.warning("Fallo leyendo caché %s: %s, re-procesando", cache_file.name, e)
-
-        # Procesar sin caché
         logger.info("Procesando archivo: %s", raw_file.name)
         products = self._process_jsonl(raw_file) if raw_file.suffix.lower() == ".jsonl" else self._process_json_array(raw_file)
-
-        if self.cache_enabled and products:
-            try:
-                with cache_file.open("wb") as f:
-                    pickle.dump(products, f)
-            except Exception as e:
-                logger.error("Error guardando caché %s: %s", cache_file.name, e)
-
         return products
 
     # ------------------------------------------------------------------
@@ -245,13 +219,6 @@ class DataLoader:
             )
 
         return products
-    
-    def clear_cache(self) -> int:
-        """Elimina todos los archivos .pkl en el directorio de procesados"""
-        cache_files = list(self.processed_dir.glob("*.pkl"))
-        for f in cache_files:
-            f.unlink()
-        return len(cache_files)
 
     def save_standardized_json(self, products: List[Product], output_file: Union[str, Path]) -> None:
         """Guardar un único JSON estandarizado en processed/"""

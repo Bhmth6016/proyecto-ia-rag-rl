@@ -1,3 +1,4 @@
+# src/core/retriever.py
 from __future__ import annotations
 
 import json
@@ -6,10 +7,10 @@ import unicodedata
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
-import numpy as np
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings
@@ -89,11 +90,6 @@ class Retriever:
             if not self.index_exists():
                 raise FileNotFoundError(f"No Chroma index found at {self.index_path}")
 
-            self.embedder = HuggingFaceEmbeddings(
-                model_name=self.embedder_name,
-                model_kwargs={"device": self.device},
-            )
-
             self.store = Chroma(
                 persist_directory=str(self.index_path),
                 embedding_function=self.embedder,
@@ -114,23 +110,13 @@ class Retriever:
                 logger.warning("No products provided to build index")
                 return
 
-            documents = []
-            for prod in products:
-                metadata = prod.to_metadata()
-                # If metadata is a string, convert it to a proper dict format
-                if isinstance(metadata, str):
-                    metadata = {"content": metadata}
-                # Ensure metadata is a dictionary before filtering
-                if not isinstance(metadata, dict):
-                    metadata = {"content": str(metadata)}
-                
-                # Now create the document with properly formatted metadata
-                documents.append(
-                    Document(
-                        page_content=prod.to_text(),
-                        metadata=metadata
-                    )
+            documents = [
+                Document(
+                    page_content=prod.to_text(),
+                    metadata=prod.to_metadata()
                 )
+                for prod in products
+            ]
 
             # Clear existing index if any
             if self.index_exists():
@@ -167,12 +153,9 @@ class Retriever:
             List of matching Product objects
         """
         try:
-            docs = self._raw_retrieve(query, k * 3, filters)  # Over-fetch
+            docs = self._raw_retrieve(query, k, filters)
             products = [self._doc_to_product(d) for d in docs]
-
-            scored = [(p, self._score(query, p)) for p in products]
-            top = sorted(scored, key=lambda t: t[1], reverse=True)[:k]
-            return [p for p, _ in top]
+            return products
         except Exception as e:
             logger.error("Error during retrieval: %s", e)
             raise
@@ -193,13 +176,6 @@ class Retriever:
                 filter=self._chroma_filter(filters)
             )
         return self.store.similarity_search(query_expanded, k=k)
-
-    def _score(self, query: str, product: Product) -> float:
-        """Calculate relevance score between query and product."""
-        q_words = set(_expand_query(query))
-        tag_hits = len(q_words.intersection({t.lower() for t in (product.tags or [])}))
-        dev_hits = len(q_words.intersection({d.lower() for d in (product.compatible_devices or [])}))
-        return tag_hits + dev_hits
 
     def _doc_to_product(self, doc: Document) -> Product:
         """Convert Document back to Product."""
