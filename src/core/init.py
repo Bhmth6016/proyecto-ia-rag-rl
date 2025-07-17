@@ -47,6 +47,15 @@ class SystemInitializer:
         if self._category_tree is None:
             self._build_category_tree()
         return self._category_tree
+    
+    @property
+    def loader(self) -> DataLoader:
+        if not hasattr(self, '_loader'):
+            self._loader = DataLoader(
+                raw_dir=settings.RAW_DIR,
+                processed_dir=settings.PROC_DIR
+            )
+        return self._loader
 
     def _load_products(self) -> None:
         """Load products with caching."""

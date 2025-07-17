@@ -79,34 +79,42 @@ class Retriever:
         if self.index_exists():
             self._load_index()
         else:
-            logger.warning("No index found at %s. Please build the index first.", self.index_path)
+            raise FileNotFoundError(
+                f"Chroma index incomplete or missing at {self.index_path}.\n"
+                "Run 'python main.py index' to build it.\n"
+                f"Required files: chroma.sqlite3, index_metadata.pickle"
+            )
 
     def index_exists(self) -> bool:
-        """Check if the vector index exists in the configured path."""
-        return any(self.index_path.glob("*.parquet"))
+        """Check if Chroma index exists with all required files."""
+        required_files = {"chroma.sqlite3", "index_metadata.pickle"}
+        existing_files = {f.name for f in self.index_path.glob("*")}
+        return required_files.issubset(existing_files)
 
     def _load_index(self) -> None:
         """Load the existing vector index from disk."""
         try:
-            if not self.index_exists():
-                raise FileNotFoundError(f"No Chroma index found at {self.index_path}")
-
             self.store = Chroma(
                 persist_directory=str(self.index_path),
                 embedding_function=self.embedder,
             )
             logger.info("Loaded Chroma index from %s", self.index_path)
-
         except Exception as e:
             logger.error("Error loading index: %s", e)
             raise
 
-    def build_index(self, products: List[Product]) -> None:
+    def build_index(self, products: List[Product], force_rebuild: bool = False):
+        if self.index_exists() and not force_rebuild:
+            raise ValueError("Index already exists. Set force_rebuild=True to overwrite")
         """Build and save a new vector index from products."""
         try:
             logger.info("Building index at %s", self.index_path)
             self.index_path.mkdir(parents=True, exist_ok=True)
             
+            if self.index_exists() and not force_rebuild:
+                logger.warning("Index already exists. Use force_rebuild=True to overwrite.")
+                return
+
             if not products:
                 logger.warning("No products provided to build index")
                 return

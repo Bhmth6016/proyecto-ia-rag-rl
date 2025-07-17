@@ -34,15 +34,10 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 
 
 class RAGAgent:
-    def __init__(
-        self,
-        products: Optional[List[Dict]] = None,  # Ahora opcional
-        enable_translation: bool = True,
-    ):
-        # Usar SystemInitializer si no se proveen productos
+    def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
         system = get_system()
         self.products = products or system.products
-        self.retriever = system.retriever  # Inyectado desde SystemInitializer
+        self.retriever = system.retriever  # Única fuente de verdad
 
         self.enable_translation = enable_translation
 
@@ -52,24 +47,6 @@ class RAGAgent:
         # Category tree & filters
         self.tree = CategoryTree(self.products).build_tree()
         self.active_filter = ProductFilter()
-
-        # Vector store via synonym-aware retriever
-        index_path_str = str(Path(settings.VECTOR_INDEX_PATH).resolve())
-        logger.info("🔍 Using VECTOR_INDEX_PATH: %r", index_path_str)
-
-        self.retriever = Retriever(
-            index_path=index_path_str,
-            embedding_model=settings.EMBEDDING_MODEL,
-            device=settings.DEVICE
-        )
-
-        # Check if the index exists
-        if not self.retriever.index_exists():
-            raise RuntimeError(
-                f"Vector index not found at {index_path_str}\n"
-                "Please build the index first with:\n"
-                "python main.py index --data-dir ./data/raw"
-            )
 
         # LLM
         self.llm = ChatGoogleGenerativeAI(

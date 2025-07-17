@@ -24,8 +24,7 @@ from src.core.init import get_system  # Nueva importación
 # Load .env configuration
 load_dotenv()
 
-def initialize_system(data_dir: Optional[str] = None,
-                     log_level: Optional[str] = None):
+def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] = None):
     """
     Initialize system components with better default handling
     """
@@ -81,7 +80,7 @@ def initialize_system(data_dir: Optional[str] = None,
     )
 
     # Setup retriever (RAG backbone)
-    retriever = initialize_retriever(products)
+    system = get_system()
     logger.info("📚 Retriever ready")
 
     # Build advanced RAG agent
@@ -93,16 +92,6 @@ def initialize_system(data_dir: Optional[str] = None,
     logger.info("🧠 RAG agent initialized")
 
     return products, category_tree, rag_agent
-
-
-def initialize_retriever(products: List[Product]):
-    """Instantiate and return retriever engine for RAG."""
-    from src.core.rag.basic.retriever import Retriever
-    return Retriever(
-        index_path=settings.VECTOR_INDEX_PATH,  # Use from settings
-        embedding_model=settings.EMBEDDING_MODEL,
-        device=settings.DEVICE
-    )
 
 
 def parse_arguments():
@@ -169,33 +158,14 @@ def _run_index_mode():
     if system.retriever.index_exists():
         if input("Index exists. Overwrite? (y/n): ").lower() != "y":
             return
-    system.retriever.build_index(system.products)
+    system.retriever.build_index(system.products, force_rebuild=True)
 
 
 if __name__ == "__main__":
     args = parse_arguments()
 
     if args.command == "index":
-        # Initialize system to load products
-        products, _, _ = initialize_system(
-            data_dir=args.data_dir,
-            log_level=args.log_level
-        )
-
-        # Initialize and build retriever
-        retriever = initialize_retriever(products)
-
-        # Clear existing index if reindex flag is set
-        if args.reindex and retriever.index_exists():
-            import shutil
-            shutil.rmtree(settings.VECTOR_INDEX_PATH)
-            print("♻️  Cleared existing index")
-
-        # Build the index
-        print(f"🛠️ Building vector index at {settings.VECTOR_INDEX_PATH}...")
-        retriever.build_index(products)
-        print(f"✅ Success! Index contains {len(products)} product embeddings")
-
+        _run_index_mode()
     elif args.command in {"rag", "category"}:
         products, category_tree, rag_agent = initialize_system(
             data_dir=args.data_dir,
@@ -205,5 +175,4 @@ if __name__ == "__main__":
         if args.command == "rag":
             cli_main()  # Call the main function from cli.py
         elif args.command == "category":
-            # Run category mode
             _run_category_mode(products, start=None)
