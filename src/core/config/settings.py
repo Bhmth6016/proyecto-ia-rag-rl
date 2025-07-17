@@ -28,13 +28,12 @@ BASE_DIR = Path.cwd().resolve()
 DATA_DIR = BASE_DIR / "data"  # Ensure this matches your structure
 RAW_DIR = DATA_DIR / "raw"
 PROC_DIR = DATA_DIR / "processed"
-VEC_DIR = DATA_DIR / "vector"  # Chroma / FAISS
-LOG_DIR = DATA_DIR / "logs"
+VEC_DIR = DATA_DIR / "vector"  # Chroma
+LOG_DIR = BASE_DIR / "logs"
 
 # Vector Store Configuration
 VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", str(DATA_DIR / "vector" / "chroma"))
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(DATA_DIR / "vector" / "chroma"))
-INDEX_NAME = ""  # Empty string since Chroma uses its own structure
 VECTOR_BACKEND = "chroma"  # Explicitly set to chroma
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 

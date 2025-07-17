@@ -35,12 +35,10 @@ class RAGAgent:
     def __init__(
         self,
         products: List[Dict],
-        lora_checkpoint: Optional[str] = None,
         enable_translation: bool = True,
     ):
         self.products = products
         self.enable_translation = enable_translation
-        self.lora_checkpoint = lora_checkpoint
 
         # Translation
         self.translator = TextTranslator() if enable_translation else None
@@ -50,13 +48,11 @@ class RAGAgent:
         self.active_filter = ProductFilter()
 
         # Vector store via synonym-aware retriever
-        # 🛠️ Forzamos string absoluta y debugamos la ruta
         index_path_str = str(Path(settings.VECTOR_INDEX_PATH).resolve())
         logger.info("🔍 Using VECTOR_INDEX_PATH: %r", index_path_str)
 
         self.retriever = Retriever(
             index_path=index_path_str,
-            vectorstore_type=settings.VECTOR_BACKEND,
             embedding_model=settings.EMBEDDING_MODEL,
             device=settings.DEVICE
         )
@@ -135,7 +131,7 @@ class RAGAgent:
 
         if not products:
             try:
-                expanded = self._expand_query(processed_query)
+                expanded = self.retriever._expand_query(processed_query)
                 suggestions = ", ".join(expanded[:3]) if expanded else "backpack, headphones, speaker"
             except Exception:
                 suggestions = "backpack, headphones, speaker"

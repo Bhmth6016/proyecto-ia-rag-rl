@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# src/interfaces/cli.py
-
 import argparse
 import logging
 import sys
@@ -16,6 +14,7 @@ from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
+
 # ------------------------------------------------------------------
 # CLI entry-point
 # ------------------------------------------------------------------
@@ -98,6 +97,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     logging.info("Done.")
 
+
 # ------------------------------------------------------------------
 # Mode implementations
 # ------------------------------------------------------------------
@@ -106,21 +106,20 @@ def _run_rag_mode(loader: DataLoader, products: List[Product], k: int, feedback:
     logger = logging.getLogger("rag")
 
     # Check if the index exists
-    index_path = settings.VEC_DIR / settings.INDEX_NAME
-    if not index_path.exists():
+    index_path = settings.VECTOR_INDEX_PATH
+    if not Path(index_path).exists():
         logger.info("Index not found. Building index...")
         _run_index_mode(loader, clear_cache=False)
 
     # Build retriever & agent using settings
     retriever = Retriever(
-        index_path=settings.VEC_DIR / settings.INDEX_NAME,
+        index_path=settings.VECTOR_INDEX_PATH,
         embedding_model=settings.EMBEDDING_MODEL,
-        vectorstore_type=settings.VECTOR_BACKEND,
         device=settings.DEVICE
     )
     agent = RAGAgent(
         products=products,
-        lora_checkpoint=settings.RLHF_CHECKPOINT,
+        enable_translation=True
     )
 
     print("\n=== Amazon RAG mode ===\nType 'exit' to quit.\n")
@@ -140,6 +139,7 @@ def _run_rag_mode(loader: DataLoader, products: List[Product], k: int, feedback:
             logger.info("Feedback: %s -> %s", query, score.name)
 
     logger.info("Leaving RAG mode.")
+
 
 def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     """Interactive category explorer."""
@@ -174,6 +174,7 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     except KeyboardInterrupt:
         print("\nLeaving category mode.")
 
+
 def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
     """(Re)build vector-store and cache."""
     if clear_cache:
@@ -186,22 +187,22 @@ def _run_index_mode(loader: DataLoader, *, clear_cache: bool) -> None:
 
     # Build the vector index
     from src.core.rag.basic.retriever import Retriever
-    
+
     # First create the index directory if it doesn't exist
-    index_path = settings.VEC_DIR / settings.INDEX_NAME
-    index_path.mkdir(parents=True, exist_ok=True)
-    
+    index_path = settings.VECTOR_INDEX_PATH
+    Path(index_path).mkdir(parents=True, exist_ok=True)
+
     # Initialize retriever and build index
     retriever = Retriever(
         index_path=index_path,
         embedding_model=settings.EMBEDDING_MODEL,
-        vectorstore_type=settings.VECTOR_BACKEND,
         device=settings.DEVICE
     )
-    
+
     # Explicitly build the index with the products
     retriever.build_index(products)
     print("✅ Successfully built vector index.")
+
 
 # ------------------------------------------------------------------
 # Script entry

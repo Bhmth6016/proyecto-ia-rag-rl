@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import List, Dict, Optional, Union
 
 import numpy as np
-import faiss
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma, FAISS
-from langchain_huggingface import HuggingFaceEmbeddings  # Updated import
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings
@@ -58,13 +57,11 @@ class Retriever:
         self,
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
         embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        vectorstore_type: str = settings.VECTOR_BACKEND,
         device: str = getattr(settings, "DEVICE", "cpu"),
     ):
         """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path)
         self.embedder_name = embedding_model
-        self.backend = vectorstore_type.lower()
         self.device = device
         
         # Initialize embedder but don't load index yet
@@ -75,7 +72,6 @@ class Retriever:
         
         # Initialize store as None - will be set when building or loading index
         self.store = None
-        self.faiss_docs = []
 
         # Load the index if it exists
         if self.index_exists():
@@ -85,52 +81,27 @@ class Retriever:
 
     def index_exists(self) -> bool:
         """Check if the vector index exists in the configured path."""
-        if self.backend == "chroma":
-            return any(self.index_path.glob("*.parquet"))
-        return (self.index_path / "index.faiss").exists()
+        return any(self.index_path.glob("*.parquet"))
 
     def _load_index(self) -> None:
         """Load the existing vector index from disk."""
         try:
             if not self.index_exists():
-                raise FileNotFoundError(f"No {self.backend} index found at {self.index_path}")
+                raise FileNotFoundError(f"No Chroma index found at {self.index_path}")
 
             self.embedder = HuggingFaceEmbeddings(
                 model_name=self.embedder_name,
                 model_kwargs={"device": self.device},
             )
 
-            if self.backend == "chroma":
-                self.store = Chroma(
-                    persist_directory=str(self.index_path),
-                    embedding_function=self.embedder,
-                )
-            else:  # FAISS
-                self.store = FAISS.load_local(
-                    folder_path=str(self.index_path),
-                    embeddings=self.embedder,
-                    allow_dangerous_deserialization=True
-                )
-                self._load_faiss_docs()
-
-            logger.info("Loaded %s index from %s", self.backend.upper(), self.index_path)
+            self.store = Chroma(
+                persist_directory=str(self.index_path),
+                embedding_function=self.embedder,
+            )
+            logger.info("Loaded Chroma index from %s", self.index_path)
 
         except Exception as e:
             logger.error("Error loading index: %s", e)
-            raise
-
-    def _load_faiss_docs(self) -> None:
-        """Load the document metadata for FAISS index."""
-        docs_path = self.index_path / "docs.json"
-        try:
-            with open(docs_path, "r", encoding="utf-8") as f:
-                self.faiss_docs = [
-                    Document(page_content=d["content"], metadata=d["metadata"])
-                    for d in json.load(f)
-                ]
-            logger.info("Loaded FAISS documents from %s", docs_path)
-        except Exception as e:
-            logger.error("Error loading FAISS documents: %s", e)
             raise
 
     def build_index(self, products: List[Product]) -> None:
@@ -161,42 +132,20 @@ class Retriever:
                     )
                 )
 
-            if self.backend == "chroma":
-                # Clear existing index if any
-                if self.index_exists():
-                    import shutil
-                    shutil.rmtree(self.index_path)
-                    self.index_path.mkdir()
-                
-                # Create new Chroma index
-                self.store = Chroma.from_documents(
-                    documents=documents,
-                    embedding=self.embedder,
-                    persist_directory=str(self.index_path)
-                )
-                self.store.persist()
-                logger.info(f"✅ Chroma index built at {self.index_path} with {len(documents)} documents")
-            else:  # FAISS
-                self.store = FAISS.from_documents(
-                    documents=documents,
-                    embedding=self.embedder
-                )
-                self.store.save_local(str(self.index_path))
-
-                # Save document metadata for reloading
-                docs_path = self.index_path / "docs.json"
-                with open(docs_path, "w", encoding="utf-8") as f:
-                    json.dump(
-                        [
-                            {"content": d.page_content, "metadata": d.metadata}
-                            for d in documents
-                        ],
-                        f,
-                        ensure_ascii=False,
-                        indent=2
-                    )
-
-            logger.info("Successfully built index at %s", self.index_path)
+            # Clear existing index if any
+            if self.index_exists():
+                import shutil
+                shutil.rmtree(self.index_path)
+                self.index_path.mkdir()
+            
+            # Create new Chroma index
+            self.store = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embedder,
+                persist_directory=str(self.index_path)
+            )
+            self.store.persist()
+            logger.info(f"✅ Chroma index built at {self.index_path} with {len(documents)} documents")
         except Exception as e:
             logger.error("Failed to build index: %s", e)
             raise
@@ -237,22 +186,13 @@ class Retriever:
         """Internal method for raw document retrieval."""
         query_expanded = " ".join(_expand_query(query))
 
-        if self.backend == "chroma":
-            if filters:
-                return self.store.similarity_search(
-                    query_expanded, 
-                    k=k, 
-                    filter=self._chroma_filter(filters)
-                )
-            return self.store.similarity_search(query_expanded, k=k)
-
-        # FAISS implementation
-        q_emb = np.array(self.embedder.embed_query(query_expanded)).astype(np.float32)
-        _, idxs = self.store.index.search(np.array([q_emb]), k)
-        docs = [self.faiss_docs[i] for i in idxs[0] if i < len(self.faiss_docs)]
         if filters:
-            docs = [d for d in docs if self._matches(d.metadata, filters)]
-        return docs
+            return self.store.similarity_search(
+                query_expanded, 
+                k=k, 
+                filter=self._chroma_filter(filters)
+            )
+        return self.store.similarity_search(query_expanded, k=k)
 
     def _score(self, query: str, product: Product) -> float:
         """Calculate relevance score between query and product."""
@@ -276,23 +216,13 @@ class Retriever:
             for k, v in (f or {}).items()
         }
 
-    def _matches(self, meta: Dict, f: Optional[Dict]) -> bool:
-        """Check if document matches filters."""
-        if not f:
-            return True
-        return all(
-            meta.get(k) == v or (isinstance(v, list) and meta.get(k) in v)
-            for k, v in f.items()
-        )
-
     # ---------------------- Debug Methods ----------------------
 
     def debug(self, category: str = "Beauty", limit: int = 3) -> None:
         """Debug method to inspect indexed documents."""
-        if self.backend == "chroma":
-            docs = self.store.get(where={"category": category}, limit=limit)["documents"]
-            for d in docs:
-                print(d.metadata["title"], d.metadata.get("price"))
+        docs = self.store.get(where={"category": category}, limit=limit)["documents"]
+        for d in docs:
+            print(d.metadata["title"], d.metadata.get("price"))
 
     def debug_search(self, query: str) -> None:
         """Debug method to test search functionality."""

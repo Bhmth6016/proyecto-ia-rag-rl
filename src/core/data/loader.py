@@ -31,7 +31,7 @@ _CATEGORY_KEYWORDS: Dict[str, List[str]] = {
     "mouse": ["ratón", "mouse", "wireless mouse"],
     "monitor": ["monitor", "pantalla", "screen", "display"],
     "camera": ["cámara", "camera", "webcam", "dslr"],
-    "home_appliance": ["aspiradora", "vacuum", "microondas", "microwave"],
+    "home_appliance": ["aspiradora", "vacuum", "microwave", "microondas"],
 }
 
 _TAG_KEYWORDS: Dict[str, List[str]] = {
@@ -204,7 +204,6 @@ class DataLoader:
         products: List[Product] = []
         error_count = 0
 
-        @staticmethod
         def _process_item(item: Dict[str, Any]):
             try:
                 # Ensure required fields with sensible defaults
@@ -223,7 +222,6 @@ class DataLoader:
                 # Create product instance
                 product = Product.from_dict(item)
                 return product, False
-                
             except Exception as e:
                 logger.warning(f"Error processing item: {e}\nItem: {item}")
                 return None, True
@@ -254,3 +252,11 @@ class DataLoader:
         for f in cache_files:
             f.unlink()
         return len(cache_files)
+
+    def save_standardized_json(self, products: List[Product], output_file: Union[str, Path]) -> None:
+        """Guardar un único JSON estandarizado en processed/"""
+        output_file = Path(output_file)
+        standardized_data = [product.to_dict() for product in products]
+        with output_file.open("w", encoding="utf-8") as f:
+            json.dump(standardized_data, f, ensure_ascii=False, indent=4)
+        logger.info("Guardado JSON estandarizado en %s", output_file)
