@@ -24,7 +24,7 @@ from src.core.init import get_system  # Nueva importación
 # Load .env configuration
 load_dotenv()
 
-def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] = None):
+def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] = None, include_rag_agent: bool = True):
     """
     Initialize system components with better default handling
     """
@@ -84,12 +84,13 @@ def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] =
     logger.info("📚 Retriever ready")
 
     # Build advanced RAG agent
-    rag_agent = RAGAgent(
-        products=products,
-        enable_translation=True
-    )
-
-    logger.info("🧠 RAG agent initialized")
+    rag_agent = None
+    if include_rag_agent:
+        rag_agent = RAGAgent(
+            products=products,
+            enable_translation=True
+        )
+        logger.info("🧠 RAG agent initialized")
 
     return products, category_tree, rag_agent
 
@@ -154,12 +155,13 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
 
 
 def _run_index_mode():
+    products, category_tree, _ = initialize_system(include_rag_agent=False)
+
     system = get_system()
     if system.retriever.index_exists():
         if input("Index exists. Overwrite? (y/n): ").lower() != "y":
             return
     system.retriever.build_index(system.products, force_rebuild=True)
-
 
 if __name__ == "__main__":
     args = parse_arguments()
