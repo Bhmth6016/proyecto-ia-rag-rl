@@ -55,13 +55,16 @@ class DataLoader:
         *,
         raw_dir: Optional[Union[str, Path]] = None,
         processed_dir: Optional[Union[str, Path]] = None,
+        cache_enabled: bool = True,  # <-- AGREGA ESTA LÍNEA
         max_workers: int = 4,
         disable_tqdm: bool = False,
     ):
         self.raw_dir = Path(raw_dir) if raw_dir else settings.RAW_DIR
         self.processed_dir = Path(processed_dir) if processed_dir else settings.PROC_DIR
+        self.cache_enabled = cache_enabled
         self.max_workers = max_workers
         self.disable_tqdm = disable_tqdm
+
 
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
@@ -87,12 +90,33 @@ class DataLoader:
         return tags
 
     # ------------------------------------------------------------------
-    def load_data(self, *, output_file: Union[str, Path]) -> None:
-        """Cargar todos los archivos en raw_dir, procesar y guardar en un único JSON."""
+    def load_data(self, use_cache: Optional[bool] = None, output_file: Union[str, Path] = None) -> List[Product]:
+        """
+        Cargar todos los archivos en raw_dir, procesar y guardar en un único JSON.
+
+        :param use_cache: Bandera para habilitar o deshabilitar el uso de caché.
+        :param output_file: Archivo de salida donde se guardará el JSON procesado.
+        :return: Lista de productos procesados.
+        """
+        if use_cache is None:
+            use_cache = self.cache_enabled  # Usar el valor por defecto de la clase si no se especifica
+
+        if output_file is None:
+            output_file = self.processed_dir / "products.json"  # Valor por defecto si no se especifica
+
+        if use_cache:
+            # Si la caché está habilitada, verificar si el archivo de caché ya existe
+            if output_file.exists():
+                logger.info("Caché encontrada. Cargando productos desde la caché.")
+                with open(output_file, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                return [Product.from_dict(item) for item in cached_data]
+
+        # Si la caché no está habilitada o no hay caché, procesar los archivos desde raw_dir
         files = list(self.raw_dir.glob("*.json")) + list(self.raw_dir.glob("*.jsonl"))
         if not files:
             logger.warning("No se encontraron archivos de productos en %s", self.raw_dir)
-            return
+            return []
 
         all_products: List[Product] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
@@ -101,8 +125,11 @@ class DataLoader:
                 all_products.extend(future.result())
 
         logger.info("Cargados %d productos de %d archivos", len(all_products), len(files))
+
+        # Guardar los productos procesados en un archivo JSON
         self.save_standardized_json(all_products, output_file)
 
+        return all_products
     def load_single_file(
         self,
         raw_file: Union[str, Path],

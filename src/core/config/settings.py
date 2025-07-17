@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import torch 
 
 # Load environment variables from .env file
 load_dotenv()
@@ -15,9 +16,6 @@ CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "./logs/amazon_recommendations.log")
 
-# Device Configuration
-DEVICE = os.getenv("DEVICE", "cpu")
-
 # System Limits
 MAX_PRODUCTS_TO_LOAD = int(os.getenv("MAX_PRODUCTS_TO_LOAD", 1000000))
 MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", 20000))
@@ -30,12 +28,12 @@ RAW_DIR = DATA_DIR / "raw"
 PROC_DIR = DATA_DIR / "processed"
 VEC_DIR = DATA_DIR / "vector"  # Chroma
 LOG_DIR = BASE_DIR / "logs"
-
 # Vector Store Configuration
 VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", str(DATA_DIR / "vector" / "chroma"))
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(DATA_DIR / "vector" / "chroma"))
 VECTOR_BACKEND = "chroma"  # Explicitly set to chroma
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 
 # Ensure directories exist
 for d in (DATA_DIR, RAW_DIR, PROC_DIR, VEC_DIR, LOG_DIR):

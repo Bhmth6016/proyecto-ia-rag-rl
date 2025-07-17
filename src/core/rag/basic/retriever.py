@@ -57,7 +57,7 @@ class Retriever:
     def __init__(
         self,
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
-        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        embedding_model: str = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
         device: str = getattr(settings, "DEVICE", "cpu"),
     ):
         """Initialize the Retriever with vector store configuration."""

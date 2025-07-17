@@ -1,11 +1,14 @@
+import os
 import json
 import logging
+import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-
+from dotenv import load_dotenv
+from tqdm import tqdm
+from typing import Optional, List
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings  # Actualizado el import
 
 from src.core.data.product import Product
 from src.core.config import settings
@@ -44,6 +47,11 @@ class ChromaBuilder:
             data = json.load(f)
         
         products = [Product.from_dict(item) for item in data]
+        
+        # Modo DEBUG: Procesar solo 100 productos
+        if os.getenv("DEBUG"):
+            products = products[:]
+        
         logger.info(f"✅ Cargados {len(products)} productos")
         return products
 
@@ -51,7 +59,7 @@ class ChromaBuilder:
         """Convierte Productos a Documents para Chroma"""
         logger.info("Paso 2: Creando documentos...")
         documents = []
-        for product in products:
+        for product in tqdm(products, desc="Creando documentos", unit="doc"):
             logger.debug(f"Creando documento para producto: {product.id}")
             page_content = self._generate_page_content(product)
             metadata = product.to_metadata()
@@ -75,6 +83,9 @@ class ChromaBuilder:
 
     def build_index(self) -> Chroma:
         """Construye el índice Chroma completo"""
+        import time
+        start_time = time.time()  # Inicio del cronómetro
+
         logger.info("Paso 3: Construyendo índice Chroma...")
         # 1. Cargar productos
         products = self.load_products()
@@ -86,7 +97,11 @@ class ChromaBuilder:
         logger.info("Paso 4: Configurando embeddings...")
         embeddings = HuggingFaceEmbeddings(
             model_name=self.embedding_model,
-            model_kwargs={"device": self.device}
+            model_kwargs={"device": self.device},
+            encode_kwargs={
+                "batch_size": 64,
+                "num_workers": 4 if self.device == "cpu" else 0
+            }
         )
         
         # 4. Construir ChromaDB
@@ -95,17 +110,20 @@ class ChromaBuilder:
         # Limpiar índice existente si hay
         if self.chroma_db_path.exists():
             logger.warning("♻️ Eliminando índice Chroma existente")
-            import shutil
             shutil.rmtree(self.chroma_db_path)
         
         logger.info("Paso 5: Construyendo índice Chroma...")
         chroma_index = Chroma.from_documents(
-            documents=documents,
+            documents=tqdm(documents, desc="Indexando", unit="doc"),
             embedding=embeddings,
             persist_directory=str(self.chroma_db_path)
         )
         
         logger.info(f"✅ Índice guardado en {self.chroma_db_path}")
+        
+        # Registro del tiempo total de indexación
+        total_time = time.time() - start_time
+        logger.info(f"Tiempo total de indexación: {total_time:.2f} segundos")
         return chroma_index
 
 def build_chroma_from_cli():
