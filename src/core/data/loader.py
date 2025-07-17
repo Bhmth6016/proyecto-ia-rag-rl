@@ -223,7 +223,18 @@ class DataLoader:
     def save_standardized_json(self, products: List[Product], output_file: Union[str, Path]) -> None:
         """Guardar un único JSON estandarizado en processed/"""
         output_file = Path(output_file)
-        standardized_data = [product.to_dict() for product in products]
+        standardized_data = [product.dict() for product in products]
         with output_file.open("w", encoding="utf-8") as f:
             json.dump(standardized_data, f, ensure_ascii=False, indent=4)
         logger.info("Guardado JSON estandarizado en %s", output_file)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Procesar archivos JSON/JSONL a JSON unificado")
+    parser.add_argument("--input", type=str, default="./data/raw", help="Directorio con archivos fuente")
+    parser.add_argument("--output", type=str, default="./data/processed/products.json", help="Archivo JSON de salida")
+    args = parser.parse_args()
+
+    loader = DataLoader(raw_dir=args.input)
+    loader.load_data(output_file=args.output)

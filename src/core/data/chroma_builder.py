@@ -16,7 +16,8 @@ from typing import List, Dict, Any, Optional
 
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+
 
 from src.core.data.product import Product
 from src.core.config import settings
