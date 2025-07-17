@@ -9,7 +9,9 @@ from typing import List, Dict, Optional, Union
 
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores.utils import filter_complex_metadata
+
 
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
@@ -117,6 +119,9 @@ class Retriever:
                 )
                 for prod in products
             ]
+
+            # Filter complex metadata
+            documents = filter_complex_metadata(documents)
 
             # Clear existing index if any
             if self.index_exists():

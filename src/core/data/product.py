@@ -250,10 +250,10 @@ class Product(BaseModel):
         """Devuelve los metadatos del producto."""
         return {
             "id": self.id,
-            "title": self.title,
-            "price": self.price,
-            "average_rating": self.average_rating,
-            "rating_count": self.rating_count,
-            "tags": " ".join(self.tags),  # Convertir lista a cadena
-            "compatible_devices": " ".join(self.compatible_devices),  # Convertir lista a cadena
+            "title": self.title or "",  # Ensure empty string instead of None
+            "price": self.price or 0.0,  # Default to 0.0 if None
+            "average_rating": self.average_rating or 0.0,  # Default to 0.0
+            "rating_count": self.rating_count or 0,  # Default to 0
+            "tags": " ".join(self.tags) if self.tags else "",  # Handle empty tags
+            "compatible_devices": " ".join(self.compatible_devices) if self.compatible_devices else "",
         }

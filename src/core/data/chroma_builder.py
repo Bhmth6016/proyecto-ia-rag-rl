@@ -50,7 +50,7 @@ class ChromaBuilder:
         
         # Modo DEBUG: Procesar solo 100 productos
         if os.getenv("DEBUG"):
-            products = products[:]
+            products = products[:100000]
         
         logger.info(f"✅ Cargados {len(products)} productos")
         return products

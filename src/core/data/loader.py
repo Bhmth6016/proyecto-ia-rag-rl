@@ -152,6 +152,11 @@ class DataLoader:
                     logger.warning(f"Línea {idx}: Se esperaba un diccionario, se obtuvo {type(item)}")
                     return None, True
 
+                # Skip products with empty titles
+                if not item.get("title", "").strip():
+                    logger.warning(f"Línea {idx}: título ausente o vacío - producto omitido")
+                    return None, True
+
                 if "description" in item and isinstance(item["description"], list):
                     item["description"] = " ".join(str(x) for x in item["description"] if x)
 
