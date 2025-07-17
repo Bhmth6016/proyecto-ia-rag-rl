@@ -1,14 +1,3 @@
-# src/core/data/chroma_builder.py
-"""
-ChromaDB Index Builder
-
-Proceso:
-1. Carga el archivo JSON unificado de productos limpios
-2. Genera embeddings con el modelo configurado
-3. Construye el índice ChromaDB
-4. Guarda el índice en la ubicación especificada
-"""
-
 import json
 import logging
 from pathlib import Path
@@ -17,7 +6,6 @@ from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-
 
 from src.core.data.product import Product
 from src.core.config import settings
@@ -48,26 +36,32 @@ class ChromaBuilder:
 
     def load_products(self) -> List[Product]:
         """Carga y valida los productos desde el JSON procesado"""
+        logger.info("Paso 1: Cargando productos...")
         if not self.processed_json_path.exists():
             raise FileNotFoundError(f"Archivo procesado no encontrado: {self.processed_json_path}")
         
         with open(self.processed_json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        return [Product.from_dict(item) for item in data]
+        products = [Product.from_dict(item) for item in data]
+        logger.info(f"✅ Cargados {len(products)} productos")
+        return products
 
     def create_documents(self, products: List[Product]) -> List[Document]:
         """Convierte Productos a Documents para Chroma"""
-        return [
-            Document(
-                page_content=self._generate_page_content(product),
-                metadata=product.to_metadata()
-            )
-            for product in products
-        ]
+        logger.info("Paso 2: Creando documentos...")
+        documents = []
+        for product in products:
+            logger.debug(f"Creando documento para producto: {product.id}")
+            page_content = self._generate_page_content(product)
+            metadata = product.to_metadata()
+            documents.append(Document(page_content=page_content, metadata=metadata))
+        logger.info(f"✅ Documentos creados: {len(documents)}")
+        return documents
 
     def _generate_page_content(self, product: Product) -> str:
         """Genera el texto para embeddings a partir de un Producto"""
+        logger.debug(f"Generando contenido para producto: {product.id}")
         content_parts = [
             product.title,
             product.description or "",
@@ -75,19 +69,21 @@ class ChromaBuilder:
             " ".join(product.compatible_devices),
             product.details.features if product.details else ""
         ]
-        return "\n".join(filter(None, content_parts))
+        content = "\n".join(filter(None, content_parts))
+        logger.debug(f"Contenido generado para producto {product.id}: {content}")
+        return content
 
     def build_index(self) -> Chroma:
         """Construye el índice Chroma completo"""
+        logger.info("Paso 3: Construyendo índice Chroma...")
         # 1. Cargar productos
         products = self.load_products()
-        logger.info(f"✅ Cargados {len(products)} productos validados")
         
         # 2. Convertir a documentos
         documents = self.create_documents(products)
-        logger.info(f"🛠️ Generados {len(documents)} documentos para indexar")
         
         # 3. Configurar embeddings
+        logger.info("Paso 4: Configurando embeddings...")
         embeddings = HuggingFaceEmbeddings(
             model_name=self.embedding_model,
             model_kwargs={"device": self.device}
@@ -102,14 +98,14 @@ class ChromaBuilder:
             import shutil
             shutil.rmtree(self.chroma_db_path)
         
-        logger.info("🏗️ Construyendo índice Chroma...")
+        logger.info("Paso 5: Construyendo índice Chroma...")
         chroma_index = Chroma.from_documents(
             documents=documents,
             embedding=embeddings,
             persist_directory=str(self.chroma_db_path)
         )
         
-        logger.info(f"💾 Índice guardado en {self.chroma_db_path}")
+        logger.info(f"✅ Índice guardado en {self.chroma_db_path}")
         return chroma_index
 
 def build_chroma_from_cli():

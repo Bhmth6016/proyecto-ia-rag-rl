@@ -223,7 +223,7 @@ class DataLoader:
     def save_standardized_json(self, products: List[Product], output_file: Union[str, Path]) -> None:
         """Guardar un único JSON estandarizado en processed/"""
         output_file = Path(output_file)
-        standardized_data = [product.dict() for product in products]
+        standardized_data = [product.model_dump() for product in products]
         with output_file.open("w", encoding="utf-8") as f:
             json.dump(standardized_data, f, ensure_ascii=False, indent=4)
         logger.info("Guardado JSON estandarizado en %s", output_file)
