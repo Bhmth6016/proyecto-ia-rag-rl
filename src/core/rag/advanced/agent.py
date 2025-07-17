@@ -22,6 +22,7 @@ from src.core.rag.advanced.prompts import (
 from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
 from src.core.config import settings
+from src.core.init import get_system  # Nueva importación
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -35,17 +36,21 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 class RAGAgent:
     def __init__(
         self,
-        products: List[Dict],
+        products: Optional[List[Dict]] = None,  # Ahora opcional
         enable_translation: bool = True,
     ):
-        self.products = products
+        # Usar SystemInitializer si no se proveen productos
+        system = get_system()
+        self.products = products or system.products
+        self.retriever = system.retriever  # Inyectado desde SystemInitializer
+
         self.enable_translation = enable_translation
 
         # Translation
         self.translator = TextTranslator() if enable_translation else None
 
         # Category tree & filters
-        self.tree = CategoryTree(products).build_tree()
+        self.tree = CategoryTree(self.products).build_tree()
         self.active_filter = ProductFilter()
 
         # Vector store via synonym-aware retriever
@@ -217,6 +222,7 @@ class RAGAgent:
         pickle_dir: Path = settings.PROC_DIR,
         enable_translation: bool = True,
     ) -> "RAGAgent":
+        logging.warning("Deprecated: Use SystemInitializer instead")
         from src.core.data.loader import DataLoader
 
         products = DataLoader().load_data(

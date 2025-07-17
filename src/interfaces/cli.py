@@ -14,6 +14,7 @@ from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
+from src.core.init import get_system  # Nueva importación
 
 # ------------------------------------------------------------------
 # CLI entry-point
@@ -67,6 +68,20 @@ def main(argv: Optional[List[str]] = None) -> None:
         log_file=args.log_file,
         module_levels={"urllib3": logging.WARNING, "transformers": logging.WARNING},
     )
+
+    # ----------------------------------------------------------------
+    # Inicialización centralizada
+    # ----------------------------------------------------------------
+    try:
+        system = get_system()
+        products = system.products
+        retriever = system.retriever
+    except FileNotFoundError as e:
+        logging.error(str(e))
+        if input("Build index now? (y/n): ").lower() == "y":
+            system._initialize_retriever()  # Construir índice bajo demanda
+        else:
+            sys.exit(1)
 
     # ----------------------------------------------------------------
     # shared objects

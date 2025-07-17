@@ -19,6 +19,7 @@ from src.interfaces.cli import main as cli_main  # Import the main function from
 from src.core.utils.logger import configure_root_logger
 from src.core.config import settings  # Ensure settings.py is correctly defined
 from src.core.data.product import Product  # Import Product class
+from src.core.init import get_system  # Nueva importación
 
 # Load .env configuration
 load_dotenv()
@@ -161,6 +162,14 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
                 node = node.parent or tree.root
     except KeyboardInterrupt:
         print("\nLeaving category mode.")
+
+
+def _run_index_mode():
+    system = get_system()
+    if system.retriever.index_exists():
+        if input("Index exists. Overwrite? (y/n): ").lower() != "y":
+            return
+    system.retriever.build_index(system.products)
 
 
 if __name__ == "__main__":

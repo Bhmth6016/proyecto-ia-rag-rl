@@ -12,7 +12,6 @@ from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores.utils import filter_complex_metadata
 
-
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
 from src.core.config import settings

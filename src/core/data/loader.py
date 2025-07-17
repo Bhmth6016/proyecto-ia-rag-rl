@@ -8,6 +8,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Any
+from threading import Lock
 
 from tqdm import tqdm
 
@@ -64,7 +65,7 @@ class DataLoader:
         self.cache_enabled = cache_enabled
         self.max_workers = max_workers
         self.disable_tqdm = disable_tqdm
-
+        self._error_lock = Lock()  # Nuevo Lock
 
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +131,7 @@ class DataLoader:
         self.save_standardized_json(all_products, output_file)
 
         return all_products
+
     def load_single_file(
         self,
         raw_file: Union[str, Path],
@@ -145,6 +147,7 @@ class DataLoader:
         error_count = 0
 
         def _process_line(idx_line):
+            nonlocal error_count
             idx, line = idx_line
             try:
                 item = json.loads(line.strip())
@@ -176,6 +179,8 @@ class DataLoader:
 
             except (json.JSONDecodeError, ValueError) as e:
                 logger.warning(f"Error procesando línea {idx}: {e}. Línea: {line.strip()}")
+                with self._error_lock:  # Protección thread-safe
+                    error_count += 1
                 return None, True
 
         with raw_file.open("r", encoding="utf-8") as f:
@@ -186,7 +191,8 @@ class DataLoader:
 
         for product, is_error in results:
             if is_error:
-                error_count += 1
+                with self._error_lock:  # Protección thread-safe
+                    error_count += 1
             elif product is not None:
                 products.append(product)
 
