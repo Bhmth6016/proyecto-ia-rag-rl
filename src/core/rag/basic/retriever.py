@@ -60,6 +60,7 @@ class Retriever:
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
         embedding_model: str = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
         device: str = getattr(settings, "DEVICE", "cpu"),
+        build_if_missing: bool = True  # Add this parameter
     ):
         """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path)
@@ -75,21 +76,26 @@ class Retriever:
         # Initialize store as None - will be set when building or loading index
         self.store = None
 
-        # Load the index if it exists
-        if self.index_exists():
-            self._load_index()
-        else:
-            raise FileNotFoundError(
-                f"Chroma index incomplete or missing at {self.index_path}.\n"
-                "Run 'python main.py index' to build it.\n"
-                f"Required files: chroma.sqlite3, index_metadata.pickle"
-            )
+        # Only try to load index if build_if_missing is True
+        if build_if_missing:
+            if self.index_exists():
+                self._load_index()
+            else:
+                raise FileNotFoundError(
+                    f"Chroma index incomplete or missing at {self.index_path}.\n"
+                    "Run 'python main.py index' to build it.\n"
+                    f"Required files: chroma.sqlite3, index_metadata.pickle"
+                )
 
     def index_exists(self) -> bool:
         """Check if Chroma index exists with all required files."""
-        required_files = {"chroma.sqlite3", "index_metadata.pickle"}
-        existing_files = {f.name for f in self.index_path.glob("*")}
-        return required_files.issubset(existing_files)
+        try:
+            required_files = {"chroma.sqlite3", "index_metadata.pickle"}
+            existing_files = {f.name for f in self.index_path.glob("*") if f.is_file()}
+            return required_files.issubset(existing_files)
+        except Exception as e:
+            logger.warning(f"Error checking index: {e}")
+            return False
 
     def _load_index(self) -> None:
         """Load the existing vector index from disk."""

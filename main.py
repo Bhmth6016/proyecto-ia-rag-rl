@@ -19,22 +19,23 @@ from src.interfaces.cli import main as cli_main  # Import the main function from
 from src.core.utils.logger import configure_root_logger
 from src.core.config import settings  # Ensure settings.py is correctly defined
 from src.core.data.product import Product  # Import Product class
-from src.core.init import get_system  # Nueva importación
+from src.core.init import get_system  # Import get_system function
+from src.core.rag.basic.retriever import Retriever  # Import Retriever class
 
 # Load .env configuration
 load_dotenv()
+
+# Setup logger at the module level
+configure_root_logger(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    log_file=os.getenv("LOG_FILE", "logs/system.log")
+)
+logger = logging.getLogger(__name__)
 
 def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] = None, include_rag_agent: bool = True):
     """
     Initialize system components with better default handling
     """
-    # Setup logger
-    configure_root_logger(
-        level=log_level or os.getenv("LOG_LEVEL", "INFO"),
-        log_file=os.getenv("LOG_FILE", "logs/system.log")
-    )
-    logger = logging.getLogger(__name__)
-
     # Configure data directory with multiple fallbacks
     data_path = Path(data_dir or os.getenv("DATA_DIR") or "./data/raw")
     if not data_path.exists():
@@ -155,13 +156,31 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
 
 
 def _run_index_mode():
-    products, category_tree, _ = initialize_system(include_rag_agent=False)
-
+    # Initialize system without trying to load the retriever first
     system = get_system()
+    
+    # Load products
+    products = system.products  # This will trigger product loading
+    
+    # Initialize retriever with build_if_missing=False to prevent automatic building
+    system._retriever = Retriever(
+        index_path=settings.VECTOR_INDEX_PATH,
+        embedding_model=settings.EMBEDDING_MODEL,
+        device=settings.DEVICE,
+        build_if_missing=False
+    )
+    
+    # Check if the index already exists
     if system.retriever.index_exists():
-        if input("Index exists. Overwrite? (y/n): ").lower() != "y":
+        overwrite = input("Index exists. Overwrite? (y/n): ").strip().lower()
+        if overwrite != "y":
+            logger.info("Index building aborted by user.")
             return
-    system.retriever.build_index(system.products, force_rebuild=True)
+    
+    # Now build the index
+    system.retriever.build_index(products, force_rebuild=True)
+    logger.info("Index built successfully")
+
 
 if __name__ == "__main__":
     args = parse_arguments()

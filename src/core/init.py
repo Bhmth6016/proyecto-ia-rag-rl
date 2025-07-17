@@ -1,5 +1,3 @@
-#src/core/init.py
-
 """
 Centralized system initialization with Singleton pattern.
 """
@@ -68,14 +66,28 @@ class SystemInitializer:
 
     def _initialize_retriever(self) -> None:
         """Initialize retriever and build index if needed."""
+        logger.debug(f"Initializing retriever at {settings.VECTOR_INDEX_PATH}")
+        
+        # Check what files exist
+        index_path = Path(settings.VECTOR_INDEX_PATH)
+        if index_path.exists():
+            logger.debug(f"Index path exists. Contents: {list(index_path.glob('*'))}")
+        
         self._retriever = Retriever(
             index_path=settings.VECTOR_INDEX_PATH,
             embedding_model=settings.EMBEDDING_MODEL,
             device=settings.DEVICE
         )
-        if not self._retriever.index_exists():
-            logger.warning("Index not found. Building...")
-            self._retriever.build_index(self.products)
+        
+        try:
+            if not self._retriever.index_exists():
+                logger.warning("Index not found. Building...")
+                self._retriever.build_index(self.products)
+            else:
+                logger.info("Index loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize retriever: {e}")
+            raise
 
     def _build_category_tree(self) -> None:
         """Build category hierarchy."""
