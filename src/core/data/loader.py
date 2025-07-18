@@ -92,28 +92,41 @@ class DataLoader:
 
     # ------------------------------------------------------------------
     def load_data(self, use_cache: Optional[bool] = None, output_file: Union[str, Path] = None) -> List[Product]:
-        """
-        Cargar todos los archivos en raw_dir, procesar y guardar en un único JSON.
-
-        :param use_cache: Bandera para habilitar o deshabilitar el uso de caché.
-        :param output_file: Archivo de salida donde se guardará el JSON procesado.
-        :return: Lista de productos procesados.
-        """
+        """Cargar todos los archivos en raw_dir, procesar y guardar en un único JSON."""
         if use_cache is None:
-            use_cache = self.cache_enabled  # Usar el valor por defecto de la clase si no se especifica
+            use_cache = self.cache_enabled
 
         if output_file is None:
-            output_file = self.processed_dir / "products.json"  # Valor por defecto si no se especifica
+            output_file = self.processed_dir / "products.json"
 
-        if use_cache:
-            # Si la caché está habilitada, verificar si el archivo de caché ya existe
-            if output_file.exists():
-                logger.info("Caché encontrada. Cargando productos desde la caché.")
-                with open(output_file, "r", encoding="utf-8") as f:
-                    cached_data = json.load(f)
-                return [Product.from_dict(item) for item in cached_data]
+        if use_cache and output_file.exists():
+            logger.info("Caché encontrada. Cargando productos desde la caché.")
+            with open(output_file, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
 
-        # Si la caché no está habilitada o no hay caché, procesar los archivos desde raw_dir
+            valid_products = []
+            for item in cached_data:
+                try:
+                    # Validar y limpiar el campo 'details'
+                    if "details" not in item or item["details"] is None:
+                        item["details"] = {}
+                    elif not isinstance(item["details"], dict):
+                        logger.warning("Detalles inválidos encontrados en producto cacheado - reiniciando a vacío.")
+                        item["details"] = {}
+
+                    # Validar campo obligatorio 'title'
+                    if not item.get("title", "").strip():
+                        logger.warning("Producto sin título encontrado en la caché. Omitido.")
+                        continue
+
+                    valid_products.append(Product.from_dict(item))
+                except Exception as e:
+                    logger.warning(f"Error cargando producto desde la caché: {str(e)}")
+                    continue
+
+            return valid_products
+
+        # Si no hay caché o no se va a usar, cargar y procesar archivos desde raw_dir
         files = list(self.raw_dir.glob("*.json")) + list(self.raw_dir.glob("*.jsonl"))
         if not files:
             logger.warning("No se encontraron archivos de productos en %s", self.raw_dir)
@@ -123,14 +136,19 @@ class DataLoader:
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
             future_to_file = {exe.submit(self.load_single_file, f): f for f in files}
             for future in tqdm(future_to_file, desc="Archivos", total=len(files), disable=self.disable_tqdm):
-                all_products.extend(future.result())
+                try:
+                    products = future.result()
+                    all_products.extend(products)
+                except Exception as e:
+                    logger.warning(f"Error procesando archivo: {future_to_file[future]} - {str(e)}")
 
         logger.info("Cargados %d productos de %d archivos", len(all_products), len(files))
 
-        # Guardar los productos procesados en un archivo JSON
+        # Guardar productos procesados en JSON
         self.save_standardized_json(all_products, output_file)
 
         return all_products
+
 
     def load_single_file(
         self,
@@ -265,6 +283,12 @@ class DataLoader:
         with output_file.open("w", encoding="utf-8") as f:
             json.dump(standardized_data, f, ensure_ascii=False, indent=4)
         logger.info("Guardado JSON estandarizado en %s", output_file)
+
+
+    def clear_cache(self):
+        cache_file = self.processed_dir / "products.json"
+        if cache_file.exists():
+            cache_file.unlink()
 
 
 if __name__ == "__main__":

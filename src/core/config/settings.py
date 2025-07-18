@@ -29,8 +29,8 @@ PROC_DIR = DATA_DIR / "processed"
 VEC_DIR = DATA_DIR / "vector"  # Chroma
 LOG_DIR = BASE_DIR / "logs"
 # Vector Store Configuration
-VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", str(DATA_DIR / "vector" / "chroma"))
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(DATA_DIR / "vector" / "chroma"))
+VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", str(DATA_DIR / "processed" / "chroma_db"))
+CHROMA_DB_PATH = VECTOR_INDEX_PATH
 VECTOR_BACKEND = "chroma"  # Explicitly set to chroma
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
@@ -45,3 +45,10 @@ RLHF_CHECKPOINT = os.getenv("RLHF_CHECKPOINT")
 
 # Telemetry
 ANONYMIZED_TELEMETRY = os.getenv("ANONYMIZED_TELEMETRY", "false").lower() in {"true", "1", "yes"}
+
+CHROMA_SETTINGS = {
+    "hnsw:space": "cosine",
+    "hnsw:construction_ef": 200,
+    "hnsw:search_ef": 100,
+    "hnsw:M": 16,  # Valor más bajo para mayor eficiencia con muchos documentos
+}

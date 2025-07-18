@@ -33,67 +33,62 @@ configure_root_logger(
 logger = logging.getLogger(__name__)
 
 def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] = None, include_rag_agent: bool = True):
-    """
-    Initialize system components with better default handling
-    """
-    # Configure data directory with multiple fallbacks
-    data_path = Path(data_dir or os.getenv("DATA_DIR") or "./data/raw")
-    if not data_path.exists():
-        data_path.mkdir(parents=True, exist_ok=True)
-        logger.warning(f"Created data directory at {data_path}")
+    """Initialize system components with better error handling"""
+    try:
+        # Configurar ruta de datos
+        data_path = Path(data_dir or os.getenv("DATA_DIR") or "./data/raw")
+        if not data_path.exists():
+            data_path.mkdir(parents=True, exist_ok=True)
+            logger.warning(f"Created data directory at {data_path}")
 
-    if not any(data_path.glob("*.json")) and not any(data_path.glob("*.jsonl")):
-        logger.error(f"No JSON data files found in {data_path}")
-        raise FileNotFoundError(f"No product data found in {data_path}")
+        if not any(data_path.glob("*.json")) and not any(data_path.glob("*.jsonl")):
+            raise FileNotFoundError(f"No product data found in {data_path}")
 
-    # Configure Gemini API key
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    logger.info("✅ Gemini API configured")
+        # Configurar clave de API de Gemini
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        logger.info("🔐 Gemini API key configured")
 
-    loader = DataLoader(
-        raw_dir=data_path,
-        processed_dir=settings.PROC_DIR,
-        cache_enabled=settings.CACHE_ENABLED
-    )
-
-    max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", "10000"))
-    products = loader.load_data()[:max_products]
-    logger.info(f"📦 Loaded {len(products)} products")
-
-    # Build category tree
-    category_tree = CategoryTree(products)
-    category_tree.build_tree()
-    logger.info("🌲 Category tree built")
-
-    # Initialize Gemini LLM
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",  # Modelo más estable
-        google_api_key=os.getenv("GEMINI_API_KEY"),
-        temperature=0.3,
-        top_k=40,
-        top_p=0.95
-    )
-
-    # Initialize memory for RLHF interaction
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        return_messages=True
-    )
-
-    # Setup retriever (RAG backbone)
-    system = get_system()
-    logger.info("📚 Retriever ready")
-
-    # Build advanced RAG agent
-    rag_agent = None
-    if include_rag_agent:
-        rag_agent = RAGAgent(
-            products=products,
-            enable_translation=True
+        # Cargar productos
+        loader = DataLoader(
+            raw_dir=data_path,
+            processed_dir=settings.PROC_DIR,
+            cache_enabled=settings.CACHE_ENABLED
         )
-        logger.info("🧠 RAG agent initialized")
+        max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", "10000"))
+        products = loader.load_data()[:max_products]
+        if not products:
+            raise RuntimeError("No products loaded from data directory")
+        logger.info(f"📦 Loaded {len(products)} products")
 
-    return products, category_tree, rag_agent
+        # Árbol de categorías
+        category_tree = CategoryTree(products)
+        category_tree.build_tree()
+        logger.info("🗂️ Category tree built")
+
+        # Inicializar sistema base (retriever)
+        system = get_system()
+        logger.info("🔍 Retriever ready")
+
+        # Inicializar agente RAG con fallback
+        rag_agent = None
+        if include_rag_agent:
+            try:
+                rag_agent = RAGAgent(
+                    products=products,
+                    enable_translation=True
+                )
+                logger.info("🧠 RAG agent initialized successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize RAG agent: {e}")
+                logger.warning("⚠️ Running in limited mode without RAG functionality")
+                rag_agent = None
+
+        return products, category_tree, rag_agent
+
+    except Exception as e:
+        logger.critical(f"🔥 System initialization failed: {e}", exc_info=True)
+        raise
+
 
 
 def parse_arguments():
@@ -132,7 +127,7 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
     try:
         while True:
             if node.children:
-                print(f"\n📂 {node.name} ({len(node.products)} items)")
+                print(f"\n {node.name} ({len(node.products)} items)")
                 for i, child in enumerate(node.children, 1):
                     print(f"  {i}. {child.name} ({len(child.products)} items)")
                 print("  0. Back" if node.parent else "  0. Exit")
@@ -146,7 +141,7 @@ def _run_category_mode(products: List[Product], start: Optional[str]) -> None:
                     continue
                 print("Invalid choice.")
             else:
-                print(f"\n🛍️  {node.name} – {len(node.products)} products")
+                print(f"\n  {node.name} – {len(node.products)} products")
                 for i, p in enumerate(node.products[:20], 1):
                     print(f"{i:2}. {p.title} – ${p.price}")
                 input("\nPress Enter to go back…")
@@ -160,7 +155,9 @@ def _run_index_mode():
     system = get_system()
     
     # Load products
+    logger.info(" Loading products...")
     products = system.products  # This will trigger product loading
+    logger.info(f" Loaded {len(products)} products")
     
     # Initialize retriever with build_if_missing=False to prevent automatic building
     system._retriever = Retriever(
@@ -177,10 +174,25 @@ def _run_index_mode():
             logger.info("Index building aborted by user.")
             return
     
-    # Now build the index
-    system.retriever.build_index(products, force_rebuild=True)
-    logger.info("Index built successfully")
-
+    # Calculate safe batch size
+    try:
+        import psutil
+        available_mem = psutil.virtual_memory().available / (1024 ** 3)  # GB
+        # Estimación más conservadora: ~2MB por documento
+        safe_batch_size = min(4000, int(available_mem * 500))  # Máximo 4000 por lote
+        logger.info(f" Available memory: {available_mem:.2f}GB, using safe batch size: {safe_batch_size}")
+    except:
+        safe_batch_size = 2000  # Valor por defecto más conservador
+        logger.info(f" Could not detect memory, using safe default batch size: {safe_batch_size}")
+    
+    # Now build the index with progress monitoring
+    logger.info(" Starting index build process...")
+    try:
+        system.retriever.build_index(products, force_rebuild=True, batch_size=safe_batch_size)
+        logger.info(" Index built successfully!")
+    except Exception as e:
+        logger.error(f" Failed to build index: {str(e)}")
+        return
 
 if __name__ == "__main__":
     args = parse_arguments()

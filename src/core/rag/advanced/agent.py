@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
@@ -37,14 +38,30 @@ class RAGAgent:
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
         system = get_system()
         self.products = products or system.products
-        self.retriever = system.retriever  # Única fuente de verdad
+
+        # Verificar y esperar a que el retriever esté listo
+        max_retries = 3
+        retry_delay = 2  # segundos
+
+        for attempt in range(max_retries):
+            try:
+                self.retriever = system.retriever
+                # Verificar que el store está cargado
+                if not self.retriever.store:
+                    raise ValueError("Retriever store not initialized")
+                break  # Éxito
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise RuntimeError(f"Failed to initialize retriever after {max_retries} attempts: {e}")
+                logger.warning(f"Retriever initialization failed (attempt {attempt + 1}), retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
 
         self.enable_translation = enable_translation
 
-        # Translation
+        # Traducción
         self.translator = TextTranslator() if enable_translation else None
 
-        # Category tree & filters
+        # Árbol de categorías y filtros
         self.tree = CategoryTree(self.products).build_tree()
         self.active_filter = ProductFilter()
 
@@ -55,7 +72,7 @@ class RAGAgent:
             temperature=0.3,
         )
 
-        # LangChain memory & chain
+        # Memoria y cadena de recuperación
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
@@ -63,7 +80,7 @@ class RAGAgent:
         )
         self.chain = self._build_chain()
 
-        # Feedback
+        # Procesador de feedback
         self.feedback = FeedbackProcessor(
             feedback_dir=str(settings.DATA_DIR / "feedback")
         )
@@ -108,9 +125,14 @@ class RAGAgent:
     def ask(self, query: str) -> str:
         processed_query, source_lang = self._process_query(query)
 
-        products = self.retriever.retrieve(query=processed_query, k=5)
-        if not products:
-            products = self.retriever.retrieve(query=query, k=5)
+        products = []
+        try:
+            products = self.retriever.retrieve(query=processed_query, k=5)
+            if not products:
+                products = self.retriever.retrieve(query=query, k=5)
+        except Exception as e:
+            logger.error(f"Error retrieving products: {e}")
+            products = []
 
         if not products:
             try:
@@ -121,15 +143,20 @@ class RAGAgent:
 
             return NO_RESULTS_TEMPLATE.format(query=query, suggestions=suggestions)
 
-        exact = [p for p in products if self.retriever._score(query, p) > 0]
-        if not exact and products:
-            titles = [p.title for p in products[:3]]
+        # Filtrar productos inválidos
+        valid_products = [p for p in products if p and p.title != 'Unknown Product']
+        if not valid_products:
+            return "No encontré productos válidos para tu búsqueda."
+
+        exact = [p for p in valid_products if self.retriever._score(query, p) > 0]
+        if not exact and valid_products:
+            titles = [p.title for p in valid_products[:3]]
             return PARTIAL_RESULTS_TEMPLATE.format(
                 query=query,
                 similar_products="\n".join(f"- {t}" for t in titles)
             )
 
-        context = "\n\n".join(p.to_document()["page_content"] for p in products)
+        context = "\n\n".join(p.to_document()["page_content"] for p in valid_products)
 
         llm_answer = self.chain.invoke({"question": processed_query, "context": context})["answer"]
         final_answer = self._process_response(llm_answer, source_lang)
@@ -138,7 +165,7 @@ class RAGAgent:
             query=query,
             answer=final_answer,
             rating=0,
-            retrieved_docs=[p.title for p in products],
+            retrieved_docs=[p.title for p in valid_products],
             category_tree=self.tree,
             active_filter=self.active_filter,
             extra_meta={

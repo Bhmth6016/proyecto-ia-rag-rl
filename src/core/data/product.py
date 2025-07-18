@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-# src/core/data/product.py}
 import hashlib
 import re
 from typing import Optional, Dict, List, Any, ClassVar
 from pydantic import BaseModel, Field, validator
+from langchain_core.documents import Document
+import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
 # Nested models
@@ -20,6 +24,13 @@ class ProductDetails(BaseModel):
     model: Optional[str] = Field(None, alias="Model")
     features: List[str] = Field(default_factory=list)
     specifications: Dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def safe_create(cls, details_data: Optional[Dict]) -> "ProductDetails":
+        """Crea una instancia de ProductDetails manejando datos inválidos"""
+        if not details_data or not isinstance(details_data, dict):
+            return cls()  # Retorna una instancia con valores por defecto
+        return cls(**details_data)
 
     @validator("specifications", pre=True)
     def normalize_specifications(cls, v: Dict[str, Any]) -> Dict[str, Any]:
@@ -39,8 +50,8 @@ class ProductDetails(BaseModel):
 # Main product entity
 # ------------------------------------------------------------------
 class Product(BaseModel):
-    id: str
-    title: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))  # ID por defecto
+    title: str = "Unknown Product"  # Valor por defecto
     main_category: Optional[str] = None
     categories: List[str] = Field(default_factory=list)
     price: Optional[float] = None
@@ -142,86 +153,86 @@ class Product(BaseModel):
 
     @classmethod
     def from_dict(cls, raw: Dict) -> "Product":
-        """Build Product from raw dict (handles nested objects and aliases)."""
+        """Versión más robusta del constructor."""
+        try:
+            # Asegurar campos mínimos
+            raw.setdefault('title', 'Unknown Product')
+            raw.setdefault('id', str(uuid.uuid4()))
+            
+            # Manejar detalles vacíos
+            if 'details' not in raw or raw['details'] is None:
+                raw['details'] = {}
+                
+            # Create ProductDetails instance safely
+            details = ProductDetails.safe_create(raw.get('details', {}))
+            raw['details'] = details.dict()
 
-        # 1. Create id if it doesn't exist
-        if "id" not in raw:
-            base = (raw.get("title") or "") + (raw.get("main_category") or "")
-            raw["id"] = hashlib.md5(base.encode("utf-8")).hexdigest()
-
-        # 2. Convert images: list → ProductImage
-        raw["images"] = None  # Ignorar imágenes
-
-        # 3. Normalize details
-        if isinstance(raw.get("details"), dict):
-            details = raw["details"]
-            if "Best Sellers Rank" in details and isinstance(details["Best Sellers Rank"], dict):
-                details["Best Sellers Rank"] = ", ".join(
-                    f"{k}: {v}" for k, v in details["Best Sellers Rank"].items()
+            # Normalize details
+            if isinstance(details.specifications.get("Best Sellers Rank"), dict):
+                details.specifications["Best Sellers Rank"] = ", ".join(
+                    f"{k}: {v}" for k, v in details.specifications["Best Sellers Rank"].items()
                 )
-            extracted = {
-                "Brand": details.get("Brand") or details.get("brand"),
-                "Model": details.get("Model") or details.get("model"),
-                "features": raw.get("features", []),
-                "specifications": {
-                    k: v for k, v in details.items() 
-                    if k not in ["Brand", "brand", "Model", "model"]
-                },
-            }
-            raw["details"] = extracted
 
-        # 4. Extract key attributes automatically
-        specs = (raw.get("details") or {}).get("specifications") or {}
-        raw.setdefault("attributes", {})
-        raw.setdefault("compatible_devices", [])
+            # Extract key attributes automatically
+            specs = raw['details'].get('specifications', {})
+            raw.setdefault('attributes', {})
+            raw.setdefault('compatible_devices', [])
 
-        # Handle description - convert list to string if needed
-        description = raw.get("description", "")
-        if isinstance(description, list):
-            description = " ".join(desc for desc in description if isinstance(desc, str))
-        raw["description"] = description
+            # Convert description list to string if needed
+            description = raw.get('description', '')
+            if isinstance(description, list):
+                description = ' '.join(filter(lambda x: isinstance(x, str), description))
+            raw['description'] = description
 
-        # 4a. Build text blob for analysis
-        text_blob = " ".join([
-            raw.get("title", ""), 
-            raw.get("description", ""),
-            *[str(v) for v in specs.values()]
-        ]).lower()
+            # Build text blob
+            text_blob = ' '.join([
+                raw.get('title', ''),
+                raw.get('description', ''),
+                *[str(v) for v in specs.values()]
+            ]).lower()
 
-        # 4b. Search for sizes
-        for k, v in specs.items():
-            if "size" in k.lower() or "dimension" in k.lower():
-                match = re.search(r'(\d+(?:\.\d+)?(?:\s?-?\s?\d+)?(?:\s?inch|in|"))', str(v), re.IGNORECASE)
-                if match:
-                    raw["attributes"]["screen_size"] = match.group(0).strip()
-            elif "pulgadas" in str(v).lower():
-                match = re.search(r'(\d+(?:\.\d+)?)\s*pulgadas?', str(v), re.IGNORECASE)
-                if match:
-                    raw["attributes"]["screen_size"] = f"{match.group(1).strip()}-inch"
+            # Search for sizes
+            for k, v in specs.items():
+                if 'size' in k.lower() or 'dimension' in k.lower():
+                    match = re.search(r'(\d+(?:\.\d+)?(?:\s?-?\s?\d+)?(?:\s?inch|in|"))', str(v), re.IGNORECASE)
+                    if match:
+                        raw['attributes']['screen_size'] = match.group(0).strip()
+                elif 'pulgadas' in str(v).lower():
+                    match = re.search(r'(\d+(?:\.\d+)?)\s*pulgadas?', str(v), re.IGNORECASE)
+                    if match:
+                        raw['attributes']['screen_size'] = f"{match.group(1).strip()}-inch"
 
-        # 4c. Infer compatible devices
-        if any(kw in text_blob for kw in ["laptop", "notebook", "portátil"]):
-            raw["compatible_devices"].append("laptop")
-        if any(kw in text_blob for kw in ["tablet", "ipad"]):
-            raw["compatible_devices"].append("tablet")
-        if any(kw in text_blob for kw in ["smartphone", "phone", "teléfono", "móvil"]):
-            raw["compatible_devices"].append("smartphone")
+            # Infer compatible devices
+            if any(kw in text_blob for kw in ["laptop", "notebook", "portátil"]):
+                raw['compatible_devices'].append("laptop")
+            if any(kw in text_blob for kw in ["tablet", "ipad"]):
+                raw['compatible_devices'].append("tablet")
+            if any(kw in text_blob for kw in ["smartphone", "phone", "teléfono", "móvil"]):
+                raw['compatible_devices'].append("smartphone")
 
-        # 4d. Infer product_type if empty
-        if not raw.get("product_type"):
-            title_lower = raw.get("title", "").lower()
-            for sp, en in cls.get_spanish_to_english().items():
-                if sp in title_lower:
-                    raw["product_type"] = en
-                    break
+            # Infer product_type if empty
+            if not raw.get('product_type'):
+                title_lower = raw.get('title', '').lower()
+                for sp, en in cls.get_spanish_to_english().items():
+                    if sp in title_lower:
+                        raw['product_type'] = en
+                        break
 
-        # 5. Pydantic validation of nested fields
-        if "details" in raw:
-            raw["details"] = ProductDetails(**raw["details"])
-        if "images" in raw:
-            raw["images"] = None  # Ensure images are ignored
+            # Ensure details is a ProductDetails object
+            raw['details'] = ProductDetails(**raw['details'])
 
-        return cls(**raw)
+            # Ignore images if present
+            raw['images'] = None
+
+            return cls(**raw)
+        except Exception as e:
+            logger.warning(f"Error creating Product: {e}")
+            # Create product with minimal required fields
+            return cls(
+                title=raw.get('title', 'Unknown Product'),
+                id=raw.get('id', str(uuid.uuid4()))
+            )
+
     def clean_image_urls(self):
         """Limpia todas las URLs de imágenes en el producto."""
         if self.images:
@@ -247,13 +258,23 @@ class Product(BaseModel):
         return text
 
     def to_metadata(self) -> dict:
-        """Devuelve los metadatos del producto."""
+        """Return only essential metadata in compact form"""
         return {
             "id": self.id,
-            "title": self.title or "",  # Ensure empty string instead of None
-            "price": self.price or 0.0,  # Default to 0.0 if None
-            "average_rating": self.average_rating or 0.0,  # Default to 0.0
-            "rating_count": self.rating_count or 0,  # Default to 0
-            "tags": " ".join(self.tags) if self.tags else "",  # Handle empty tags
-            "compatible_devices": " ".join(self.compatible_devices) if self.compatible_devices else "",
+            "t": self.title[:100] if self.title else "",  # Título abreviado
+            "p": float(self.price) if self.price else 0.0,
+            "r": float(self.average_rating) if self.average_rating else 0.0,
+            "c": self.main_category[:20] if self.main_category else ""
         }
+    
+    def to_document(self) -> Document:
+        """Convierte el producto a un Document optimizado para almacenamiento en Chroma o LangChain."""
+        return Document(
+            page_content=self.to_text(),  # Contenido textual principal
+            metadata={
+                "id": self.id,
+                "title": self.title[:100],  # Limita a 100 caracteres
+                "price": float(self.price) if self.price is not None else 0.0,
+                "rating": float(self.average_rating) if self.average_rating is not None else 0.0,
+            }
+        )

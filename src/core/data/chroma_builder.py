@@ -84,17 +84,25 @@ class ChromaBuilder:
     def build_index(self) -> Chroma:
         """Construye el índice Chroma completo"""
         import time
-        start_time = time.time()  # Inicio del cronómetro
-
-        logger.info("Paso 3: Construyendo índice Chroma...")
-        # 1. Cargar productos
+        start_time = time.time()
+        
+        logger.info("🚀 Iniciando proceso de indexación...")
+        
+        # 1. Cargar productos con barra de progreso
+        logger.info("📦 Paso 1/5: Cargando productos...")
         products = self.load_products()
+        logger.info(f"✅ {len(products)} productos cargados")
         
         # 2. Convertir a documentos
-        documents = self.create_documents(products)
+        logger.info("📄 Paso 2/5: Creando documentos...")
+        documents = []
+        for i, product in enumerate(tqdm(products, desc="Creando documentos"), 1):
+            if i % 1000 == 0:
+                logger.info(f"📝 Procesados {i}/{len(products)} productos")
+            documents.append(self._product_to_document(product))
         
         # 3. Configurar embeddings
-        logger.info("Paso 4: Configurando embeddings...")
+        logger.info("🧠 Paso 3/5: Configurando embeddings...")
         embeddings = HuggingFaceEmbeddings(
             model_name=self.embedding_model,
             model_kwargs={"device": self.device},
@@ -104,26 +112,70 @@ class ChromaBuilder:
             }
         )
         
-        # 4. Construir ChromaDB
-        self.chroma_db_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Limpiar índice existente si hay
+        # 4. Limpiar índice existente
         if self.chroma_db_path.exists():
             logger.warning("♻️ Eliminando índice Chroma existente")
             shutil.rmtree(self.chroma_db_path)
         
-        logger.info("Paso 5: Construyendo índice Chroma...")
+        # 5. Construir ChromaDB
+        logger.info("🏗️ Paso 4/5: Construyendo índice Chroma...")
         chroma_index = Chroma.from_documents(
             documents=tqdm(documents, desc="Indexando", unit="doc"),
             embedding=embeddings,
             persist_directory=str(self.chroma_db_path)
         )
         
-        logger.info(f"✅ Índice guardado en {self.chroma_db_path}")
-        
-        # Registro del tiempo total de indexación
+        # Estadísticas finales
         total_time = time.time() - start_time
-        logger.info(f"Tiempo total de indexación: {total_time:.2f} segundos")
+        logger.info(f"🎉 Indexación completada en {total_time:.2f} segundos")
+        logger.info(f"📊 Tasa de indexación: {len(products)/total_time:.2f} productos/segundo")
+        
+        return chroma_index
+    
+    def build_index_batch(self, batch_size: int = 5000) -> Chroma:
+        """Versión con procesamiento por lotes para grandes datasets"""
+        import time
+        start_time = time.time()
+        
+        # Cargar todos los productos primero
+        products = self.load_products()
+        total_products = len(products)
+        logger.info(f"📦 Total de productos a indexar: {total_products}")
+        
+        # Configurar embeddings
+        embeddings = HuggingFaceEmbeddings(
+            model_name=self.embedding_model,
+            model_kwargs={"device": self.device},
+            encode_kwargs={"batch_size": 64}
+        )
+        
+        # Limpiar índice existente
+        if self.chroma_db_path.exists():
+            shutil.rmtree(self.chroma_db_path)
+        
+        # Procesar por lotes
+        for batch_start in range(0, total_products, batch_size):
+            batch_end = min(batch_start + batch_size, total_products)
+            batch = products[batch_start:batch_end]
+            
+            logger.info(f" Procesando lote {batch_start+1}-{batch_end}/{total_products}")
+            
+            # Convertir a documentos
+            documents = [self._product_to_document(p) for p in batch]
+            
+            # Crear o añadir al índice
+            if batch_start == 0:
+                chroma_index = Chroma.from_documents(
+                    documents=documents,
+                    embedding=embeddings,
+                    persist_directory=str(self.chroma_db_path)
+                )
+            else:
+                chroma_index.add_documents(documents)
+        
+        # Estadísticas finales
+        total_time = time.time() - start_time
+        logger.info(f"✅ Indexación completada en {total_time:.2f} segundos")
         return chroma_index
 
 def build_chroma_from_cli():

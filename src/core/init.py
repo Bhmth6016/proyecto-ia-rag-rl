@@ -66,25 +66,37 @@ class SystemInitializer:
 
     def _initialize_retriever(self) -> None:
         """Initialize retriever and build index if needed."""
-        logger.debug(f"Initializing retriever at {settings.VECTOR_INDEX_PATH}")
+        logger.info(f"Initializing retriever at {settings.VECTOR_INDEX_PATH}")
         
-        # Check what files exist
+        # Crear directorio si no existe
         index_path = Path(settings.VECTOR_INDEX_PATH)
-        if index_path.exists():
-            logger.debug(f"Index path exists. Contents: {list(index_path.glob('*'))}")
+        index_path.parent.mkdir(parents=True, exist_ok=True)
         
         self._retriever = Retriever(
             index_path=settings.VECTOR_INDEX_PATH,
             embedding_model=settings.EMBEDDING_MODEL,
-            device=settings.DEVICE
+            device=settings.DEVICE,
+            build_if_missing=False  # No construir automáticamente aquí
         )
         
         try:
             if not self._retriever.index_exists():
                 logger.warning("Index not found. Building...")
+                if not hasattr(self, '_products') or not self._products:
+                    self._load_products()  # Asegurar que los productos están cargados
+                
                 self._retriever.build_index(self.products)
+                logger.info("Index built successfully")
             else:
                 logger.info("Index loaded successfully")
+                
+                # Verificar que el índice contiene documentos
+                try:
+                    doc_count = len(self._retriever.store.get()['ids'])
+                    logger.info(f"Index contains {doc_count} documents")
+                except Exception as e:
+                    logger.warning(f"Could not verify document count: {e}")
+                    
         except Exception as e:
             logger.error(f"Failed to initialize retriever: {e}")
             raise
