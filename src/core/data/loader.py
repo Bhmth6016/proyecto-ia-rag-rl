@@ -22,25 +22,90 @@ logger = get_logger(__name__)
 # Mapeo de palabras clave
 # ------------------------------------------------------------------
 _CATEGORY_KEYWORDS: Dict[str, List[str]] = {
-    "backpack": ["mochila", "backpack", "bagpack", "laptop bag"],
-    "headphones": ["auriculares", "headphones", "headset", "earbuds"],
-    "speaker": ["altavoz", "speaker", "bluetooth speaker", "portable speaker"],
-    "keyboard": ["teclado", "keyboard", "mechanical keyboard"],
-    "mouse": ["ratón", "mouse", "wireless mouse"],
-    "monitor": ["monitor", "pantalla", "screen", "display"],
-    "camera": ["cámara", "camera", "webcam", "dslr"],
-    "home_appliance": ["aspiradora", "vacuum", "microwave", "microondas"],
+    "beauty": [
+        "makeup", "skincare", "cosmetics", "perfume", "serum", "beauty", "lipstick", "cream", "mascara", "nail polish"
+    ],
+    "gift_card": [
+        "gift card", "voucher", "tarjeta regalo", "balance", "store credit", "code", "redeem"
+    ],
+    "magazine": [
+        "magazine", "revista", "subscription", "editorial", "print issue", "digital magazine"
+    ],
+    "movie": [
+        "movie", "film", "blu-ray", "dvd", "streaming", "tv series", "netflix", "disney", "show"
+    ],
+    "instrument": [
+        "guitar", "piano", "drum", "instrument", "violin", "keyboard", "microphone", "amplifier"
+    ],
+    "office": [
+        "printer", "stationery", "office", "desk", "chair", "pen", "notebook", "paper", "laminator", "folder"
+    ],
+    "garden": [
+        "patio", "garden", "grill", "barbecue", "mower", "outdoor", "plant", "hose", "fertilizer", "greenhouse"
+    ],
+    "software": [
+        "software", "app", "application", "program", "license", "subscription", "antivirus", "editor", "IDE"
+    ],
+    "sports": [
+        "sport", "fitness", "bike", "ball", "exercise", "yoga", "mat", "dumbbell", "treadmill", "skateboard"
+    ],
+    "subscription": [
+        "subscription", "monthly box", "plan", "auto-renew", "delivery", "kit", "bundle"
+    ],
+    "tools": [
+        "tool", "drill", "screwdriver", "hammer", "wrench", "toolkit", "saw", "multimeter", "power tool"
+    ],
+    "toys": [
+        "toy", "game", "puzzle", "board game", "lego", "doll", "rc car", "action figure", "plush", "juego"
+    ],
+    "video_game": [
+        "video game", "xbox", "playstation", "nintendo", "steam", "dlc", "gamer", "gamepad", "controller"
+    ],
+    "unknown": [
+        "misc", "other", "generic", "undefined", "product", "item", "unknown"
+    ]
 }
 
+
+# ------------------------------------------------------------------
+# Etiquetas inferidas automáticamente
+# ------------------------------------------------------------------
 _TAG_KEYWORDS: Dict[str, List[str]] = {
     "waterproof": ["waterproof", "water resistant", "resistente al agua"],
     "wireless": ["wireless", "bluetooth", "inalámbrico", "wifi"],
-    "portable": ["portable", "pocket", "ligero", "lightweight"],
-    "gaming": ["gaming", "gamer", "rgb", "for gaming"],
-    "travel": ["travel", "viaje", "suitcase", "carry-on"],
+    "portable": ["portable", "pocket", "ligero", "lightweight", "compact", "foldable"],
+    "gaming": ["gaming", "gamer", "rgb", "for gaming", "fps", "multiplayer"],
+    "travel": ["travel", "viaje", "suitcase", "carry-on", "maleta", "portable"],
     "usb-c": ["usb-c", "type-c", "usb type c"],
-    "noise-cancelling": ["noise cancelling", "noise reduction", "anc"],
+    "noise-cancelling": ["noise cancelling", "noise reduction", "anc", "cancelación de ruido"],
     "fast-charging": ["fast charging", "quick charge", "carga rápida"],
+    "eco-friendly": ["eco", "recycled", "biodegradable", "sostenible", "green"],
+    "digital": ["digital", "online", "e-book", "streaming", "virtual", "cloud"],
+    "subscription": ["monthly", "membership", "auto-renew", "kit", "bundle"],
+    "family-friendly": ["kids", "family", "educational", "safe for children"],
+    "limited-edition": ["limited", "exclusive", "collectible", "rare", "edition"],
+    "multiplatform": ["android", "ios", "windows", "mac", "cross-platform"],
+}
+
+
+CATEGORY_MAPPING = {
+    "Appstore for Android": "Software",
+    "Google Play": "Software",
+    "Software": "Software",
+    "Video_Games": "Software",
+    "All_Beauty": "Beauty",
+    "Gift_Cards": "Gift Cards",
+    "Magazine_Subscriptions": "Magazine Subscriptions",
+    "Movies_and_TV": "Movies and TV",
+    "Musical_Instruments": "Musical Instruments",
+    "Office_Products": "Office Products",
+    "Patio_Lawn_and_Garden": "Patio, Lawn and Garden",
+    "Sports_and_Outdoors": "Sports and Outdoors",
+    "Subscription_Boxes": "Subscription Boxes",
+    "Tools_and_Home_Improvement": "Tools and Home Improvement",
+    "Toys_and_Games": "Toys and Games",
+    "Unknown": "Unknown",
+    "Video_Games": "Video Games",
 }
 
 class DataLoader:
@@ -89,6 +154,35 @@ class DataLoader:
             if any(kw in text for kw in kw_list):
                 tags.append(tag)
         return tags
+
+    def _normalize_category(self, category: Optional[str], filename: str) -> str:
+        """Normaliza categorías usando el nombre del archivo como fallback"""
+        if not category:
+            # Extraer categoría del nombre del archivo (ej: "Software.jsonl" -> "Software")
+            return Path(filename).stem
+        return CATEGORY_MAPPING.get(category, category)
+
+    def _enrich_product_data(self, item: Dict, filename: str) -> Dict:
+        """Llena campos faltantes y normaliza datos"""
+        # Normalizar categoría
+        item['main_category'] = self._normalize_category(item.get('main_category'), filename)
+        
+        # Inferir tipo de producto
+        if not item.get('product_type'):
+            item['product_type'] = item['main_category'].lower()
+        
+        # Extraer características de la descripción si no hay features
+        description = item.get('description', '').lower()
+        if not item.get('details', {}).get('features'):
+            features = []
+            if 'android' in description: features.append('Android')
+            if 'ios' in description: features.append('iOS')
+            if 'windows' in description: features.append('Windows')
+            if 'mac' in description: features.append('macOS')
+            if features:
+                item.setdefault('details', {}).setdefault('features', []).extend(features)
+        
+        return item
 
     # ------------------------------------------------------------------
     def load_data(self, use_cache: Optional[bool] = None, output_file: Union[str, Path] = None) -> List[Product]:
@@ -187,6 +281,9 @@ class DataLoader:
                 if not item.get("tags"):
                     item["tags"] = self._extract_tags(item.get("title", ""), specs)
 
+                # Enrich product data
+                item = self._enrich_product_data(item, raw_file.name)
+
                 product = Product.from_dict(item)
                 if product.title and product.title.strip():
                     product.clean_image_urls()
@@ -249,6 +346,9 @@ class DataLoader:
                 if not item.get('product_type'):
                     item['product_type'] = self._infer_product_type(item['title'], specs)
                 
+                # Enrich product data
+                item = self._enrich_product_data(item, raw_file.name)
+
                 # Create product instance
                 product = Product.from_dict(item)
                 return product, False

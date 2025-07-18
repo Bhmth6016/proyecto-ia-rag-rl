@@ -249,13 +249,17 @@ class Product(BaseModel):
         return match.group(0) if match else ""
     
     def to_text(self) -> str:
-        """Devuelve una representación de texto del producto."""
-        text = f"{self.title} {self.description or ''}"
-        if self.tags:
-            text += " " + " ".join(self.tags)
-        if self.compatible_devices:
-            text += " " + " ".join(self.compatible_devices)
-        return text
+        """Representación mejorada para indexado"""
+        parts = [
+            self.title,
+            f"Category: {self.main_category}",
+            self.description or "",
+            f"Features: {', '.join(self.details.features)}" if self.details and self.details.features else "",
+            f"Type: {self.product_type}" if self.product_type else "",
+            " ".join(self.tags) if self.tags else "",
+            " ".join(self.compatible_devices) if self.compatible_devices else ""
+        ]
+        return " ".join(filter(None, parts))
 
     def to_metadata(self) -> dict:
         """Return only essential metadata in compact form"""

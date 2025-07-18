@@ -6,24 +6,25 @@ Centralized prompt templates for the RAG agent.
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 
 # ============================================================================
+
 # 1. PROMPTS DE GENERACIÓN
 # ============================================================================
+
 # 1.1 Prompt principal para generación RAG (atributos dinámicos)
 RAG_PROMPT_TEMPLATE = ChatPromptTemplate.from_template("""
-You are an Amazon product recommender. Recommend products matching:
+Eres un experto en recomendaciones de Amazon. Basándote en estos productos:
 
-User Query: {question}
-
-Context:
 {context}
 
-Format each recommendation with:
-1. 🏷️ **Product**: [Name]
-2. 💵 **Price**: [Price]
-3. ⭐ **Rating**: [Rating]/5
-{dynamic_attributes}
+Responde a esta consulta: {question}
 
-**Why Recommended**: Explain how this product matches the user's criteria (be specific about price, rating, material, brand, etc.). Only include attributes present in the context.
+Formato de respuesta:
+1. 🏷️ **Producto**: [Nombre] (⭐ [Rating]/5)
+2. 💵 **Precio**: [Precio o "Gratis" si es 0]
+3. 📱 **Plataforma**: [Features relacionadas si existen]
+4. 📝 **Descripción**: [Fragmento relevante de la descripción]
+
+Si no hay productos exactos, sugiere alternativas similares.
 """)
 
 # 1.2 Prompt para extracción dinámica de atributos presentes en el contexto
@@ -38,8 +39,10 @@ Only return the attributes list, no extra text.
 """)
 
 # ============================================================================
+
 # 2. PROMPTS DE PRE-PROCESAMIENTO
 # ============================================================================
+
 # 2.1 Reescritura de preguntas
 QUERY_REWRITE_SYSTEM = """Eres un especialista en mejorar consultas de búsqueda para Amazon. Realiza:
 
@@ -91,8 +94,10 @@ Return ONLY the English translation."""
 ])
 
 # ============================================================================
+
 # 3. PROMPTS DE VALIDACIÓN Y CONTROL DE CALIDAD
 # ============================================================================
+
 # 3.1 Validación de respuestas
 VALIDATION_PROMPT = ChatPromptTemplate.from_messages([
     (
@@ -198,8 +203,10 @@ Please evaluate:"""
 ])
 
 # ============================================================================
+
 # 4. PROMPTS DE RESPUESTA
 # ============================================================================
+
 # 4.1 Plantilla para resultados vacíos
 NO_RESULTS_TEMPLATE = PromptTemplate.from_template(
     "❌ No encontré productos para '{query}'. "
@@ -212,8 +219,10 @@ PARTIAL_RESULTS_TEMPLATE = PromptTemplate.from_template(
 )
 
 # ============================================================================
+
 # 5. EXPORTACIÓN
 # ============================================================================
+
 __all__ = [
     "RAG_PROMPT_TEMPLATE",
     "DYNAMIC_ATTRIBUTES_EXTRACTOR",

@@ -116,6 +116,8 @@ class FeedbackProcessor:
 
         # Log failed queries
         if rating < 3:
+            failure_reason = self._diagnose_failure(record)
+            record["failure_reason"] = failure_reason
             with self.failed_queries_log.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -348,6 +350,27 @@ class FeedbackProcessor:
         with open(self.feedback_dir / "uncovered_patterns.txt", "w", encoding="utf-8") as f:
             for pattern, count in uncovered_patterns.items():
                 f.write(f"{pattern}: {count}\n")
+
+    def _diagnose_failure(self, record: Dict[str, Any]) -> str:
+        """
+        Heuristically determine likely reason for query failure.
+        """
+        if not record.get("answer"):
+            return "empty_answer"
+        if not record.get("retrieved_docs"):
+            return "no_documents_retrieved"
+        if record.get("eval_scores") is None:
+            return "no_evaluation_available"
+
+        quality_score = record.get("eval_scores", {}).get("quality", {}).get("score")
+        if quality_score is not None and quality_score < 0.3:
+            return "low_quality_response"
+
+        if not record.get("category_path") and record.get("active_filter"):
+            return "category_inference_failed"
+
+        return "unknown_reason"
+    
 
 # Example usage of weekly_review
 if __name__ == "__main__":

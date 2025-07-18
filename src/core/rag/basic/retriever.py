@@ -6,7 +6,8 @@ import logging
 import unicodedata
 from pathlib import Path
 from typing import List, Dict, Optional, Union
-
+import re
+from difflib import SequenceMatcher
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -23,13 +24,26 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------- 
 
 _SYNONYMS: Dict[str, List[str]] = {
-    "mochila": ["backpack", "bagpack"],
-    "computador": ["laptop", "notebook", "pc"],
-    "auriculares": ["headphones", "headset", "earbuds"],
-    "altavoz": ["speaker", "bluetooth speaker"],
-    "teclado": ["keyboard"],
-    "ratón": ["mouse"],
-    "monitor": ["screen", "display"],
+    "mochila": ["backpack", "bagpack", "laptop bag", "daypack"],
+    "computador": ["laptop", "notebook", "pc", "computer", "macbook"],
+    "auriculares": ["headphones", "headset", "earbuds", "audífonos", "earphones"],
+    "altavoz": ["speaker", "bluetooth speaker", "parlante", "soundbar"],
+    "teclado": ["keyboard", "mechanical keyboard", "wireless keyboard"],
+    "ratón": ["mouse", "trackpad", "wireless mouse"],
+    "monitor": ["screen", "display", "pantalla", "monitor"],
+    "cámara": ["camera", "webcam", "dslr", "videocámara", "camcorder", "mirrorless"],
+    "instrumento": ["instrument", "guitar", "piano", "violin", "drum", "keyboard", "flauta", "bajo"],
+    "software": ["app", "application", "program", "software", "apk", "license"],
+    "herramienta": ["tool", "screwdriver", "drill", "hammer", "wrench", "toolkit"],
+    "juguete": ["toy", "game", "juego", "puzzle", "board game", "lego", "doll"],
+    "revista": ["magazine", "subscription", "suscripción", "issue", "editorial"],
+    "película": ["movie", "film", "blu-ray", "dvd", "streaming", "show", "tv series"],
+    "tarjeta": ["gift card", "voucher", "tarjeta regalo", "código", "redeem"],
+    "deporte": ["sport", "ball", "bike", "outdoor", "fitness", "exercise", "yoga", "gym"],
+    "jardín": ["garden", "patio", "outdoor", "grill", "barbecue", "mower", "plant"],
+    "suscripción": ["subscription", "box", "plan", "monthly", "auto-renew"],
+    "belleza": ["beauty", "makeup", "skincare", "cosmetics", "perfume", "lipstick", "serum", "cream"],
+    "oficina": ["office", "printer", "stationery", "paper", "desk", "chair", "shredder"],
 }
 
 def _normalize(text: str) -> str:
@@ -86,8 +100,6 @@ class Retriever:
             else:
                 logger.warning(f"Index not found at {self.index_path}")
                 logger.info("Attempting to build index...")
-                # El sistema (por ejemplo, SystemInitializer) deberá manejar la construcción con productos
-
 
     def index_exists(self) -> bool:
         """Check if Chroma index exists with all required files."""
@@ -236,27 +248,54 @@ class Retriever:
             logger.warning(f"Failed to convert document to product: {str(e)}")
             return None
 
+    def _keyword_score(self, query: str, product: Product) -> float:
+        """Score textual match between query and product title/description."""
+        query_norm = _normalize(query)
+        keywords = query_norm.split()
+
+        fields = [
+            _normalize(product.title),
+            _normalize(product.description or "")
+        ]
+        text = " ".join(fields)
+
+        score = sum(1.0 for kw in keywords if kw in text)
+        sim_score = SequenceMatcher(None, query_norm, text).ratio()
+
+        return score + sim_score  # Combina conteo + similitud
+
     def retrieve(
         self,
         query: str,
         k: int = 5,
         filters: Optional[Dict] = None,
     ) -> List[Product]:
-        """Retrieve products matching the query with robust error handling."""
+        """Hybrid retrieval: semantic + keyword + filter search."""
         try:
-            docs = self._raw_retrieve(query, k, filters)
-            products = []
+            # 1. Semantic search
+            docs = self._raw_retrieve(query, k=20, filters=filters)
+            sem_products = []
             for doc in docs:
-                product = self._doc_to_product(doc)
-                if product is not None:
-                    products.append(product)
-                else:
-                    logger.debug(f"Skipped invalid document: {doc.metadata.get('id', 'unknown')}")
-            
-            return products[:k]  # Asegurar no devolver más de k productos
+                p = self._doc_to_product(doc)
+                if p:
+                    sem_products.append(p)
+
+            # 2. Keyword ranking
+            for p in sem_products:
+                p._keyword_score = self._keyword_score(query, p)
+
+            # 3. Ordena híbridamente (puedes ajustar pesos)
+            ranked = sorted(
+                sem_products,
+                key=lambda p: (p._keyword_score, p.average_rating),
+                reverse=True
+            )
+
+            # 4. Devuelve top-k
+            return ranked[:k]
         except Exception as e:
-            logger.error(f"Error during retrieval: {e}")
-            return []  # Devolver lista vacía en caso de error
+            logger.error(f"Hybrid retrieval failed: {e}")
+            return []
 
     def _chroma_filter(self, f: Optional[Dict]) -> Dict:
         """Format filters for ChromaDB."""
