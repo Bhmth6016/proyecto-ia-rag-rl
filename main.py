@@ -22,7 +22,7 @@ from src.core.config import settings  # Ensure settings.py is correctly defined
 from src.core.data.product import Product  # Import Product class
 from src.core.init import get_system  # Import get_system function
 from src.core.rag.basic.retriever import Retriever  # Import Retriever class
-
+from src.core.utils.parsers import parse_binary_score
 # Load .env configuration
 load_dotenv()
 
@@ -45,10 +45,6 @@ def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] =
         if not any(data_path.glob("*.json")) and not any(data_path.glob("*.jsonl")):
             raise FileNotFoundError(f"No product data found in {data_path}")
 
-        # Configurar clave de API de Gemini
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        logger.info("🔐 Gemini API key configured")
-
         # Cargar productos
         loader = DataLoader(
             raw_dir=data_path,
@@ -60,6 +56,17 @@ def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] =
         if not products:
             raise RuntimeError("No products loaded from data directory")
         logger.info(f"📦 Loaded {len(products)} products")
+
+        # Inicializar retriever con los productos cargados
+        retriever = Retriever(
+            index_path=settings.VECTOR_INDEX_PATH,
+            embedding_model=settings.EMBEDDING_MODEL,
+            device=settings.DEVICE,
+        )
+        
+        # Construir índice si no existe
+        logger.info("Building vector index...")
+        retriever.build_index(products)
 
         # Árbol de categorías
         category_tree = CategoryTree(products)
@@ -91,28 +98,71 @@ def initialize_system(data_dir: Optional[str] = None, log_level: Optional[str] =
         raise
 
 
-
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="🔎 Amazon Product Recommendation System")
+    parser = argparse.ArgumentParser(
+        description="🔎 Amazon Product Recommendation System",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
 
-    # Main subcommands
+    # Argumentos comunes para todos los comandos
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument("--data-dir", type=str, 
+                             help="Custom data directory path",
+                             default=None)
+    common_parser.add_argument("--log-file", type=Path, 
+                             help="Path to log file",
+                             default=None)
+    common_parser.add_argument("--log-level", 
+                             choices=['DEBUG','INFO','WARNING','ERROR'], 
+                             help="Logging level",
+                             default='INFO')
+    common_parser.add_argument("-v", "--verbose", 
+                             action="store_true",
+                             help="Enable verbose logging")
+
+    # Subcomandos
     subparsers = parser.add_subparsers(dest='command', required=True)
 
-    # RAG command
-    rag_parser = subparsers.add_parser('rag', help='RAG recommendation mode')
-    rag_parser.add_argument('--ui', action='store_true', help='Enable graphical interface')
+    # Comando index
+    index_parser = subparsers.add_parser(
+        'index', 
+        help='(Re)build vector index',
+        parents=[common_parser]
+    )
+    index_parser.add_argument('--clear-cache', 
+                            action='store_true',
+                            help='Clear product cache before rebuilding')
+    index_parser.add_argument('--force', 
+                            action='store_true',
+                            help='Force reindexing even if index exists')
+    index_parser.add_argument('--batch-size', 
+                            type=int, 
+                            default=4000,
+                            help='Number of products per batch')
 
-    # Category command
-    category_parser = subparsers.add_parser('category', help='Category search mode')
+    # Comando rag
+    rag_parser = subparsers.add_parser(
+        'rag', 
+        help='RAG recommendation mode',
+        parents=[common_parser]
+    )
+    rag_parser.add_argument('--ui', 
+                          action='store_true',
+                          help='Enable graphical interface')
+    rag_parser.add_argument('-k', '--top-k', 
+                          type=int, 
+                          default=5,
+                          help='Number of results to return')
 
-    # Index command
-    index_parser = subparsers.add_parser('index', help='Reindex data')
-    index_parser.add_argument('--reindex', action='store_true', help='Force reindexing')
-
-    # Common arguments
-    for p in [rag_parser, category_parser, index_parser]:
-        p.add_argument('--data-dir', type=str, help='Custom data directory path')
-        p.add_argument('--log-level', choices=['DEBUG','INFO','WARNING','ERROR'], help='Logging level')
+    # Comando category
+    category_parser = subparsers.add_parser(
+        'category', 
+        help='Category search mode',
+        parents=[common_parser]
+    )
+    category_parser.add_argument('-c', '--category', 
+                               type=str,
+                               help='Starting category')
 
     return parser.parse_args()
 
@@ -156,24 +206,16 @@ def _run_index_mode():
     system = get_system()
     
     # Load products
-    logger.info(" Loading products...")
+    logger.info("Loading products...")
     products = system.products  # This will trigger product loading
-    logger.info(f" Loaded {len(products)} products")
+    logger.info(f"Loaded {len(products)} products")
     
     # Initialize retriever with build_if_missing=False to prevent automatic building
     system._retriever = Retriever(
         index_path=settings.VECTOR_INDEX_PATH,
         embedding_model=settings.EMBEDDING_MODEL,
         device=settings.DEVICE,
-        build_if_missing=False
     )
-    
-    # Check if the index already exists
-    if system.retriever.index_exists():
-        overwrite = input("Index exists. Overwrite? (y/n): ").strip().lower()
-        if overwrite != "y":
-            logger.info("Index building aborted by user.")
-            return
     
     # Calculate safe batch size
     try:
@@ -181,42 +223,84 @@ def _run_index_mode():
         available_mem = psutil.virtual_memory().available / (1024 ** 3)  # GB
         # Estimación más conservadora: ~2MB por documento
         safe_batch_size = min(4000, int(available_mem * 500))  # Máximo 4000 por lote
-        logger.info(f" Available memory: {available_mem:.2f}GB, using safe batch size: {safe_batch_size}")
+        logger.info(f"Available memory: {available_mem:.2f}GB, using safe batch size: {safe_batch_size}")
     except:
         safe_batch_size = 2000  # Valor por defecto más conservador
-        logger.info(f" Could not detect memory, using safe default batch size: {safe_batch_size}")
+        logger.info(f"Could not detect memory, using safe default batch size: {safe_batch_size}")
     
     # Now build the index with progress monitoring
-    logger.info(" Starting index build process...")
+    logger.info("Starting index build process...")
     try:
-        system.retriever.build_index(products, force_rebuild=True, batch_size=safe_batch_size)
-        logger.info(" Index built successfully!")
+        system.retriever.build_index(products, batch_size=safe_batch_size)
+        logger.info("Index built successfully!")
     except Exception as e:
-        logger.error(f" Failed to build index: {str(e)}")
+        logger.error(f"Failed to build index: {str(e)}")
         return
+
+
+def _handle_rag_mode(system, args):
+    """Handle RAG interaction with automatic index creation"""
+    print("🛠️ Preparing RAG system...")
+    
+    # Load products
+    products = system.products
+    if not products:
+        raise RuntimeError("No products loaded")
+    
+    # Create index automatically
+    print("🔨 Building vector index...")
+    system.retriever.build_index(products)
+    
+    # Initialize RAG agent
+    agent = RAGAgent(
+        products=products,
+        enable_translation=True
+    )
+    
+    print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
+    while True:
+        try:
+            query = input("🧑 You: ").strip()
+            if query.lower() in {"exit", "quit", "q"}:
+                break
+
+            answer = agent.ask(query)
+            print(f"\n🤖 {answer}\n")
+
+            if not getattr(args, 'no_feedback', False):
+                rating = input("Helpful? (y/n): ").strip().lower()
+                score = parse_binary_score(rating)
+                logging.info(f"Feedback|{query}|{score.name}")
+
+        except KeyboardInterrupt:
+            print("\n🛑 Session ended")
+            break
+
 
 if __name__ == "__main__":
     args = parse_arguments()
 
-    if args.command == "index":
-        _run_index_mode()
-    elif args.command in {"rag", "category"}:
-        products, category_tree, rag_agent = initialize_system(
-            data_dir=args.data_dir,
-            log_level=args.log_level
-        )
+    # Configure logging with safe attribute handling
+    log_level = getattr(args, 'log_level', 'INFO')
+    if getattr(args, 'verbose', False):
+        log_level = 'DEBUG'
+    
+    configure_root_logger(
+        level=log_level,
+        log_file=getattr(args, 'log_file', None),
+        module_levels={"urllib3": logging.WARNING}
+    )
 
-        if args.command == "rag":
-            try:
-                products, category_tree, rag_agent = initialize_system(
-                    data_dir=args.data_dir,
-                    log_level=args.log_level
-                )
-                from src.interfaces.cli import main as cli_main
-                cli_main(['rag'])
-            except Exception as e:
-                print(f"\nERROR: No se pudo inicializar el sistema. Razón: {str(e)}")
-                print("Posibles soluciones:")
-                print("1. Ejecuta 'python main.py index --reindex' para reconstruir el índice")
-                print("2. Verifica los permisos de la carpeta data/processed/chroma_db")
-                sys.exit(1)
+    try:
+        system = get_system()
+        
+        if args.command == "index":
+            _run_index_mode()
+        elif args.command == "rag":
+            _handle_rag_mode(system, args)
+        elif args.command == "category":
+            _run_category_mode(system.products, getattr(args, 'category', None))
+            
+    except Exception as e:
+        logging.error(f"System failed: {str(e)}")
+        sys.exit(1)

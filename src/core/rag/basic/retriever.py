@@ -85,7 +85,6 @@ class Retriever:
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
         embedding_model: str = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
         device: str = getattr(settings, "DEVICE", "cpu"),
-        build_if_missing: bool = True
     ):
         """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path).resolve()
@@ -105,130 +104,34 @@ class Retriever:
 
         self.store = None
 
-        # Load the index if it exists
-        if self.index_exists():
-            self._load_index()
-        elif build_if_missing:
-            logger.warning(f"Index not found at {self.index_path}. Attempting to build index...")
-            self.build_index([], force_rebuild=False)  # Assuming you have a method to get products
-        else:
-            logger.warning(f"Index not found at {self.index_path} and build_if_missing=False")
+    def build_index(self, products: List[Product], batch_size: int = 4000) -> None:
+        """Build and save a new vector index from products"""
+        if not products:
+            raise ValueError("No products provided to build index")
 
-    def index_exists(self) -> bool:
-        """Versión más robusta para verificar el índice"""
-        if not self.index_path.exists():
-            return False
-            
-        required_files = {
-            "chroma.sqlite3", 
-            "index_metadata.pickle",
-            "embeddings.bin"
-        }
-        
-        try:
-            existing_files = {f.name for f in self.index_path.glob("*") if f.is_file()}
-            return required_files.issubset(existing_files)
-        except Exception as e:
-            logger.error(f"Error verificando índice: {e}")
-            return False
+        logger.info("🚀 Starting index build at %s", self.index_path)
+        self.index_path.mkdir(parents=True, exist_ok=True)
 
-    def _load_index(self) -> None:
-        """Load the existing vector index from disk."""
-        try:
-            self.store = Chroma(
-                persist_directory=str(self.index_path),
-                embedding_function=self.embedder,
-            )
-            logger.info("Loaded Chroma index from %s", self.index_path)
-        except Exception as e:
-            logger.error("Error loading index: %s", e)
-            raise
+        # Convert products to documents
+        documents = []
+        for product in products:
+            try:
+                doc = Document(
+                    page_content=product.to_text(),
+                    metadata=product.to_metadata()
+                )
+                documents.append(doc)
+            except Exception as e:
+                logger.warning(f"Skipping product {product.id}: {str(e)}")
+                continue
 
-    def build_index(self, products: List[Product], force_rebuild: bool = False, batch_size: int = 4000):
-        """Build and save a new vector index from products in safe batches."""
-        if self.index_exists() and not force_rebuild:
-            raise ValueError("Index already exists. Set force_rebuild=True to overwrite")
-
-        try:
-            logger.info("🚀 Starting index build at %s", self.index_path)
-            self.index_path.mkdir(parents=True, exist_ok=True)
-
-            if not products:
-                logger.warning("No products provided to build index")
-                return
-
-            # Clear existing index
-            if self.index_exists():
-                logger.info("♻️ Removing existing index...")
-                import shutil
-                shutil.rmtree(self.index_path)
-                self.index_path.mkdir()
-
-            total_products = len(products)
-            logger.info(f"📦 Total products to index: {total_products}")
-
-            safe_batch_size = min(batch_size, 5000)
-
-            # 🕒 Tracking time
-            start_time = time.time()
-            last_log_time = start_time
-
-            for batch_start in range(0, total_products, safe_batch_size):
-                batch_end = min(batch_start + safe_batch_size, total_products)
-                batch = products[batch_start:batch_end]
-
-                logger.info(f" Processing batch {batch_start+1}-{batch_end}/{total_products} (size: {len(batch)})")
-
-                # Convert batch to documents
-                documents = []
-                for prod in batch:
-                    try:
-                        doc = Document(
-                            page_content=prod.to_text(),
-                            metadata=prod.to_metadata()
-                        )
-                        documents.append(doc)
-                    except Exception as e:
-                        logger.warning(f"Skipping product {prod.id}: {str(e)}")
-                        continue
-
-                documents = filter_complex_metadata(documents)
-
-                if batch_start == 0:
-                    self.store = Chroma.from_documents(
-                        documents=documents,
-                        embedding=self.embedder,
-                        persist_directory=str(self.index_path),
-                        collection_metadata={"hnsw:space": "cosine"}
-                    )
-                    logger.info("✅ Created new Chroma index")
-                else:
-                    chunk_size = 1000
-                    for i in range(0, len(documents), chunk_size):
-                        chunk = documents[i:i + chunk_size]
-                        self.store.add_documents(chunk)
-                        logger.debug(f"➕ Added {len(chunk)} documents to index")
-
-                # ⏱️ Log de progreso cada 30 segundos
-                current_time = time.time()
-                if current_time - last_log_time > 30:
-                    elapsed = current_time - start_time
-                    docs_per_sec = batch_start / elapsed if elapsed > 0 else 0
-                    logger.info(f"⏱️ Progress: {batch_start}/{total_products} ({docs_per_sec:.1f} docs/sec)")
-                    last_log_time = current_time
-
-                del documents
-                del batch
-
-            logger.info(f"🎉 Successfully built index at {self.index_path}")
-            logger.info(f"📊 Total documents indexed: {total_products}")
-
-        except Exception as e:
-            logger.error("❌ Failed to build index: %s", e)
-            import shutil
-            if self.index_path.exists():
-                shutil.rmtree(self.index_path)
-            raise
+        # Build the index
+        self.store = Chroma.from_documents(
+            documents=documents,
+            embedding=self.embedder,
+            persist_directory=str(self.index_path)
+        )
+        logger.info(f"✅ Index built with {len(documents)} documents")
 
     def _raw_retrieve(
         self,
@@ -254,15 +157,15 @@ class Retriever:
                 logger.warning(f"Invalid metadata type: {type(doc.metadata)}")
                 return None
                 
-            # Asegurar campos mínimos requeridos
+            # Ensure minimum required fields
             metadata = doc.metadata.copy()
             metadata.setdefault('title', 'Unknown Product')
             metadata.setdefault('price', 0.0)
             metadata.setdefault('average_rating', 0.0)
             
-            # Si el contenido de la página tiene información útil, combinarlo
+            # If page content has useful information, combine it
             if doc.page_content:
-                metadata['description'] = doc.page_content[:500]  # Limitar tamaño
+                metadata['description'] = doc.page_content[:500]  # Limit size
                 
             return Product.from_dict(metadata)
         except Exception as e:
@@ -306,14 +209,14 @@ class Retriever:
             for p in sem_products:
                 p._keyword_score = self._score(query, p)
 
-            # 3. Ordena híbridamente (puedes ajustar pesos)
+            # 3. Hybrid sorting (you can adjust weights)
             ranked = sorted(
                 sem_products,
                 key=lambda p: (p._keyword_score, p.average_rating),
                 reverse=True
             )
 
-            # 4. Devuelve top-k
+            # 4. Return top-k
             return ranked[:k]
         except Exception as e:
             logger.error(f"Hybrid retrieval failed: {e}")

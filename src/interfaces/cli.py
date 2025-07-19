@@ -61,19 +61,27 @@ def main(argv: Optional[List[str]] = None) -> None:
         logging.error(f"Failed: {str(e)}")
         sys.exit(1)
 
-def _handle_index_mode(system, clear_cache: bool, force: bool) -> None:
-    """Handle index building"""
-    if clear_cache:
-        deleted = system.loader.clear_cache()
-        print(f"🗑️ Cleared {deleted} cache files")
-
-    if system.retriever.index_exists() and not force:
+def _handle_index_mode(system, args):
+    """Handle index building with new arguments"""
+    if args.clear_cache:
+        system.loader.clear_cache()
+        print("🗑️ Cleared product cache")
+    
+    if system.retriever.index_exists() and not args.force:
         print("ℹ️ Index exists. Use --force to rebuild")
         return
 
     print("🛠️ Building index...")
-    system.retriever.build_index(system.products, force_rebuild=True)
-    print(f"✅ Index built with {len(system.products)} products")
+    try:
+        system.retriever.build_index(
+            system.products, 
+            force_rebuild=args.force,
+            batch_size=args.batch_size
+        )
+        print(f"✅ Index built with {len(system.products)} products")
+    except Exception as e:
+        print(f"❌ Failed to build index: {str(e)}")
+        sys.exit(1)
 
 def _handle_rag_mode(system, top_k: int, feedback: bool) -> None:
     """Handle RAG interaction"""
