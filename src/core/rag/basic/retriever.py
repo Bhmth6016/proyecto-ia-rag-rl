@@ -88,16 +88,16 @@ class Retriever:
         build_if_missing: bool = True
     ):
         """Initialize the Retriever with vector store configuration."""
-        self.index_path = Path(index_path).resolve()  # Convertir a ruta absoluta
+        self.index_path = Path(index_path).resolve()
         logger.info(f"Initializing Retriever with index path: {self.index_path}")
         
-        # Verificar si el directorio padre existe
+        # Ensure the parent directory exists
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.embedder_name = embedding_model
         self.device = device
 
-        # Inicializar el embedder
+        # Initialize the embedder
         self.embedder = HuggingFaceEmbeddings(
             model_name=self.embedder_name,
             model_kwargs={"device": self.device},
@@ -105,12 +105,14 @@ class Retriever:
 
         self.store = None
 
-        if build_if_missing:
-            if self.index_exists():
-                self._load_index()
-            else:
-                logger.warning(f"Index not found at {self.index_path}")
-                logger.info("Attempting to build index...")
+        # Load the index if it exists
+        if self.index_exists():
+            self._load_index()
+        elif build_if_missing:
+            logger.warning(f"Index not found at {self.index_path}. Attempting to build index...")
+            self.build_index([], force_rebuild=False)  # Assuming you have a method to get products
+        else:
+            logger.warning(f"Index not found at {self.index_path} and build_if_missing=False")
 
     def index_exists(self) -> bool:
         """Check if Chroma index exists with all required files."""

@@ -68,38 +68,38 @@ class SystemInitializer:
         """Initialize retriever and build index if needed."""
         logger.info(f"Initializing retriever at {settings.VECTOR_INDEX_PATH}")
         
-        # Crear directorio si no existe
+        # Ensure the parent directory exists
         index_path = Path(settings.VECTOR_INDEX_PATH)
         index_path.parent.mkdir(parents=True, exist_ok=True)
         
+        # Initialize the retriever with the option to build the index if missing
         self._retriever = Retriever(
             index_path=settings.VECTOR_INDEX_PATH,
             embedding_model=settings.EMBEDDING_MODEL,
             device=settings.DEVICE,
-            build_if_missing=False  # No construir automáticamente aquí
+            build_if_missing=settings.BUILD_INDEX_IF_MISSING  # Use the setting to decide
         )
         
-        try:
-            if not self._retriever.index_exists():
-                logger.warning("Index not found. Building...")
-                if not hasattr(self, '_products') or not self._products:
-                    self._load_products()  # Asegurar que los productos están cargados
-                
-                self._retriever.build_index(self.products)
-                logger.info("Index built successfully")
-            else:
-                logger.info("Index loaded successfully")
-                
-                # Verificar que el índice contiene documentos
-                try:
-                    doc_count = len(self._retriever.store.get()['ids'])
-                    logger.info(f"Index contains {doc_count} documents")
-                except Exception as e:
-                    logger.warning(f"Could not verify document count: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to initialize retriever: {e}")
-            raise
+        # Check if the index exists
+        if not self._retriever.index_exists():
+            logger.warning("Index not found. Building index...")
+            
+            # Ensure products are loaded
+            if not hasattr(self, '_products') or not self._products:
+                self._load_products()
+            
+            # Build the index
+            self._retriever.build_index(self.products)
+            logger.info("Index built successfully")
+        else:
+            logger.info("Index loaded successfully")
+            
+            # Verify that the index contains documents
+            try:
+                doc_count = len(self._retriever.store.get()['ids'])
+                logger.info(f"Index contains {doc_count} documents")
+            except Exception as e:
+                logger.warning(f"Could not verify document count: {e}")
 
     def _build_category_tree(self) -> None:
         """Build category hierarchy."""
