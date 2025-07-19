@@ -14,6 +14,7 @@ from src.core.utils.parsers import parse_binary_score
 from src.core.init import get_system
 
 def main(argv: Optional[List[str]] = None) -> None:
+    print("DEBUG - CLI iniciado")  # <-- Agrega esto
     parser = argparse.ArgumentParser(
         description="Amazon Product Recommendation CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,

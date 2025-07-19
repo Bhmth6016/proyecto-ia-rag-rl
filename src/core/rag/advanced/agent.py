@@ -36,8 +36,10 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 
 class RAGAgent:
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
+        print("DEBUG - Inicializando RAGAgent")  # <-- Agrega esto
         system = get_system()
         self.products = products or system.products
+        print(f"DEBUG - Productos cargados: {len(self.products)}")
 
         # Verificar y esperar a que el retriever esté listo
         max_retries = 3

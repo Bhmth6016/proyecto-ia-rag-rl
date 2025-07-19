@@ -206,6 +206,13 @@ if __name__ == "__main__":
         )
 
         if args.command == "rag":
-            cli_main()  # Call the main function from cli.py
-        elif args.command == "category":
-            _run_category_mode(products, start=None)
+            print("DEBUG - Inicializando sistema para modo RAG")  # <-- Agrega esto
+            products, category_tree, rag_agent = initialize_system(
+                data_dir=args.data_dir,
+                log_level=args.log_level
+            )
+            print("DEBUG - Sistema inicializado, llamando a CLI")  # <-- Agrega esto
+            cli_main() 
+            from src.interfaces.cli import main as cli_main
+            cli_main(['rag'])
+
