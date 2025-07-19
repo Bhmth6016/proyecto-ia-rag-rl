@@ -247,53 +247,59 @@ class Retriever:
         return SequenceMatcher(None, query, text).ratio()
 
     def _score(self, query: str, product: Product) -> float:
-        """Enhanced hybrid scoring with null checks"""
-        # Text similarity
+        """Enhanced hybrid scoring"""
+        # Text similarity (title + description)
         text_content = f"{product.title or ''} {product.description or ''}"
-        text_sim = self._text_similarity(query, text_content)
+        text_sim = self._text_similarity(query.lower(), text_content.lower())
         
-        # Category boost (with null check)
+        # Category boost
         category_boost = 1.5 if (product.main_category and 
-                                query.lower() in product.main_category.lower()) else 1.0
+                                any(cat.lower() in query.lower() 
+                                    for cat in [product.main_category] + product.categories)) else 1.0
         
-        # Rating influence (with null check)
-        rating_boost = (product.average_rating/5.0 
-                    if product.average_rating is not None 
-                    else 0.5)
+        # Rating influence (normalized)
+        rating_boost = (product.average_rating/5.0 if product.average_rating else 0.5)
         
-        return text_sim * category_boost * rating_boost
+        # Price penalty for null prices
+        price_penalty = 0.8 if product.price is None else 1.0
+        
+        return text_sim * category_boost * rating_boost * price_penalty
 
     def retrieve(
         self,
         query: str,
         k: int = 5,
         filters: Optional[Dict] = None,
+        min_similarity: float = 0.6  # New threshold
     ) -> List[Product]:
-        """Hybrid retrieval: semantic + keyword + filter search."""
+        """Hybrid retrieval with deduplication and relevance filtering"""
         try:
-            # 1. Semantic search
-            docs = self._raw_retrieve(query, k=20, filters=filters)
-            sem_products = []
+            # 1. Semantic search with expanded query
+            expanded_query = self._expand_query(query)
+            docs = self._raw_retrieve(" ".join(expanded_query), k=k*2, filters=filters)
+            
+            # 2. Convert to products and deduplicate
+            products = []
+            seen_ids = set()
             for doc in docs:
                 p = self._doc_to_product(doc)
-                if p:
-                    sem_products.append(p)
-
-            # 2. Keyword ranking
-            for p in sem_products:
-                p._keyword_score = self._score(query, p)
-
-            # 3. Hybrid sorting (you can adjust weights)
-            ranked = sorted(
-                sem_products,
-                key=lambda p: (p._keyword_score, p.average_rating),
-                reverse=True
-            )
-
-            # 4. Return top-k
-            return ranked[:k]
+                if p and p.id not in seen_ids:
+                    seen_ids.add(p.id)
+                    products.append(p)
+            
+            # 3. Score and filter by relevance
+            scored_products = []
+            for p in products:
+                score = self._score(query, p)
+                if score >= min_similarity:
+                    scored_products.append((score, p))
+            
+            # 4. Sort and return top-k
+            scored_products.sort(key=lambda x: x[0], reverse=True)
+            return [p for (score, p) in scored_products[:k]]
+        
         except Exception as e:
-            logger.error(f"Hybrid retrieval failed: {e}")
+            logger.error(f"Retrieval failed: {e}")
             return []
 
     def _chroma_filter(self, f: Optional[Dict]) -> Dict:

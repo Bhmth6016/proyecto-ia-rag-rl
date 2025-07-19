@@ -13,6 +13,7 @@ import google.generativeai as genai
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from langchain.vectorstores import Chroma
 from src.core.data.loader import DataLoader
 from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
@@ -240,27 +241,35 @@ def _run_index_mode():
 
 def _handle_rag_mode(system, args):
     """Handle RAG interaction with automatic index creation"""
-    logger.info("🛠️ Preparing RAG system...")
+    print("🛠️ Preparing RAG system...")
 
-    # Cargar productos
+    # Load products
     products = system.products
     if not products:
         raise RuntimeError("No products loaded")
 
-    # Inicializar retriever si no está
-    if not hasattr(system, 'retriever') or system.retriever is None:
-        logger.warning("Retriever not found in system. Initializing...")
-        system._retriever = Retriever(
-            index_path=settings.VECTOR_INDEX_PATH,
-            embedding_model=settings.EMBEDDING_MODEL,
-            device=settings.DEVICE,
+    # Ensure retriever is properly connected to the store
+    if not hasattr(system.retriever, 'store') or not system.retriever.store:
+        logger.info("Initializing Chroma store...")
+        system.retriever.store = Chroma(
+            persist_directory=str(settings.VECTOR_INDEX_PATH),
+            embedding_function=system.retriever.embedder
         )
 
-    # Crear índice vectorial automáticamente
-    logger.info("🔨 Building vector index...")
-    system.retriever.build_index(products)
+    # Build index if necessary
+    if not system.retriever.index_exists():
+        print("🔨 Building vector index...")
+        system.retriever.build_index(products)
 
-    # Inicializar agente RAG
+    # Test retrieval
+    try:
+        test_results = system.retriever.retrieve(query="test", k=1)
+        logger.debug(f"Retriever test successful, got {len(test_results)} results")
+    except Exception as e:
+        logger.error(f"Retriever test failed: {e}")
+        raise RuntimeError("Retriever initialization failed")
+
+    # Initialize RAG agent
     agent = RAGAgent(
         products=products,
         enable_translation=True
@@ -271,9 +280,9 @@ def _handle_rag_mode(system, args):
         try:
             query = input("🧑 You: ").strip()
             if query.lower() in {"exit", "quit", "q"}:
-                print("👋 Goodbye!")
                 break
 
+            print("\n🤖 Processing your request...")
             answer = agent.ask(query)
             print(f"\n🤖 {answer}\n")
 
@@ -285,7 +294,9 @@ def _handle_rag_mode(system, args):
         except KeyboardInterrupt:
             print("\n🛑 Session ended")
             break
-
+        except Exception as e:
+            logger.error(f"Error in RAG loop: {e}")
+            print("⚠️ An error occurred. Please try again.")
 
 if __name__ == "__main__":
     args = parse_arguments()

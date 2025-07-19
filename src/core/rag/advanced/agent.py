@@ -9,9 +9,10 @@ import time
 import sys
 
 # Imports de terceros
-from langchain.chains import LLMChain
+from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.memory import BaseMemory
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 
@@ -82,9 +83,10 @@ class RAGAgent:
             temperature=0.3,
         )
 
-        self.constraint_extractor = LLMChain(
-            llm=self.llm,
-            prompt=QUERY_CONSTRAINT_EXTRACTION_PROMPT
+        self.constraint_extractor = (
+            {"query": RunnablePassthrough()}
+            | QUERY_CONSTRAINT_EXTRACTION_PROMPT
+            | self.llm
         )
 
         self.memory = ConversationBufferWindowMemory(
@@ -149,116 +151,61 @@ class RAGAgent:
         return None
 
     def ask(self, query: str) -> str:
-        logger.debug(f"Original query: {query}")
-        
-        # 1. Traducción y preprocesamiento
-        processed_query, source_lang = self._process_query(query)
-        logger.debug(f"Processed query: {processed_query}")
-
-        # 2. Extraer constraints desde el prompt
         try:
-            constraint_data = self.constraint_extractor.invoke({"query": processed_query})
-            logger.debug(f"Constraints extracted: {constraint_data}")
-        except Exception as e:
-            logger.warning(f"Failed to extract constraints: {e}")
-            constraint_data = {}
+            logger.info(f"Processing query: {query}")
 
-        # 3. Determinar cantidad de resultados deseados
-        quantity = 3
-        for word in query.split():
-            if word.isdigit():
-                quantity = max(1, min(int(word), 5))  # Entre 1 y 5
-
-        # 4. Recuperar productos
-        try:
-            products = self.retriever.retrieve(
-                query=processed_query,
-                k=quantity + 3,
-                filters=constraint_data.get("attributes", {}),
-                category=constraint_data.get("category"),
-                price_range=constraint_data.get("price_range"),
-                min_rating=constraint_data.get("min_rating"),
-                max_rating=constraint_data.get("max_rating"),
-            )
-            logger.debug(f"Retrieved products: {[p.title for p in products]}")
-        except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
-            products = []
-
-        # 5. Fallback: consulta simplificada
-        if not products:
-            fallback_query = " ".join(query.split()[:3])
-            logger.debug(f"Trying simplified query: {fallback_query}")
+            # 1. Translation and preprocessing
             try:
-                products = self.retriever.retrieve(query=fallback_query, k=quantity + 3)
+                processed_query, source_lang = self._process_query(query)
+                logger.debug(f"Processed query: {processed_query}")
             except Exception as e:
-                logger.error(f"Simplified retrieval failed: {e}")
-                products = []
+                logger.error(f"Translation failed: {e}")
+                return "Error en traducción. Por favor intenta en inglés."
 
-        # 6. Fallback por categoría detectada
-        if not products:
-            category = self._detect_category(query)
-            logger.debug(f"Detected category: {category}")
-            if category:
-                try:
-                    products = self.retriever.retrieve_by_category(category, k=quantity + 3)
-                except Exception as e:
-                    logger.error(f"Error retrieving by category: {e}")
-                    products = []
-
-        # 7. Si no hay resultados
-        if not products:
+            # 2. Retrieve products with improved similarity threshold
             try:
-                expanded = self.retriever._expand_query(processed_query)
-                suggestions = ", ".join(expanded[:3]) if expanded else "headphones, backpack, charger"
-            except Exception:
-                suggestions = "headphones, backpack, charger"
+                filters = {"main_category": "All Beauty"} if "belleza" in query.lower() else None
+                products = self.retriever.retrieve(
+                    query=processed_query,
+                    k=5,
+                    min_similarity=0.65,
+                    filters=filters
+                )
+                logger.debug(f"Retrieved {len(products)} products")
+            except Exception as e:
+                logger.error(f"Retrieval error: {str(e)}")
+                return f"Error al buscar productos: {str(e)}"
 
-            return NO_RESULTS_TEMPLATE.format(query=query, suggestions=suggestions)
+            if not products:
+                return "No encontré productos relevantes. ¿Podrías ser más específico?"
 
-        # 8. Filtrar productos válidos
-        valid_products = [p for p in products if p and p.title and p.title.lower() != "unknown product"]
-        if not valid_products:
-            return "No encontré productos válidos para tu búsqueda."
+            # 3. Format response
+            response = ["Aquí tienes mis recomendaciones:"]
+            for i, product in enumerate(products, 1):
+                price = f"${product.price:.2f}" if product.price else "Precio no disponible"
+                rating = f"{product.average_rating}/5" if product.average_rating else "Sin calificaciones"
+                category = product.main_category or "Varios"
 
-        # 9. Generar contexto para LLM
-        context = "\n\n".join(p.to_document()["page_content"] for p in valid_products[:quantity])
+                response.append(
+                    f"{i}. {product.title}\n"
+                    f"   💵 {price} | ⭐ {rating} | 📍 {category}"
+                )
 
-        try:
-            llm_answer = self.chain.invoke({"question": processed_query, "context": context})["answer"]
-            final_answer = self._process_response(llm_answer, source_lang)
+            return "\n".join(response)
+
         except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
-            final_answer = "Aquí tienes algunos productos que podrían interesarte:"
+            logger.exception("Critical error in ask():")
+            return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
 
-        # 10. Respuesta final
-        response_parts = []
-        for i, product in enumerate(valid_products[:quantity], 1):
-            response_parts.append(
-                f"{i}. {product.title}\n"
-                f"   💵 Price: {product.price if product.price else 'Not specified'}\n"
-                f"   ⭐ Rating: {product.average_rating if product.average_rating else 'No ratings'}\n"
-                f"   📝 Description: {product.description[:150] + '...' if product.description else 'No description available'}"
-            )
 
-        full_response = f"{final_answer}\n\nHere are some recommendations:\n" + "\n".join(response_parts)
-
-        # 11. Guardar retroalimentación
-        self._log_feedback(
-            query=query,
-            answer=full_response,
-            rating=0,
-            retrieved_docs=[p.title for p in valid_products],
-            category_tree=self.tree,
-            active_filter=self.active_filter,
-            extra_meta={
-                "english_query": processed_query if source_lang else None,
-                "detected_language": source_lang.value if source_lang else "en",
-                "extracted_constraints": constraint_data
-            },
-        )
-
-        return full_response
+    def test_retrieval(self, query: str = "beauty") -> bool:
+        """Test if retrieval is working"""
+        try:
+            results = self.retriever.retrieve(query=query, k=1)
+            return len(results) > 0
+        except Exception as e:
+            logger.error(f"Retrieval test failed: {e}")
+            return False
 
     def _log_feedback(self, query: str, answer: str, rating: int, retrieved_docs: List[str], category_tree: CategoryTree, active_filter: ProductFilter, extra_meta: Dict):
         self.feedback.save_feedback(
