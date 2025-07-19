@@ -68,42 +68,22 @@ class SystemInitializer:
         """Initialize retriever and build index if needed."""
         logger.info(f"Initializing retriever at {settings.VECTOR_INDEX_PATH}")
         
+        # Asegura que el directorio existe
         index_path = Path(settings.VECTOR_INDEX_PATH)
         index_path.parent.mkdir(parents=True, exist_ok=True)
         
         self._retriever = Retriever(
             index_path=settings.VECTOR_INDEX_PATH,
             embedding_model=settings.EMBEDDING_MODEL,
-            device=settings.DEVICE,
-            build_if_missing=settings.BUILD_INDEX_IF_MISSING  # Usar la configuración
+            device=settings.DEVICE
         )
         
-        if not self._retriever.index_exists() and not settings.BUILD_INDEX_IF_MISSING:
-            raise RuntimeError(
-                f"Index not found at {settings.VECTOR_INDEX_PATH} and "
-                "BUILD_INDEX_IF_MISSING=False in settings"
-            )
-        
-        '''# Check if the index exists
+        # Verifica si el índice existe
         if not self._retriever.index_exists():
-            logger.warning("Index not found. Building index...")
-            
-            # Ensure products are loaded
+            logger.info("Index not found, building...")
             if not hasattr(self, '_products') or not self._products:
                 self._load_products()
-            
-            # Build the index
-            self._retriever.build_index(self.products)
-            logger.info("Index built successfully")
-        else:
-            logger.info("Index loaded successfully")
-            
-            # Verify that the index contains documents
-            try:
-                doc_count = len(self._retriever.store.get()['ids'])
-                logger.info(f"Index contains {doc_count} documents")
-            except Exception as e:
-                logger.warning(f"Could not verify document count: {e}")'''
+            self._retriever.build_index(self._products)
 
     def _build_category_tree(self) -> None:
         """Build category hierarchy."""

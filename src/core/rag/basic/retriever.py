@@ -86,6 +86,8 @@ class Retriever:
         embedding_model: str = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
         device: str = getattr(settings, "DEVICE", "cpu"),
     ):
+        logger.info(f"Initializing Retriever (store exists: {Path(index_path).exists()})")
+
         """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path).resolve()
         logger.info(f"Initializing Retriever with index path: {self.index_path}")
@@ -105,33 +107,38 @@ class Retriever:
         self.store = None
 
     def build_index(self, products: List[Product], batch_size: int = 4000) -> None:
-        """Build and save a new vector index from products"""
-        if not products:
-            raise ValueError("No products provided to build index")
+        """Build and save a new vector index from products with error handling."""
+        try:
+            if not products:
+                raise ValueError("No products provided to build index")
 
-        logger.info("🚀 Starting index build at %s", self.index_path)
-        self.index_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"🚀 Iniciando construcción de índice con {len(products)} productos")
+            self.index_path.mkdir(parents=True, exist_ok=True)
 
-        # Convert products to documents
-        documents = []
-        for product in products:
-            try:
-                doc = Document(
-                    page_content=product.to_text(),
-                    metadata=product.to_metadata()
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.warning(f"Skipping product {product.id}: {str(e)}")
-                continue
+            documents = []
+            for product in products:
+                try:
+                    doc = Document(
+                        page_content=product.to_text(),
+                        metadata=product.to_metadata()
+                    )
+                    documents.append(doc)
+                except Exception as e:
+                    logger.warning(f"⏭️ Producto omitido (ID: {getattr(product, 'id', 'desconocido')}): {str(e)}")
+                    continue
 
-        # Build the index
-        self.store = Chroma.from_documents(
-            documents=documents,
-            embedding=self.embedder,
-            persist_directory=str(self.index_path)
-        )
-        logger.info(f"✅ Index built with {len(documents)} documents")
+            self.store = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embedder,
+                persist_directory=str(self.index_path)
+            )
+
+            logger.info(f"✅ Índice construido exitosamente con {len(documents)} documentos")
+        
+        except Exception as e:
+            logger.error(f"❌ Error construyendo índice: {str(e)}")
+            raise
+
 
     def _raw_retrieve(
         self,
@@ -244,3 +251,26 @@ class Retriever:
         print(f"Found {len(docs)} documents for '{query}'")
         for doc in docs:
             print(doc.metadata.get("title"), doc.metadata.get("category"))
+
+    def index_exists(self) -> bool:
+        """Verifica si el índice de Chroma existe, con logging detallado."""
+        index_path = Path(self.index_path)
+        exists = index_path.exists()
+        
+        # Log detallado
+        logger.info(
+            f"Verificando índice en: {self.index_path}\n"
+            f"• Directorio existe: {exists}\n"
+            f"• Contenido del directorio: {list(index_path.glob('*')) if exists else 'N/A'}"
+        )
+        
+        # Verificación adicional de archivos críticos de Chroma
+        if exists:
+            required_files = ['chroma.sqlite3', 'chroma-collections.parquet', 'chroma-embeddings.parquet']
+            missing_files = [f for f in required_files if not (index_path / f).exists()]
+            
+            if missing_files:
+                logger.warning(f"Índice incompleto. Faltan archivos: {missing_files}")
+                return False
+        
+        return exists

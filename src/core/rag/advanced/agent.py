@@ -36,45 +36,42 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 
 class RAGAgent:
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
-        print("DEBUG - Inicializando RAGAgent")  # <-- Agrega esto
+        print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
         system = get_system()
         self.products = products or system.products
         print(f"DEBUG - Productos cargados: {len(self.products)}")
 
-        # Verificar y esperar a que el retriever esté listo
+        print("Paso 2/4: Inicializando retriever")
         max_retries = 3
         retry_delay = 2  # segundos
 
         for attempt in range(max_retries):
             try:
                 self.retriever = system.retriever
-                # Verificar que el store está cargado
                 if not self.retriever.store:
-                    raise ValueError("Retriever store not initialized")
-                break  # Éxito
+                    print("Construyendo índice...")
+                    self.retriever.build_index(self.products)
+                break
             except Exception as e:
                 if attempt == max_retries - 1:
                     raise RuntimeError(f"Failed to initialize retriever after {max_retries} attempts: {e}")
                 logger.warning(f"Retriever initialization failed (attempt {attempt + 1}), retrying in {retry_delay}s...")
                 time.sleep(retry_delay)
 
+        print("Paso 3/4: Configurando traducción")
         self.enable_translation = enable_translation
-
-        # Traducción
         self.translator = TextTranslator() if enable_translation else None
 
-        # Árbol de categorías y filtros
+        print("Paso 4/4: Creando cadena de conversación")
         self.tree = CategoryTree(self.products).build_tree()
         self.active_filter = ProductFilter()
 
-        # LLM
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
             google_api_key=settings.GEMINI_API_KEY,
             temperature=0.3,
         )
 
-        # Memoria y cadena de recuperación
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
@@ -82,12 +79,17 @@ class RAGAgent:
         )
         self.chain = self._build_chain()
 
-        # Procesador de feedback
         self.feedback = FeedbackProcessor(
             feedback_dir=str(settings.DATA_DIR / "feedback")
         )
 
     def _build_chain(self) -> ConversationalRetrievalChain:
+        # Espera activa por el store (máx 10 segundos)
+        start_time = time.time()
+        while not hasattr(self.retriever, 'store') or self.retriever.store is None:
+            if time.time() - start_time > 10:
+                raise RuntimeError("Timeout waiting for retriever store to initialize")
+            time.sleep(0.5)
         if not self.retriever.store:
             raise ValueError("Retriever store is not initialized. Please check the index path and ensure the index is built.")
 
