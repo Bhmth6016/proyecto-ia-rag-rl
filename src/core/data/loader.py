@@ -186,7 +186,7 @@ class DataLoader:
 
     # ------------------------------------------------------------------
     def load_data(self, use_cache: Optional[bool] = None, output_file: Union[str, Path] = None) -> List[Product]:
-        """Cargar todos los archivos en raw_dir, procesar y guardar en un único JSON."""
+        """Load all files in raw_dir, process and save to a single JSON."""
         if use_cache is None:
             use_cache = self.cache_enabled
 
@@ -194,51 +194,56 @@ class DataLoader:
             output_file = self.processed_dir / "products.json"
 
         if use_cache and output_file.exists():
-            logger.info("Caché encontrada. Cargando productos desde la caché.")
+            logger.info("Cache found. Loading products from cache.")
             with open(output_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
 
             valid_products = []
             for item in cached_data:
                 try:
-                    # Validar y limpiar el campo 'details'
+                    # Validate and clean the 'details' field
                     if "details" not in item or item["details"] is None:
                         item["details"] = {}
                     elif not isinstance(item["details"], dict):
-                        logger.warning("Detalles inválidos encontrados en producto cacheado - reiniciando a vacío.")
+                        logger.warning("Invalid details found in cached product - resetting to empty")
                         item["details"] = {}
 
-                    # Validar campo obligatorio 'title'
+                    # Validate required 'title' field
                     if not item.get("title", "").strip():
-                        logger.warning("Producto sin título encontrado en la caché. Omitido.")
+                        logger.warning("Product without title found in cache. Skipped.")
                         continue
 
                     valid_products.append(Product.from_dict(item))
                 except Exception as e:
-                    logger.warning(f"Error cargando producto desde la caché: {str(e)}")
+                    logger.warning(f"Error loading product from cache: {e}")
                     continue
 
             return valid_products
 
-        # Si no hay caché o no se va a usar, cargar y procesar archivos desde raw_dir
+        # If no cache or not to be used, load and process files from raw_dir
         files = list(self.raw_dir.glob("*.json")) + list(self.raw_dir.glob("*.jsonl"))
         if not files:
-            logger.warning("No se encontraron archivos de productos en %s", self.raw_dir)
+            logger.warning("No product files found in %s", self.raw_dir)
             return []
 
         all_products: List[Product] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
             future_to_file = {exe.submit(self.load_single_file, f): f for f in files}
-            for future in tqdm(future_to_file, desc="Archivos", total=len(files), disable=self.disable_tqdm):
+            for future in tqdm(future_to_file, desc="Files", total=len(files), disable=self.disable_tqdm):
                 try:
                     products = future.result()
-                    all_products.extend(products)
+                    if products:  # Only extend if we got products
+                        all_products.extend(products)
                 except Exception as e:
-                    logger.warning(f"Error procesando archivo: {future_to_file[future]} - {str(e)}")
+                    logger.warning(f"Error processing file: {future_to_file[future]} - {str(e)}")
 
-        logger.info("Cargados %d productos de %d archivos", len(all_products), len(files))
+        if not all_products:
+            logger.error("No valid products loaded from any files!")
+            return []
 
-        # Guardar productos procesados en JSON
+        logger.info("Loaded %d products from %d files", len(all_products), len(files))
+
+        # Save processed products to JSON
         self.save_standardized_json(all_products, output_file)
 
         return all_products
@@ -260,60 +265,98 @@ class DataLoader:
 
         def _process_line(idx_line):
             nonlocal error_count
-            idx, line = idx_line
+            idx, line = idx_line  # Unpack the tuple
             try:
                 item = json.loads(line.strip())
                 if not isinstance(item, dict):
-                    logger.warning(f"Línea {idx}: Se esperaba un diccionario, se obtuvo {type(item)}")
+                    logger.warning(f"Line {idx}: Expected dictionary, got {type(item)}")
                     return None, True
 
-                # Skip products with empty titles
+                # Skip only if title is missing or empty
                 if not item.get("title", "").strip():
-                    logger.warning(f"Línea {idx}: título ausente o vacío - producto omitido")
+                    logger.warning(f"Line {idx}: Missing title - product skipped")
                     return None, True
 
-                if "description" in item and isinstance(item["description"], list):
-                    item["description"] = " ".join(str(x) for x in item["description"] if x)
+                # Handle description
+                if "description" in item:
+                    if isinstance(item["description"], list):
+                        item["description"] = " ".join(str(x) for x in item["description"] if x)
+                    elif not item["description"]:
+                        item["description"] = "No description available"
+                else:
+                    item["description"] = "No description available"
 
-                specs = item.get("details", {}).get("specifications", {})
+                # Handle main_category - use filename if missing
+                if not item.get("main_category"):
+                    item["main_category"] = Path(raw_file).stem.replace("_", " ").title()
+                    
+                # Handle price - clean and set default if missing
+                price = item.get("price")
+                if price is None:
+                    item["price"] = "Price not available"
+                else:
+                    # Clean price string
+                    if isinstance(price, str):
+                        # Remove currency symbols and non-numeric characters except decimal point
+                        cleaned_price = ''.join(c for c in price if c.isdigit() or c == '.')
+                        if cleaned_price:
+                            try:
+                                item["price"] = float(cleaned_price)
+                            except ValueError:
+                                item["price"] = "Price not available"
+                        else:
+                            item["price"] = "Price not available"
+
+                # Handle rating
+                if item.get("average_rating") is None:
+                    item["average_rating"] = "No rating available"
+
+                # Handle details - ensure it exists and has basic structure
+                if "details" not in item or not isinstance(item["details"], dict):
+                    item["details"] = {"features": [], "specifications": {}}
+                else:
+                    # Ensure required sub-fields exist
+                    item["details"].setdefault("features", [])
+                    item["details"].setdefault("specifications", {})
+
+                # Infer product type and tags
+                specs = item["details"]["specifications"]
                 if not item.get("product_type"):
                     item["product_type"] = self._infer_product_type(item.get("title", ""), specs)
                 if not item.get("tags"):
                     item["tags"] = self._extract_tags(item.get("title", ""), specs)
 
-                # Enrich product data
-                item = self._enrich_product_data(item, raw_file.name)
-
                 product = Product.from_dict(item)
-                if product.title and product.title.strip():
-                    product.clean_image_urls()
-                    return product, False
-                else:
-                    logger.warning(f"Línea {idx}: título ausente o vacío. Línea: {line.strip()}")
-                    return None, True
+                product.clean_image_urls()
+                return product, False
 
             except (json.JSONDecodeError, ValueError) as e:
-                logger.warning(f"Error procesando línea {idx}: {e}. Línea: {line.strip()}")
-                with self._error_lock:  # Protección thread-safe
+                logger.warning(f"Error processing line {idx}: {e}. Line: {line.strip()}")
+                with self._error_lock:
                     error_count += 1
                 return None, True
 
         with raw_file.open("r", encoding="utf-8") as f:
-            lines = list(enumerate(f))
+            lines = list(enumerate(f))  # Create list of (index, line) tuples
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
-            results = list(tqdm(exe.map(_process_line, lines), total=len(lines), desc=f"Procesando {raw_file.name}", disable=self.disable_tqdm))
+            results = list(tqdm(
+                exe.map(_process_line, lines),
+                total=len(lines),
+                desc=f"Processing {raw_file.name}",
+                disable=self.disable_tqdm
+            ))
 
         for product, is_error in results:
             if is_error:
-                with self._error_lock:  # Protección thread-safe
+                with self._error_lock:
                     error_count += 1
             elif product is not None:
                 products.append(product)
 
         if error_count:
             logger.warning(
-                "%s: %d/%d inválidos (%.1f%% éxito)",
+                "%s: %d/%d invalid (%.1f%% success)",
                 raw_file.name,
                 error_count,
                 len(products) + error_count,
@@ -323,41 +366,66 @@ class DataLoader:
         return products
 
     def _process_json_array(self, raw_file: Path) -> List[Product]:
-        with raw_file.open("r", encoding="utf-8-sig") as f:  # Use utf-8-sig to handle BOM
+        with raw_file.open("r", encoding="utf-8-sig") as f:
             items = json.load(f)
         if not isinstance(items, list):
-            raise ValueError(f"{raw_file.name} debe contener una lista de productos")
+            raise ValueError(f"{raw_file.name} must contain a list of products")
 
         products: List[Product] = []
         error_count = 0
 
         def _process_item(item: Dict[str, Any]):
             try:
-                # Ensure required fields with sensible defaults
-                item.setdefault('title', 'Untitled Product')
-                item.setdefault('main_category', item.get('category', 'Uncategorized'))
-                item.setdefault('description', '')
-                item.setdefault('tags', [])
+                # Skip only if title is missing
+                if not item.get("title", "").strip():
+                    logger.warning("Item missing title - skipped")
+                    return None, True
+
+                # Set defaults for required fields
+                item.setdefault('description', 'No description available')
+                item.setdefault('main_category', Path(raw_file).stem.replace("_", " ").title())
+                item.setdefault('average_rating', 'No rating available')
                 
-                # Process specifications if they exist
-                specs = item.get('details', {}).get('specifications', {})
-                
-                # Infer product type if not specified
+                # Clean price
+                price = item.get('price')
+                if price is None:
+                    item['price'] = 'Price not available'
+                elif isinstance(price, str):
+                    cleaned_price = ''.join(c for c in price if c.isdigit() or c == '.')
+                    if cleaned_price:
+                        try:
+                            item['price'] = float(cleaned_price)
+                        except ValueError:
+                            item['price'] = 'Price not available'
+                    else:
+                        item['price'] = 'Price not available'
+
+                # Ensure details structure
+                if 'details' not in item or not isinstance(item['details'], dict):
+                    item['details'] = {'features': [], 'specifications': {}}
+                else:
+                    item['details'].setdefault('features', [])
+                    item['details'].setdefault('specifications', {})
+
+                # Infer product type and tags
+                specs = item['details']['specifications']
                 if not item.get('product_type'):
                     item['product_type'] = self._infer_product_type(item['title'], specs)
-                
-                # Enrich product data
-                item = self._enrich_product_data(item, raw_file.name)
+                if not item.get('tags'):
+                    item['tags'] = self._extract_tags(item['title'], specs)
 
-                # Create product instance
                 product = Product.from_dict(item)
+                product.clean_image_urls()
                 return product, False
             except Exception as e:
                 logger.warning(f"Error processing item: {e}\nItem: {item}")
                 return None, True
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as exe:
-            results = list(tqdm(exe.map(_process_item, items), total=len(items), desc=f"Procesando {raw_file.name}", disable=self.disable_tqdm))
+            results = list(tqdm(exe.map(_process_item, items), 
+                        total=len(items), 
+                        desc=f"Processing {raw_file.name}", 
+                        disable=self.disable_tqdm))
 
         for product, is_error in results:
             if is_error:
@@ -367,7 +435,7 @@ class DataLoader:
 
         if error_count:
             logger.warning(
-                "%s: %d/%d inválidos (%.1f%% éxito)",
+                "%s: %d/%d invalid (%.1f%% success)",
                 raw_file.name,
                 error_count,
                 len(products) + error_count,

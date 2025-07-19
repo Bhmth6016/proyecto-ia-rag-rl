@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json  # Añadir esto con las otras importaciones
 import numpy as np
+import uuid
 import time 
 import logging
 import unicodedata
@@ -124,25 +125,34 @@ class Retriever:
             if not products:
                 raise ValueError("No products provided to build index")
 
-            # Pre-filtra productos inválidos
+            logger.info(f"Starting index build with {len(products)} initial products")
+            
+            # Pre-filter invalid products
             valid_products = []
-            for p in products:
+            for i, p in enumerate(products):
                 if not p.title or p.title == "Untitled Product":
+                    logger.debug(f"Skipping product at index {i} - invalid title")
                     continue
-                if not hasattr(p, 'description') or not p.description:
-                    p.description = ""  # Asigna valor por defecto
+                if not hasattr(p, 'description'):
+                    p.description = ""
                 valid_products.append(p)
 
-            logger.info(f"Building index from {len(valid_products)} valid products")
+            logger.info(f"Proceeding with {len(valid_products)} valid products")
 
-            # Procesamiento por lotes
+            if not valid_products:
+                raise ValueError("No valid products to index after filtering")
+
+            # Batch processing
             documents = []
             for i in range(0, len(valid_products), batch_size):
                 batch = valid_products[i:i + batch_size]
                 batch_docs = []
                 
+                logger.info(f"Processing batch {i//batch_size + 1} with {len(batch)} products")
+                
                 for product in batch:
                     try:
+                        logger.debug(f"Converting product {product.id} to document")
                         doc = Document(
                             page_content=product.to_text(),
                             metadata=product.to_metadata()
@@ -152,21 +162,30 @@ class Retriever:
                         logger.warning(f"Skipping product {getattr(product, 'id', 'unknown')}: {str(e)}")
                         continue
                 
-                # Verifica embeddings antes de insertar
                 if not batch_docs:
                     logger.warning("Empty batch, skipping...")
                     continue
 
-                # Construye o actualiza el índice
-                if not self.store:
-                    self.store = Chroma.from_documents(
-                        documents=batch_docs,
-                        embedding=self.embedder,
-                        persist_directory=str(self.index_path))
-                else:
-                    self.store.add_documents(batch_docs)
+                # Build or update the index
+                try:
+                    if not self.store:
+                        logger.info("Creating new Chroma index")
+                        self.store = Chroma.from_documents(
+                            documents=batch_docs,
+                            embedding=self.embedder,
+                            persist_directory=str(self.index_path))
+                    else:
+                        logger.info("Adding documents to existing Chroma index")
+                        self.store.add_documents(batch_docs)
+
+                    documents.extend(batch_docs)
+                    logger.info(f"Successfully processed batch {i//batch_size + 1}")
+                except Exception as e:
+                    logger.error(f"Failed to process batch {i//batch_size + 1}: {str(e)}")
+                    raise
 
             logger.info(f"✅ Successfully built index with {len(documents)} documents")
+            logger.info(f"Index stored at: {self.index_path}")
 
         except Exception as e:
             logger.error(f"❌ Index build failed: {str(e)}")
@@ -195,17 +214,26 @@ class Retriever:
             if not doc.metadata:
                 return None
 
-            # Reconstruye el diccionario del producto
+            import json  # Add this line to ensure json is available
+
+            # Safely handle JSON parsing
+            def safe_json_loads(json_str, default):
+                try:
+                    return json.loads(json_str)
+                except:
+                    return default
+
+            # Reconstruct the product dictionary
             product_data = {
                 "id": doc.metadata.get("id", str(uuid.uuid4())),
                 "title": doc.metadata.get("title", "Untitled Product"),
                 "main_category": doc.metadata.get("main_category", "Uncategorized"),
-                "categories": json.loads(doc.metadata.get("categories", "[]")),
+                "categories": safe_json_loads(doc.metadata.get("categories", "[]"), []),
                 "price": doc.metadata.get("price", 0.0),
                 "average_rating": doc.metadata.get("average_rating", 0.0),
                 "description": doc.metadata.get("description", ""),
                 "details": {
-                    "features": json.loads(doc.metadata.get("features", "[]"))
+                    "features": safe_json_loads(doc.metadata.get("features", "[]"), [])
                 }
             }
             

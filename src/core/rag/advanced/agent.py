@@ -1,30 +1,35 @@
-# src/core/rag/agent.py
 from __future__ import annotations
 
 import logging
-import sys
-import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
+# Imports estándar
+import time
+import sys
+
+# Imports de terceros
+from langchain.chains import LLMChain
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
-from langchain_core.prompts import ChatPromptTemplate
 
+# Imports locales
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.rag.advanced.prompts import (
-    RAG_PROMPT_TEMPLATE as SIMPLE_PROMPT_TEMPLATE,
-    QUERY_REWRITE_PROMPT,
+    QUERY_CONSTRAINT_EXTRACTION_PROMPT,
     NO_RESULTS_TEMPLATE,
     PARTIAL_RESULTS_TEMPLATE,
+    QUERY_REWRITE_PROMPT,
 )
 from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
 from src.core.config import settings
-from src.core.init import get_system  # Nueva importación
+from src.core.init import get_system
 
+# Configuración de logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +40,11 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 
 
 class RAGAgent:
+    """
+    Agente conversacional basado en recuperación aumentada (RAG)
+    para recomendar productos según consultas de lenguaje natural.
+    """
+
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
         print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
         system = get_system()
@@ -70,6 +80,11 @@ class RAGAgent:
             model="gemini-1.5-flash",
             google_api_key=settings.GEMINI_API_KEY,
             temperature=0.3,
+        )
+
+        self.constraint_extractor = LLMChain(
+            llm=self.llm,
+            prompt=QUERY_CONSTRAINT_EXTRACTION_PROMPT
         )
 
         self.memory = ConversationBufferWindowMemory(
@@ -134,59 +149,104 @@ class RAGAgent:
         return None
 
     def ask(self, query: str) -> str:
-        print(f"DEBUG - Original query: {query}")  # Debug line
+        logger.debug(f"Original query: {query}")
+        
+        # 1. Traducción y preprocesamiento
         processed_query, source_lang = self._process_query(query)
-        print(f"DEBUG - Processed query: {processed_query}")  # Debug line
+        logger.debug(f"Processed query: {processed_query}")
 
-        products = []
+        # 2. Extraer constraints desde el prompt
         try:
-            products = self.retriever.retrieve(query=processed_query, k=5)
-            print(f"DEBUG - Retrieved products: {[p.title for p in products]}")  # Debug line
+            constraint_data = self.constraint_extractor.invoke({"query": processed_query})
+            logger.debug(f"Constraints extracted: {constraint_data}")
         except Exception as e:
-            logger.error(f"Error retrieving products: {e}")
+            logger.warning(f"Failed to extract constraints: {e}")
+            constraint_data = {}
+
+        # 3. Determinar cantidad de resultados deseados
+        quantity = 3
+        for word in query.split():
+            if word.isdigit():
+                quantity = max(1, min(int(word), 5))  # Entre 1 y 5
+
+        # 4. Recuperar productos
+        try:
+            products = self.retriever.retrieve(
+                query=processed_query,
+                k=quantity + 3,
+                filters=constraint_data.get("attributes", {}),
+                category=constraint_data.get("category"),
+                price_range=constraint_data.get("price_range"),
+                min_rating=constraint_data.get("min_rating"),
+                max_rating=constraint_data.get("max_rating"),
+            )
+            logger.debug(f"Retrieved products: {[p.title for p in products]}")
+        except Exception as e:
+            logger.error(f"Retrieval failed: {e}")
             products = []
 
+        # 5. Fallback: consulta simplificada
         if not products:
-            # Try with simpler query
-            simple_query = " ".join(query.split()[:3])  # Use first 3 words
-            products = self.retriever.retrieve(query=simple_query, k=5)
+            fallback_query = " ".join(query.split()[:3])
+            logger.debug(f"Trying simplified query: {fallback_query}")
+            try:
+                products = self.retriever.retrieve(query=fallback_query, k=quantity + 3)
+            except Exception as e:
+                logger.error(f"Simplified retrieval failed: {e}")
+                products = []
 
-            if not products:
-                # Fallback to category-based retrieval
-                category = self._detect_category(query)
-                if category:
-                    products = self.retriever.retrieve_by_category(category, k=5)
+        # 6. Fallback por categoría detectada
+        if not products:
+            category = self._detect_category(query)
+            logger.debug(f"Detected category: {category}")
+            if category:
+                try:
+                    products = self.retriever.retrieve_by_category(category, k=quantity + 3)
+                except Exception as e:
+                    logger.error(f"Error retrieving by category: {e}")
+                    products = []
 
+        # 7. Si no hay resultados
         if not products:
             try:
                 expanded = self.retriever._expand_query(processed_query)
-                suggestions = ", ".join(expanded[:3]) if expanded else "backpack, headphones, speaker"
+                suggestions = ", ".join(expanded[:3]) if expanded else "headphones, backpack, charger"
             except Exception:
-                suggestions = "backpack, headphones, speaker"
+                suggestions = "headphones, backpack, charger"
 
             return NO_RESULTS_TEMPLATE.format(query=query, suggestions=suggestions)
 
-        # Filtrar productos inválidos
-        valid_products = [p for p in products if p and p.title != 'Unknown Product']
+        # 8. Filtrar productos válidos
+        valid_products = [p for p in products if p and p.title and p.title.lower() != "unknown product"]
         if not valid_products:
             return "No encontré productos válidos para tu búsqueda."
 
-        exact = [p for p in valid_products if self.retriever._score(query, p) > 0]
-        if not exact and valid_products:
-            titles = [p.title for p in valid_products[:3]]
-            return PARTIAL_RESULTS_TEMPLATE.format(
-                query=query,
-                similar_products="\n".join(f"- {t}" for t in titles)
+        # 9. Generar contexto para LLM
+        context = "\n\n".join(p.to_document()["page_content"] for p in valid_products[:quantity])
+
+        try:
+            llm_answer = self.chain.invoke({"question": processed_query, "context": context})["answer"]
+            final_answer = self._process_response(llm_answer, source_lang)
+        except Exception as e:
+            logger.error(f"LLM generation failed: {e}")
+            final_answer = "Aquí tienes algunos productos que podrían interesarte:"
+
+        # 10. Respuesta final
+        response_parts = []
+        for i, product in enumerate(valid_products[:quantity], 1):
+            response_parts.append(
+                f"{i}. {product.title}\n"
+                f"   💵 Price: {product.price if product.price else 'Not specified'}\n"
+                f"   ⭐ Rating: {product.average_rating if product.average_rating else 'No ratings'}\n"
+                f"   📝 Description: {product.description[:150] + '...' if product.description else 'No description available'}"
             )
 
-        context = "\n\n".join(p.to_document()["page_content"] for p in valid_products)
+        full_response = f"{final_answer}\n\nHere are some recommendations:\n" + "\n".join(response_parts)
 
-        llm_answer = self.chain.invoke({"question": processed_query, "context": context})["answer"]
-        final_answer = self._process_response(llm_answer, source_lang)
-
-        self.feedback.save_feedback(
+        # 11. Guardar retroalimentación
+        self._log_feedback(
             query=query,
-            answer=final_answer,
+            answer=full_response,
             rating=0,
             retrieved_docs=[p.title for p in valid_products],
             category_tree=self.tree,
@@ -194,54 +254,98 @@ class RAGAgent:
             extra_meta={
                 "english_query": processed_query if source_lang else None,
                 "detected_language": source_lang.value if source_lang else "en",
+                "extracted_constraints": constraint_data
             },
         )
-        return final_answer
 
-    def set_filters(
-        self,
-        *,
-        price_range: Optional[tuple] = None,
-        rating_range: Optional[tuple] = None,
-        brands: Optional[list] = None,
-    ) -> None:
-        self.active_filter.clear_filters()
-        if price_range:
-            self.active_filter.add_price_filter(*price_range)
-        if rating_range:
-            self.active_filter.add_rating_filter(*rating_range)
-        if brands:
-            self.active_filter.add_brand_filter(brands)
+        return full_response
+
+    def _log_feedback(self, query: str, answer: str, rating: int, retrieved_docs: List[str], category_tree: CategoryTree, active_filter: ProductFilter, extra_meta: Dict):
+        self.feedback.save_feedback(
+            query=query,
+            answer=answer,
+            rating=rating,
+            retrieved_docs=retrieved_docs,
+            category_tree=category_tree,
+            active_filter=active_filter,
+            extra_meta=extra_meta,
+        )
 
     def chat_loop(self) -> None:
-        print("\n🌍 Multilingual RAG Agent (type 'exit' to quit)\n")
+        print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
+        
         while True:
             try:
-                query = input("🧑 User: ").strip()
+                # Get user input
+                query = input("🧑 You: ").strip()
+                
+                # Check for exit command
                 if query.lower() in {"exit", "quit", "q"}:
-                    print("👋 Goodbye!")
+                    print("\n🤖 Goodbye! Have a nice day!")
                     break
-
+                
+                # Process query and get response
+                print("\n🤖 Processing your request...")
                 answer = self.ask(query)
-                print(f"\n🤖 Assistant:\n{answer}\n")
-
-                rating = input("Rating (1-5): ").strip()
-                while rating not in {"1", "2", "3", "4", "5"}:
-                    rating = input("Please rate 1-5: ").strip()
-
-                self.feedback.save_feedback(
-                    query=query,
-                    answer=answer,
-                    rating=int(rating),
-                    extra_meta={"user_rating": rating},
-                )
-
+                
+                # Display response
+                print("\n🤖 Recommendation:")
+                print("=" * 50)
+                print(answer)
+                print("=" * 50)
+                
+                # Get feedback
+                while True:
+                    feedback = input("\n🤖 Was this helpful? (1-5, 'skip', or 'more' for alternatives): ").strip().lower()
+                    
+                    if feedback in {'1', '2', '3', '4', '5'}:
+                        self._log_feedback(
+                            query=query,
+                            answer=answer,
+                            rating=int(feedback),
+                            extra_meta={"user_rating": feedback},
+                        )
+                        print("Thank you for your feedback!")
+                        break
+                    elif feedback == 'skip':
+                        break
+                    elif feedback == 'more':
+                        # Show additional options
+                        answer = self._get_more_options(query)
+                        print("\n🤖 Additional Options:")
+                        print("-" * 50)
+                        print(answer)
+                        print("-" * 50)
+                    else:
+                        print("Please enter 1-5, 'skip', or 'more'")
+                        
             except KeyboardInterrupt:
-                print("\n🛑 Session ended")
+                print("\n🛑 Session ended by user")
                 break
             except Exception as e:
-                logger.error("Chat error: %s", e)
-                print("⚠️ Error occurred, please try again.")
+                logger.error(f"Error in chat loop: {str(e)}")
+                print("⚠️ An error occurred. Please try again.")
+
+    def _get_more_options(self, query: str) -> str:
+        try:
+            products = self.retriever.retrieve(query=query, k=10)  # Get more results
+            if len(products) <= 5:
+                return "No additional options available."
+                
+            response = ["Here are some additional options:"]
+            for i, product in enumerate(products[5:8], 6):  # Show next 3 results
+                product_info = [
+                    f"{i}. {product.title}",
+                    f"   💵 Price: {product.price if product.price else 'Not specified'}",
+                    f"   ⭐ Rating: {product.average_rating if product.average_rating else 'No ratings yet'}",
+                ]
+                response.extend(product_info)
+                
+            return "\n".join(response)
+        except Exception as e:
+            logger.error(f"Error getting more options: {str(e)}")
+            return "Couldn't retrieve additional options at this time."
+        
 
     @classmethod
     def from_pickle_dir(

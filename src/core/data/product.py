@@ -249,31 +249,52 @@ class Product(BaseModel):
         return match.group(0) if match else ""
     
     def to_text(self) -> str:
-        """Representación mejorada para indexado"""
+        """Improved representation for embedding"""
+        price = str(self.price) if isinstance(self.price, (int, float)) else "Price not available"
+        rating = str(self.average_rating) if isinstance(self.average_rating, (int, float)) else "No rating available"
+        
         parts = [
             self.title,
             f"Category: {self.main_category}",
-            self.description or "",
-            f"Features: {', '.join(self.details.features)}" if self.details and self.details.features else "",
-            f"Type: {self.product_type}" if self.product_type else "",
-            " ".join(self.tags) if self.tags else "",
-            " ".join(self.compatible_devices) if self.compatible_devices else ""
+            self.description or "No description available",
+            f"Price: {price}",
+            f"Rating: {rating}",
+            f"Features: {', '.join(self.details.features)}" if self.details and self.details.features else "No features available",
+            f"Type: {self.product_type}" if self.product_type else "No type specified",
+            " ".join(self.tags) if self.tags else "No tags",
+            " ".join(self.compatible_devices) if self.compatible_devices else "No compatible devices specified"
         ]
         return " ".join(filter(None, parts))
 
     def to_metadata(self) -> dict:
         """Return all essential metadata for retrieval"""
-        return {
-            "id": self.id,
-            "title": self.title or "Untitled Product",
-            "main_category": self.main_category or "Uncategorized",
-            "categories": json.dumps(self.categories) if self.categories else "[]",
-            "price": float(self.price) if self.price is not None else 0.0,
-            "average_rating": float(self.average_rating) if self.average_rating else 0.0,
-            "description": self.description or "",
-            "product_type": self.product_type or "",
-            "features": json.dumps(self.details.features) if self.details else "[]"
-        }
+        import json  # Add this line to ensure json is available
+        
+        try:
+            return {
+                "id": self.id,
+                "title": self.title or "Untitled Product",
+                "main_category": self.main_category or "Uncategorized",
+                "categories": json.dumps(self.categories) if self.categories else "[]",
+                "price": float(self.price) if self.price is not None else 0.0,
+                "average_rating": float(self.average_rating) if self.average_rating else 0.0,
+                "description": self.description or "",
+                "product_type": self.product_type or "",
+                "features": json.dumps(self.details.features) if self.details else "[]"
+            }
+        except Exception as e:
+            logger.error(f"Error converting product to metadata: {e}")
+            return {
+                "id": self.id,
+                "title": self.title or "Untitled Product",
+                "main_category": "Uncategorized",
+                "categories": "[]",
+                "price": 0.0,
+                "average_rating": 0.0,
+                "description": "",
+                "product_type": "",
+                "features": "[]"
+            }
     
     def to_document(self) -> Document:
         """Convierte el producto a un Document optimizado para almacenamiento en Chroma o LangChain."""

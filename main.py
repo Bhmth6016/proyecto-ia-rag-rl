@@ -240,28 +240,38 @@ def _run_index_mode():
 
 def _handle_rag_mode(system, args):
     """Handle RAG interaction with automatic index creation"""
-    print("🛠️ Preparing RAG system...")
-    
-    # Load products
+    logger.info("🛠️ Preparing RAG system...")
+
+    # Cargar productos
     products = system.products
     if not products:
         raise RuntimeError("No products loaded")
-    
-    # Create index automatically
-    print("🔨 Building vector index...")
+
+    # Inicializar retriever si no está
+    if not hasattr(system, 'retriever') or system.retriever is None:
+        logger.warning("Retriever not found in system. Initializing...")
+        system._retriever = Retriever(
+            index_path=settings.VECTOR_INDEX_PATH,
+            embedding_model=settings.EMBEDDING_MODEL,
+            device=settings.DEVICE,
+        )
+
+    # Crear índice vectorial automáticamente
+    logger.info("🔨 Building vector index...")
     system.retriever.build_index(products)
-    
-    # Initialize RAG agent
+
+    # Inicializar agente RAG
     agent = RAGAgent(
         products=products,
         enable_translation=True
     )
-    
+
     print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
     while True:
         try:
             query = input("🧑 You: ").strip()
             if query.lower() in {"exit", "quit", "q"}:
+                print("👋 Goodbye!")
                 break
 
             answer = agent.ask(query)
