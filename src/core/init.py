@@ -68,19 +68,23 @@ class SystemInitializer:
         """Initialize retriever and build index if needed."""
         logger.info(f"Initializing retriever at {settings.VECTOR_INDEX_PATH}")
         
-        # Ensure the parent directory exists
         index_path = Path(settings.VECTOR_INDEX_PATH)
         index_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Initialize the retriever with the option to build the index if missing
         self._retriever = Retriever(
             index_path=settings.VECTOR_INDEX_PATH,
             embedding_model=settings.EMBEDDING_MODEL,
             device=settings.DEVICE,
-            build_if_missing=settings.BUILD_INDEX_IF_MISSING  # Use the setting to decide
+            build_if_missing=settings.BUILD_INDEX_IF_MISSING  # Usar la configuración
         )
         
-        # Check if the index exists
+        if not self._retriever.index_exists() and not settings.BUILD_INDEX_IF_MISSING:
+            raise RuntimeError(
+                f"Index not found at {settings.VECTOR_INDEX_PATH} and "
+                "BUILD_INDEX_IF_MISSING=False in settings"
+            )
+        
+        '''# Check if the index exists
         if not self._retriever.index_exists():
             logger.warning("Index not found. Building index...")
             
@@ -99,7 +103,7 @@ class SystemInitializer:
                 doc_count = len(self._retriever.store.get()['ids'])
                 logger.info(f"Index contains {doc_count} documents")
             except Exception as e:
-                logger.warning(f"Could not verify document count: {e}")
+                logger.warning(f"Could not verify document count: {e}")'''
 
     def _build_category_tree(self) -> None:
         """Build category hierarchy."""

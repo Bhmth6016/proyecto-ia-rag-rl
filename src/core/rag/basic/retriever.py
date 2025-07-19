@@ -115,13 +115,21 @@ class Retriever:
             logger.warning(f"Index not found at {self.index_path} and build_if_missing=False")
 
     def index_exists(self) -> bool:
-        """Check if Chroma index exists with all required files."""
+        """Versión más robusta para verificar el índice"""
+        if not self.index_path.exists():
+            return False
+            
+        required_files = {
+            "chroma.sqlite3", 
+            "index_metadata.pickle",
+            "embeddings.bin"
+        }
+        
         try:
-            required_files = {"chroma.sqlite3", "index_metadata.pickle"}
             existing_files = {f.name for f in self.index_path.glob("*") if f.is_file()}
             return required_files.issubset(existing_files)
         except Exception as e:
-            logger.warning(f"Error checking index: {e}")
+            logger.error(f"Error verificando índice: {e}")
             return False
 
     def _load_index(self) -> None:

@@ -4,6 +4,7 @@
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Optional, List
 
@@ -206,13 +207,16 @@ if __name__ == "__main__":
         )
 
         if args.command == "rag":
-            print("DEBUG - Inicializando sistema para modo RAG")  # <-- Agrega esto
-            products, category_tree, rag_agent = initialize_system(
-                data_dir=args.data_dir,
-                log_level=args.log_level
-            )
-            print("DEBUG - Sistema inicializado, llamando a CLI")  # <-- Agrega esto
-            cli_main() 
-            from src.interfaces.cli import main as cli_main
-            cli_main(['rag'])
-
+            try:
+                products, category_tree, rag_agent = initialize_system(
+                    data_dir=args.data_dir,
+                    log_level=args.log_level
+                )
+                from src.interfaces.cli import main as cli_main
+                cli_main(['rag'])
+            except Exception as e:
+                print(f"\nERROR: No se pudo inicializar el sistema. Razón: {str(e)}")
+                print("Posibles soluciones:")
+                print("1. Ejecuta 'python main.py index --reindex' para reconstruir el índice")
+                print("2. Verifica los permisos de la carpeta data/processed/chroma_db")
+                sys.exit(1)

@@ -52,3 +52,5 @@ CHROMA_SETTINGS = {
     "hnsw:search_ef": 100,
     "hnsw:M": 16,  # Valor más bajo para mayor eficiencia con muchos documentos
 }
+
+BUILD_INDEX_IF_MISSING = os.getenv("BUILD_INDEX_IF_MISSING", "false").lower() == "true"
