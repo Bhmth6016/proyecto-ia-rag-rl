@@ -262,13 +262,17 @@ class Product(BaseModel):
         return " ".join(filter(None, parts))
 
     def to_metadata(self) -> dict:
-        """Return only essential metadata in compact form"""
+        """Return all essential metadata for retrieval"""
         return {
             "id": self.id,
-            "t": self.title[:100] if self.title else "",  # Título abreviado
-            "p": float(self.price) if self.price else 0.0,
-            "r": float(self.average_rating) if self.average_rating else 0.0,
-            "c": self.main_category[:20] if self.main_category else ""
+            "title": self.title or "Untitled Product",
+            "main_category": self.main_category or "Uncategorized",
+            "categories": json.dumps(self.categories) if self.categories else "[]",
+            "price": float(self.price) if self.price is not None else 0.0,
+            "average_rating": float(self.average_rating) if self.average_rating else 0.0,
+            "description": self.description or "",
+            "product_type": self.product_type or "",
+            "features": json.dumps(self.details.features) if self.details else "[]"
         }
     
     def to_document(self) -> Document:

@@ -1,7 +1,8 @@
 # src/core/retriever.py
 from __future__ import annotations
+import json  # Añadir esto con las otras importaciones
+import numpy as np
 import time 
-import json
 import logging
 import unicodedata
 from pathlib import Path
@@ -55,26 +56,6 @@ def _normalize(text: str) -> str:
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     return text.lower().strip()
 
-def _expand_query(self, query: str) -> List[str]:
-    """More robust query expansion"""
-    base = _normalize(query)
-    expansions = {base}
-    
-    # Add category-specific terms
-    if "musica" in base:
-        expansions.update(["guitar", "piano", "drums"])
-    if "app" in base:
-        expansions.update(["mobile", "android", "ios"])
-        
-    # Add general synonyms
-    for key, syns in _SYNONYMS.items():
-        if key in base:
-            expansions.update(syns)
-        for s in syns:
-            if s in base:
-                expansions.add(key)
-    return list(expansions)
-
 # ---------------------------------------------------------------------- 
 # Retriever 
 # ---------------------------------------------------------------------- 
@@ -102,42 +83,94 @@ class Retriever:
         self.embedder = HuggingFaceEmbeddings(
             model_name=self.embedder_name,
             model_kwargs={"device": self.device},
+            encode_kwargs={
+                'normalize_embeddings': True,
+                'batch_size': 32  # Reduce si hay problemas de memoria
+            }
         )
 
         self.store = None
 
-    def build_index(self, products: List[Product], batch_size: int = 4000) -> None:
-        """Build and save a new vector index from products with error handling."""
+
+    def _expand_query(self, query: str) -> List[str]:
+        """More robust query expansion"""
+        def _normalize(text: str) -> str:
+            """Lower-case + strip accents."""
+            text = unicodedata.normalize("NFD", text)
+            text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+            return text.lower().strip()
+        
+        base = _normalize(query)
+        expansions = {base}
+        
+        # Add category-specific terms
+        if "musica" in base:
+            expansions.update(["guitar", "piano", "drums"])
+        if "app" in base:
+            expansions.update(["mobile", "android", "ios"])
+            
+        # Add general synonyms
+        for key, syns in _SYNONYMS.items():
+            if key in base:
+                expansions.update(syns)
+            for s in syns:
+                if s in base:
+                    expansions.add(key)
+        return list(expansions)
+
+    def build_index(self, products: List[Product], batch_size: int = 1000) -> None:
+        """Build index with proper error handling and batching"""
         try:
             if not products:
                 raise ValueError("No products provided to build index")
 
-            logger.info(f"🚀 Iniciando construcción de índice con {len(products)} productos")
-            self.index_path.mkdir(parents=True, exist_ok=True)
+            # Pre-filtra productos inválidos
+            valid_products = []
+            for p in products:
+                if not p.title or p.title == "Untitled Product":
+                    continue
+                if not hasattr(p, 'description') or not p.description:
+                    p.description = ""  # Asigna valor por defecto
+                valid_products.append(p)
 
+            logger.info(f"Building index from {len(valid_products)} valid products")
+
+            # Procesamiento por lotes
             documents = []
-            for product in products:
-                try:
-                    doc = Document(
-                        page_content=product.to_text(),
-                        metadata=product.to_metadata()
-                    )
-                    documents.append(doc)
-                except Exception as e:
-                    logger.warning(f"⏭️ Producto omitido (ID: {getattr(product, 'id', 'desconocido')}): {str(e)}")
+            for i in range(0, len(valid_products), batch_size):
+                batch = valid_products[i:i + batch_size]
+                batch_docs = []
+                
+                for product in batch:
+                    try:
+                        doc = Document(
+                            page_content=product.to_text(),
+                            metadata=product.to_metadata()
+                        )
+                        batch_docs.append(doc)
+                    except Exception as e:
+                        logger.warning(f"Skipping product {getattr(product, 'id', 'unknown')}: {str(e)}")
+                        continue
+                
+                # Verifica embeddings antes de insertar
+                if not batch_docs:
+                    logger.warning("Empty batch, skipping...")
                     continue
 
-            self.store = Chroma.from_documents(
-                documents=documents,
-                embedding=self.embedder,
-                persist_directory=str(self.index_path)
-            )
+                # Construye o actualiza el índice
+                if not self.store:
+                    self.store = Chroma.from_documents(
+                        documents=batch_docs,
+                        embedding=self.embedder,
+                        persist_directory=str(self.index_path))
+                else:
+                    self.store.add_documents(batch_docs)
 
-            logger.info(f"✅ Índice construido exitosamente con {len(documents)} documentos")
-        
+            logger.info(f"✅ Successfully built index with {len(documents)} documents")
+
         except Exception as e:
-            logger.error(f"❌ Error construyendo índice: {str(e)}")
-            raise
+            logger.error(f"❌ Index build failed: {str(e)}")
+            raise RuntimeError(f"Index construction failed: {str(e)}")
 
 
     def _raw_retrieve(
@@ -158,25 +191,27 @@ class Retriever:
         return self.store.similarity_search(query_expanded, k=k)
 
     def _doc_to_product(self, doc: Document) -> Optional[Product]:
-        """Convert Document back to Product with robust error handling."""
         try:
-            if not isinstance(doc.metadata, dict):
-                logger.warning(f"Invalid metadata type: {type(doc.metadata)}")
+            if not doc.metadata:
                 return None
-                
-            # Ensure minimum required fields
-            metadata = doc.metadata.copy()
-            metadata.setdefault('title', 'Unknown Product')
-            metadata.setdefault('price', 0.0)
-            metadata.setdefault('average_rating', 0.0)
+
+            # Reconstruye el diccionario del producto
+            product_data = {
+                "id": doc.metadata.get("id", str(uuid.uuid4())),
+                "title": doc.metadata.get("title", "Untitled Product"),
+                "main_category": doc.metadata.get("main_category", "Uncategorized"),
+                "categories": json.loads(doc.metadata.get("categories", "[]")),
+                "price": doc.metadata.get("price", 0.0),
+                "average_rating": doc.metadata.get("average_rating", 0.0),
+                "description": doc.metadata.get("description", ""),
+                "details": {
+                    "features": json.loads(doc.metadata.get("features", "[]"))
+                }
+            }
             
-            # If page content has useful information, combine it
-            if doc.page_content:
-                metadata['description'] = doc.page_content[:500]  # Limit size
-                
-            return Product.from_dict(metadata)
+            return Product.from_dict(product_data)
         except Exception as e:
-            logger.warning(f"Failed to convert document to product: {str(e)}")
+            logger.error(f"Failed to convert document to product: {str(e)}")
             return None
 
     def _text_similarity(self, query: str, text: str) -> float:
@@ -184,15 +219,19 @@ class Retriever:
         return SequenceMatcher(None, query, text).ratio()
 
     def _score(self, query: str, product: Product) -> float:
-        """Enhanced hybrid scoring"""
+        """Enhanced hybrid scoring with null checks"""
         # Text similarity
-        text_sim = self._text_similarity(query, product.title + " " + product.description)
+        text_content = f"{product.title or ''} {product.description or ''}"
+        text_sim = self._text_similarity(query, text_content)
         
-        # Category boost
-        category_boost = 1.5 if query.lower() in product.main_category.lower() else 1.0
+        # Category boost (with null check)
+        category_boost = 1.5 if (product.main_category and 
+                                query.lower() in product.main_category.lower()) else 1.0
         
-        # Rating influence
-        rating_boost = product.average_rating/5.0 if product.average_rating else 0.5
+        # Rating influence (with null check)
+        rating_boost = (product.average_rating/5.0 
+                    if product.average_rating is not None 
+                    else 0.5)
         
         return text_sim * category_boost * rating_boost
 
