@@ -122,17 +122,36 @@ class RAGAgent:
             return answer
         return self.translator.translate_from_english(answer, target_lang)
 
+    def _detect_category(self, query: str) -> Optional[str]:
+        # Simple category detection based on keywords
+        for category in self.tree.categories:
+            if category.lower() in query.lower():
+                return category
+        return None
+
     def ask(self, query: str) -> str:
+        print(f"DEBUG - Original query: {query}")  # Debug line
         processed_query, source_lang = self._process_query(query)
+        print(f"DEBUG - Processed query: {processed_query}")  # Debug line
 
         products = []
         try:
             products = self.retriever.retrieve(query=processed_query, k=5)
-            if not products:
-                products = self.retriever.retrieve(query=query, k=5)
+            print(f"DEBUG - Retrieved products: {[p.title for p in products]}")  # Debug line
         except Exception as e:
             logger.error(f"Error retrieving products: {e}")
             products = []
+
+        if not products:
+            # Try with simpler query
+            simple_query = " ".join(query.split()[:3])  # Use first 3 words
+            products = self.retriever.retrieve(query=simple_query, k=5)
+
+            if not products:
+                # Fallback to category-based retrieval
+                category = self._detect_category(query)
+                if category:
+                    products = self.retriever.retrieve_by_category(category, k=5)
 
         if not products:
             try:

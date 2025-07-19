@@ -44,6 +44,9 @@ _SYNONYMS: Dict[str, List[str]] = {
     "suscripción": ["subscription", "box", "plan", "monthly", "auto-renew"],
     "belleza": ["beauty", "makeup", "skincare", "cosmetics", "perfume", "lipstick", "serum", "cream"],
     "oficina": ["office", "printer", "stationery", "paper", "desk", "chair", "shredder"],
+    "musica": ["music", "instrumentos", "instrumentos musicales", "audio"],
+    "app": ["application", "software", "programa", "aplicación"],
+    "videojuego": ["video game", "juego", "game", "pc game"]
 }
 
 def _normalize(text: str) -> str:
@@ -52,10 +55,18 @@ def _normalize(text: str) -> str:
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     return text.lower().strip()
 
-def _expand_query(query: str) -> List[str]:
-    """Return normalized + synonym-expanded query strings."""
+def _expand_query(self, query: str) -> List[str]:
+    """More robust query expansion"""
     base = _normalize(query)
     expansions = {base}
+    
+    # Add category-specific terms
+    if "musica" in base:
+        expansions.update(["guitar", "piano", "drums"])
+    if "app" in base:
+        expansions.update(["mobile", "android", "ios"])
+        
+    # Add general synonyms
     for key, syns in _SYNONYMS.items():
         if key in base:
             expansions.update(syns)
@@ -216,7 +227,7 @@ class Retriever:
         filters: Optional[Dict],
     ) -> List[Document]:
         """Internal method for raw document retrieval."""
-        query_expanded = " ".join(_expand_query(query))
+        query_expanded = " ".join(self._expand_query(query))
 
         if filters:
             return self.store.similarity_search(
@@ -248,21 +259,22 @@ class Retriever:
             logger.warning(f"Failed to convert document to product: {str(e)}")
             return None
 
-    def _keyword_score(self, query: str, product: Product) -> float:
-        """Score textual match between query and product title/description."""
-        query_norm = _normalize(query)
-        keywords = query_norm.split()
+    def _text_similarity(self, query: str, text: str) -> float:
+        """Calculate text similarity using SequenceMatcher."""
+        return SequenceMatcher(None, query, text).ratio()
 
-        fields = [
-            _normalize(product.title),
-            _normalize(product.description or "")
-        ]
-        text = " ".join(fields)
-
-        score = sum(1.0 for kw in keywords if kw in text)
-        sim_score = SequenceMatcher(None, query_norm, text).ratio()
-
-        return score + sim_score  # Combina conteo + similitud
+    def _score(self, query: str, product: Product) -> float:
+        """Enhanced hybrid scoring"""
+        # Text similarity
+        text_sim = self._text_similarity(query, product.title + " " + product.description)
+        
+        # Category boost
+        category_boost = 1.5 if query.lower() in product.main_category.lower() else 1.0
+        
+        # Rating influence
+        rating_boost = product.average_rating/5.0 if product.average_rating else 0.5
+        
+        return text_sim * category_boost * rating_boost
 
     def retrieve(
         self,
@@ -282,7 +294,7 @@ class Retriever:
 
             # 2. Keyword ranking
             for p in sem_products:
-                p._keyword_score = self._keyword_score(query, p)
+                p._keyword_score = self._score(query, p)
 
             # 3. Ordena híbridamente (puedes ajustar pesos)
             ranked = sorted(
@@ -314,7 +326,7 @@ class Retriever:
 
     def debug_search(self, query: str) -> None:
         """Debug method to test search functionality."""
-        print("Query expansions:", _expand_query(query))
+        print("Query expansions:", self._expand_query(query))
         docs = self._raw_retrieve(query, k=5, filters=None)
         print(f"Found {len(docs)} documents for '{query}'")
         for doc in docs:

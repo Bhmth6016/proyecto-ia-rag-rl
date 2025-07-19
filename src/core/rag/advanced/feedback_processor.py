@@ -355,22 +355,12 @@ class FeedbackProcessor:
         """
         Heuristically determine likely reason for query failure.
         """
-        if not record.get("answer"):
-            return "empty_answer"
         if not record.get("retrieved_docs"):
             return "no_documents_retrieved"
-        if record.get("eval_scores") is None:
-            return "no_evaluation_available"
-
-        quality_score = record.get("eval_scores", {}).get("quality", {}).get("score")
-        if quality_score is not None and quality_score < 0.3:
-            return "low_quality_response"
-
-        if not record.get("category_path") and record.get("active_filter"):
-            return "category_inference_failed"
-
-        return "unknown_reason"
-    
+        elif not record.get("answer"):
+            return "empty_response"
+        else:
+            return "low_relevance"
 
 # Example usage of weekly_review
 if __name__ == "__main__":
