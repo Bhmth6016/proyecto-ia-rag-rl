@@ -282,7 +282,7 @@ class RLHFTrainer:
             model=self.base_model,
             tokenizer=self.tokenizer,
             dataset=train_set,
-            data_collator=DataCollatorForSeq2SeqLM(self.tokenizer, pad_to_multiple_of=8),
+            data_collator=DataCollatorForSeq2Seq(self.tokenizer, pad_to_multiple_of=8),
         )
 
         logger.info("Starting PPO training...")
