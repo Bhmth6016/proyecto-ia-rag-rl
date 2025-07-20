@@ -119,77 +119,100 @@ class Retriever:
         
         return list(expansions)
 
-    ''' def build_index(self, products: List[Product], batch_size: int = 1000) -> None:
-        """Build index with proper error handling and batching"""
+    def retrieve(
+        self,
+        query: str,
+        k: int = 5,
+        filters: Optional[Dict] = None,
+        min_similarity: float = 0.3
+    ) -> List[Product]:
+        """Enhanced retrieval with better filter support"""
         try:
-            if not products:
-                raise ValueError("No products provided to build index")
+            # Parse filters from query if not provided
+            if filters is None:
+                filters = self._parse_filters_from_query(query)
 
-            logger.info(f"Starting index build with {len(products)} initial products")
+            # Semantic search with expanded query
+            expanded_query = self._expand_query(query)
+            docs = self._raw_retrieve(" ".join(expanded_query), k=k*2, filters=filters)
             
-            # Pre-filter invalid products
-            valid_products = []
-            for i, p in enumerate(products):
-                if not p.title or p.title == "Untitled Product":
-                    logger.debug(f"Skipping product at index {i} - invalid title")
-                    continue
-                if not hasattr(p, 'description'):
-                    p.description = ""
-                valid_products.append(p)
-
-            logger.info(f"Proceeding with {len(valid_products)} valid products")
-
-            if not valid_products:
-                raise ValueError("No valid products to index after filtering")
-
-            # Batch processing
-            documents = []
-            for i in range(0, len(valid_products), batch_size):
-                batch = valid_products[i:i + batch_size]
-                batch_docs = []
-                
-                logger.info(f"Processing batch {i//batch_size + 1} with {len(batch)} products")
-                
-                for product in batch:
-                    try:
-                        logger.debug(f"Converting product {product.id} to document")
-                        doc = Document(
-                            page_content=product.to_text(),
-                            metadata=product.to_metadata()
-                        )
-                        batch_docs.append(doc)
-                    except Exception as e:
-                        logger.warning(f"Skipping product {getattr(product, 'id', 'unknown')}: {str(e)}")
-                        continue
-                
-                if not batch_docs:
-                    logger.warning("Empty batch, skipping...")
-                    continue
-
-                # Build or update the index
-                try:
-                    if not self.store:
-                        logger.info("Creating new Chroma index")
-                        self.store = Chroma.from_documents(
-                            documents=batch_docs,
-                            embedding=self.embedder,
-                            persist_directory=str(self.index_path))
-                    else:
-                        logger.info("Adding documents to existing Chroma index")
-                        self.store.add_documents(batch_docs)
-
-                    documents.extend(batch_docs)
-                    logger.info(f"Successfully processed batch {i//batch_size + 1}")
-                except Exception as e:
-                    logger.error(f"Failed to process batch {i//batch_size + 1}: {str(e)}")
-                    raise
-
-            logger.info(f"✅ Successfully built index with {len(documents)} documents")
-            logger.info(f"Index stored at: {self.index_path}")
-
+            # Convert to products and apply filters
+            products = []
+            seen_ids = set()
+            for doc in docs:
+                p = self._doc_to_product(doc)
+                if p and p.id not in seen_ids:
+                    seen_ids.add(p.id)
+                    products.append(p)
+            
+            # Apply additional filters that couldn't be handled by Chroma
+            if filters:
+                products = [p for p in products if self._matches_all_filters(p, filters)]
+            
+            # Score and filter by relevance
+            scored_products = []
+            for p in products:
+                score = self._score(query, p)
+                if score >= min_similarity:
+                    scored_products.append((score, p))
+            
+            # Sort and return top-k
+            scored_products.sort(key=lambda x: x[0], reverse=True)
+            return [p for (score, p) in scored_products[:k]]
+        
         except Exception as e:
-            logger.error(f"❌ Index build failed: {str(e)}")
-            raise RuntimeError(f"Index construction failed: {str(e)}")''' 
+            logger.error(f"Retrieval failed: {e}")
+            return []
+
+    def _parse_filters_from_query(self, query: str) -> Dict[str, Any]:
+        """Extract filters from natural language query"""
+        filters = {}
+        
+        # Price filters
+        price_matches = re.findall(r'(?:precio|price)\s*(?:menor|less|below|under|<\s*)\s*(\d+)', query, re.IGNORECASE)
+        if price_matches:
+            filters["price_range"] = {"max": float(price_matches[0])}
+        
+        # Color filters
+        color_matches = re.findall(r'(?:color|colou?r)\s+(rojo|azul|verde|negro|blanco|amarillo|rosado)', query, re.IGNORECASE)
+        if color_matches:
+            filters["color"] = color_matches[0].lower()
+        
+        # Wireless/Bluetooth
+        if any(word in query.lower() for word in ["inalámbrico", "wireless", "bluetooth"]):
+            filters["wireless"] = True
+        
+        # Weight filters
+        weight_matches = re.findall(r'(?:peso|weight)\s*(?:menor|less|below|under|<\s*)\s*(\d+)\s*(?:g|gramos|grams|kg|kilos)', query, re.IGNORECASE)
+        if weight_matches:
+            filters["weight"] = {"max": float(weight_matches[0])}
+        
+        return filters
+
+    def _matches_all_filters(self, product: Product, filters: Dict) -> bool:
+        """Check if product matches all filters"""
+        # Price filter
+        if "price_range" in filters:
+            price_range = filters["price_range"]
+            if "max" in price_range and product.price and product.price > price_range["max"]:
+                return False
+            if "min" in price_range and product.price and product.price < price_range["min"]:
+                return False
+        
+        # Color filter
+        if "color" in filters:
+            product_color = getattr(product, "color", "") or product.details.get("Color", "")
+            if not product_color or str(product_color).lower() != filters["color"].lower():
+                return False
+        
+        # Wireless filter
+        if "wireless" in filters:
+            is_wireless = any(word in (product.title + product.description).lower() 
+                             for word in ["wireless", "inalámbrico", "bluetooth"])
+            if not is_wireless:
+                return False
+        
+        return True
 
     def _raw_retrieve(
         self,
@@ -261,43 +284,6 @@ class Retriever:
         price_penalty = 0.8 if product.price is None else 1.0
         
         return text_sim * category_boost * rating_boost * price_penalty
-
-    def retrieve(
-        self,
-        query: str,
-        k: int = 5,
-        filters: Optional[Dict] = None,
-        min_similarity: float = 0.5  # New threshold
-    ) -> List[Product]:
-        """Hybrid retrieval with deduplication and relevance filtering"""
-        try:
-            # 1. Semantic search with expanded query
-            expanded_query = self._expand_query(query)
-            docs = self._raw_retrieve(" ".join(expanded_query), k=k*2, filters=filters)
-            
-            # 2. Convert to products and deduplicate
-            products = []
-            seen_ids = set()
-            for doc in docs:
-                p = self._doc_to_product(doc)
-                if p and p.id not in seen_ids:
-                    seen_ids.add(p.id)
-                    products.append(p)
-            
-            # 3. Score and filter by relevance
-            scored_products = []
-            for p in products:
-                score = self._score(query, p)
-                if score >= min_similarity:
-                    scored_products.append((score, p))
-            
-            # 4. Sort and return top-k
-            scored_products.sort(key=lambda x: x[0], reverse=True)
-            return [p for (score, p) in scored_products[:k]]
-        
-        except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
-            return []
 
     def _chroma_filter(self, f: Optional[Dict]) -> Dict:
         """Format filters for ChromaDB."""

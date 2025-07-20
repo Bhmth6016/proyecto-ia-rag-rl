@@ -31,8 +31,13 @@ class FilterRange:
     def contains(self, value: Optional[Union[float, int]]) -> bool:
         if value is None:
             return False
-        return self.min <= value <= self.max
-
+        try:
+            # Handle string prices like "$25.99"
+            if isinstance(value, str):
+                value = float(value.replace('$', '').replace(',', '').strip())
+            return self.min <= float(value) <= self.max
+        except (ValueError, TypeError):
+            return False
 
 @dataclass
 class FilterOption:
@@ -54,28 +59,41 @@ class ProductFilter:
         self.rating_range: Optional[FilterRange] = None
         self.brands: Set[str] = set()
         self.features: Dict[str, Set[str]] = defaultdict(set)
+        self.attribute_filters: Dict[str, Set[str]] = defaultdict(set)
 
-    # Single-dispatch apply -------------------------------------------------
+    def add_attribute_filter(self, attribute: str, values: Union[str, List[str]]) -> None:
+        if isinstance(values, str):
+            values = [values]
+        self.attribute_filters[attribute].update(str(v).lower().strip() for v in values)
+
     @singledispatchmethod
     def apply(self, product: Dict[str, Any]) -> bool:
-        if not isinstance(product, dict):
-            return False
-
+        # Price filter
         if self.price_range and not self.price_range.contains(product.get("price")):
             return False
 
+        # Rating filter
         if self.rating_range and not self.rating_range.contains(product.get("average_rating")):
             return False
 
+        # Brand filter
         if self.brands:
             product_brand = product.get("details", {}).get("Brand")
-            if not product_brand or str(product_brand) not in self.brands:
+            if not product_brand or str(product_brand).strip().lower() not in self.brands:
                 return False
 
+        # Feature filters
         for feature, allowed in self.features.items():
             product_val = product.get("details", {}).get(feature)
-            if not product_val or str(product_val) not in allowed:
+            if product_val is None or str(product_val).strip().lower() not in allowed:
                 return False
+
+        # Attribute filters (color, weight, wireless, etc.)
+        for attr, allowed_values in self.attribute_filters.items():
+            product_value = product.get("details", {}).get(attr, "")
+            if not product_value or str(product_value).strip().lower() not in allowed_values:
+                return False
+
         return True
 
     @apply.register(list)
@@ -92,18 +110,19 @@ class ProductFilter:
     def add_brand_filter(self, brands: Union[str, List[str]]) -> None:
         if isinstance(brands, str):
             brands = [brands]
-        self.brands.update(str(b).strip() for b in brands)
+        self.brands.update(str(b).strip().lower() for b in brands)
 
     def add_feature_filter(self, feature: str, values: Union[str, List[str]]) -> None:
         if isinstance(values, str):
             values = [values]
-        self.features[feature].update(str(v).strip() for v in values)
+        self.features[feature].update(str(v).strip().lower() for v in values)
 
     def clear_filters(self) -> None:
         self.price_range = None
         self.rating_range = None
         self.brands.clear()
         self.features.clear()
+        self.attribute_filters.clear()
 
     # Serialization ---------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
@@ -112,6 +131,7 @@ class ProductFilter:
             "rating_range": [self.rating_range.min, self.rating_range.max] if self.rating_range else None,
             "brands": sorted(self.brands),
             "features": {k: sorted(v) for k, v in self.features.items()},
+            "attribute_filters": {k: sorted(v) for k, v in self.attribute_filters.items()},
         }
 
     @classmethod
@@ -126,6 +146,9 @@ class ProductFilter:
         if data.get("features"):
             for feat, vals in data["features"].items():
                 pf.add_feature_filter(feat, vals)
+        if data.get("attribute_filters"):
+            for attr, vals in data["attribute_filters"].items():
+                pf.add_attribute_filter(attr, vals)
         return pf
 
 
@@ -307,6 +330,7 @@ def apply_filters(
     ratings: Optional[List[int]] = None,
     brands: Optional[List[str]] = None,
     features: Optional[Dict[str, List[str]]] = None,
+    attribute_filters: Optional[Dict[str, List[str]]] = None,
 ) -> List[Dict[str, Any]]:
     """One-liner helper."""
     pf = ProductFilter()
@@ -319,6 +343,9 @@ def apply_filters(
     if features:
         for feat, vals in features.items():
             pf.add_feature_filter(feat, vals)
+    if attribute_filters:
+        for attr, vals in attribute_filters.items():
+            pf.add_attribute_filter(attr, vals)
     return pf.apply(products)
 
 

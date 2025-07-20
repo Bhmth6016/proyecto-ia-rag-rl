@@ -1,3 +1,4 @@
+# src/core/agent.py
 from __future__ import annotations
 
 import logging
@@ -155,39 +156,45 @@ class RAGAgent:
         try:
             logger.info(f"Processing query: {query}")
 
-            # 1. Procesamiento de consulta
+            # 1. Process query and extract filters
             processed_query, source_lang = self._process_query(query)
             if not processed_query:
                 return "Error en traducción. Por favor intenta de nuevo."
 
-            # 2. Recuperación de productos con expansión de consulta
+            # 2. Extract filters from query
+            filters = self._extract_filters_from_query(query)
+            
+            # 3. Retrieve products with filters
             try:
                 products = self.retriever.retrieve(
                     query=processed_query,
-                    k=10,  # Recuperamos más para tener opciones
+                    k=10,
                     min_similarity=0.3,
-                    filters=None
+                    filters=filters
                 )
 
                 if not products:
-                    logger.debug("No results found, trying broader search...")
+                    # Try without filters if no results
                     products = self.retriever.retrieve(
-                        query=self._generalize_query(processed_query),
+                        query=processed_query,
                         k=10,
                         min_similarity=0.2,
                         filters=None
                     )
-
+                    
                     if not products:
                         return NO_RESULTS_TEMPLATE.format(
                             query=query,
-                            suggestions="Prueba con términos más específicos como 'crema hidratante' o 'labial mate'"
+                            suggestions="Prueba con términos más específicos o menos filtros"
                         )
+                    else:
+                        return "No encontré productos con esos filtros, pero aquí hay algunas opciones:\n\n" + \
+                               self._format_response(query, products[:3], source_lang)
 
-                # 3. Formatear respuesta directamente
+                # 4. Format response
                 response = self._format_response(query, products[:3], source_lang)
 
-                # Guardar conversación
+                # Save conversation
                 self._save_conversation(query, response)
 
                 return response
@@ -199,6 +206,53 @@ class RAGAgent:
         except Exception as e:
             logger.exception("Error en ask():")
             return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
+
+    def _extract_filters_from_query(self, query: str) -> Dict:
+        """Extract filters from natural language query"""
+        filters = {}
+        
+        # Price filters
+        price_patterns = [
+            (r'precio\s*menor\s*a\s*(\d+)', 'max'),
+            (r'precio\s*mayor\s*a\s*(\d+)', 'min'),
+            (r'price\s*under\s*(\d+)', 'max'),
+            (r'price\s*over\s*(\d+)', 'min'),
+        ]
+        
+        for pattern, filter_type in price_patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            if matches:
+                filters.setdefault('price_range', {})[filter_type] = float(matches[0])
+        
+        # Feature filters
+        feature_patterns = [
+            ('inalámbrico|wireless', 'wireless', True),
+            ('bluetooth', 'bluetooth', True),
+            ('color\s+(rojo|azul|verde|negro|blanco)', 'color', None),
+            ('peso\s*menor\s*a\s*(\d+)\s*(g|gramos|kg|kilos)?', 'max_weight', None),
+        ]
+        
+        for pattern, filter_key, filter_value in feature_patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            if matches:
+                if filter_value is not None:
+                    filters[filter_key] = filter_value
+                else:
+                    filters[filter_key] = matches[0][0] if matches[0] else matches[0]
+        
+        return filters
+
+    def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
+        if not self.enable_translation:
+            return query, None
+
+        source_lang = self.translator.detect_language(query)
+        if source_lang == Language.ENGLISH:
+            return query, None
+
+        english_query = self.translator.translate_to_english(query, source_lang)
+        logger.debug("Translated query: %s -> %s", query, english_query)
+        return english_query, source_lang
 
     def _format_response(self, original_query: str, products: List, target_lang: Optional[Language]) -> str:
         """Formatea exactamente 3 productos en un formato consistente"""
@@ -243,30 +297,6 @@ class RAGAgent:
         if any(term in query.lower() for term in beauty_terms):
             return "productos de belleza"
         return query.split()[0] if query else "producto"
-
-    def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
-        if not self.enable_translation:
-            return query, None
-
-        source_lang = self.translator.detect_language(query)
-        if source_lang == Language.ENGLISH:
-            return query, None
-
-        english_query = self.translator.translate_to_english(query, source_lang)
-        logger.debug("Translated query: %s -> %s", query, english_query)
-        return english_query, source_lang
-
-    def _process_response(self, answer: str, target_lang: Optional[Language]) -> str:
-        if not target_lang or not self.enable_translation:
-            return answer
-        return self.translator.translate_from_english(answer, target_lang)
-
-    def _detect_category(self, query: str) -> Optional[str]:
-        # Simple category detection based on keywords
-        for category in self.tree.categories:
-            if category.lower() in query.lower():
-                return category
-        return None
 
     def chat_loop(self) -> None:
         print("\n=== Amazon RAG ===\nType 'exit' to quit\n")

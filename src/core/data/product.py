@@ -24,6 +24,30 @@ class ProductDetails(BaseModel):
     model: Optional[str] = Field(None, alias="Model")
     features: List[str] = Field(default_factory=list)
     specifications: Dict[str, Any] = Field(default_factory=dict)
+    color: Optional[str] = None
+    weight: Optional[str] = None
+    wireless: Optional[bool] = None
+    bluetooth: Optional[bool] = None
+
+    @validator('specifications', pre=True)
+    def normalize_specifications(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = {}
+        for key, value in v.items():
+            key = key.strip().lower()
+            
+            # Normalize common attributes
+            if 'color' in key:
+                normalized['color'] = str(value)
+            elif 'weight' in key:
+                normalized['weight'] = str(value)
+            elif any(w in key for w in ['wireless', 'inalámbrico']):
+                normalized['wireless'] = bool(value)
+            elif 'bluetooth' in key:
+                normalized['bluetooth'] = bool(value)
+            else:
+                normalized[key] = str(value) if value is not None else ""
+                
+        return normalized
 
     @classmethod
     def safe_create(cls, details_data: Optional[Dict]) -> "ProductDetails":
