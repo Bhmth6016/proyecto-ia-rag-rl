@@ -1,6 +1,4 @@
-"""
-Centralized system initialization with Singleton pattern.
-"""
+# src/core/init.py
 from pathlib import Path
 from typing import List, Optional
 from src.core.data.loader import DataLoader

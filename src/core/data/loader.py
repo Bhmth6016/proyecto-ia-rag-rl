@@ -1,7 +1,4 @@
 # src/core/data/loader.py
-"""
-DataLoader con rutas dinámicas y política de caché desde settings.py
-"""
 
 import json
 import logging

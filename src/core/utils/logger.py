@@ -1,17 +1,5 @@
-# src/core/utils/logger.py
-"""
-Centralised, reusable logging utilities.
-
-Features
---------
-• JSON or plain-text formatting  
-• Console + rotating file handlers  
-• Per-module level overrides  
-• Thread-safe, no duplicate handlers
-"""
-
 from __future__ import annotations
-
+# src/core/utils/logger.py
 import logging
 import logging.handlers
 import sys

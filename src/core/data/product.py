@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+# src/core/data/product.py
 import hashlib
 import re
 from typing import Optional, Dict, List, Any, ClassVar

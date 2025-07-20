@@ -1,5 +1,5 @@
-# src/core/retriever.py
 from __future__ import annotations
+# src/core/retriever.py
 import json
 import numpy as np
 import uuid
@@ -7,7 +7,7 @@ import time
 import logging
 import unicodedata
 from pathlib import Path
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Any
 import re
 from difflib import SequenceMatcher
 from langchain_core.documents import Document

@@ -1,20 +1,5 @@
-# src/core/rag/advanced/rlhf.py
-
-"""
-RLHF fine-tuning orchestrator.
-
-High-level flow
----------------
-1. Pulls **context-rich feedback** produced by `FeedbackProcessor`
-2. Builds reward signals using:
-   - Human rating  
-   - Consistency with retrieved docs (CrossEncoder or category filter)  
-   - Offline RAG evaluator scores
-3. Runs PPO (TRL) with LoRA adapters on the base `flan-t5-*` model.
-4. Saves the LoRA checkpoint + tokenizer for the RAG stack.
-"""
-
 from __future__ import annotations
+# src/core/rag/advanced/rlhf.py
 
 import json
 import logging

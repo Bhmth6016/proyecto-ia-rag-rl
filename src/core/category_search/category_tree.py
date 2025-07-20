@@ -1,14 +1,4 @@
 # src/core/category_search/category_tree.py
-"""
-Unified filtering & category-tree module for the Amazon product catalog.
-Combines:
-  - Hierarchical category tree (CategoryTree)
-  - Global and per-category filter extraction
-  - Runtime ProductFilter with single-dispatch apply()
-  - JSON export utilities
-  - Legacy helpers (sanitize, safe-filename, etc.)
-"""
-
 import json
 import logging
 import re
