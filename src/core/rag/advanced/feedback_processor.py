@@ -1,7 +1,4 @@
 # src/core/rag/advanced/feedback_processor.py
-"""
-Context-aware feedback processor with RLHF pipeline.
-"""
 
 import json
 import logging
@@ -21,21 +18,6 @@ from src.core.utils.translator import TextTranslator, Language
 logger = get_logger(__name__)
 
 class FeedbackProcessor:
-    """
-    Thread-safe, batched feedback collector with rich metadata.
-
-    Usage
-    -----
-    >>> with FeedbackProcessor() as fp:
-    ...     fp.save_feedback(
-    ...         query="noise cancelling earbuds under 100",
-    ...         answer="Sony WF-C500 ...",
-    ...         rating=5,
-    ...         context_docs=[...],
-    ...         category_tree=my_tree,  # optional
-    ...         active_filter=my_filter  # optional
-    ...     )
-    """
 
     # ------------------------------------------------------------------
     # Construction
