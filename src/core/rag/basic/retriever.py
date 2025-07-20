@@ -1,9 +1,9 @@
 # src/core/retriever.py
 from __future__ import annotations
-import json  # Añadir esto con las otras importaciones
+import json
 import numpy as np
 import uuid
-import time 
+import time
 import logging
 import unicodedata
 from pathlib import Path
@@ -44,7 +44,7 @@ _SYNONYMS: Dict[str, List[str]] = {
     "deporte": ["sport", "ball", "bike", "outdoor", "fitness", "exercise", "yoga", "gym"],
     "jardín": ["garden", "patio", "outdoor", "grill", "barbecue", "mower", "plant"],
     "suscripción": ["subscription", "box", "plan", "monthly", "auto-renew"],
-    "belleza": ["beauty", "makeup", "skincare", "cosmetics", "perfume", "lipstick", "serum", "cream"],
+    "belleza": ["beauty", "makeup", "skincare", "cosmetics", "perfume", "lipstick", "serum", "cream", "all beauty"],
     "oficina": ["office", "printer", "stationery", "paper", "desk", "chair", "shredder"],
     "musica": ["music", "instrumentos", "instrumentos musicales", "audio"],
     "app": ["application", "software", "programa", "aplicación"],
@@ -86,30 +86,25 @@ class Retriever:
             model_kwargs={"device": self.device},
             encode_kwargs={
                 'normalize_embeddings': True,
-                'batch_size': 32  # Reduce si hay problemas de memoria
+                'batch_size': 32  # Reduce if there are memory issues
             }
         )
 
         self.store = None
 
-
     def _expand_query(self, query: str) -> List[str]:
         """More robust query expansion"""
-        def _normalize(text: str) -> str:
-            """Lower-case + strip accents."""
-            text = unicodedata.normalize("NFD", text)
-            text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-            return text.lower().strip()
-        
         base = _normalize(query)
         expansions = {base}
         
-        # Add category-specific terms
-        if "musica" in base:
-            expansions.update(["guitar", "piano", "drums"])
-        if "app" in base:
-            expansions.update(["mobile", "android", "ios"])
-            
+        # Add beauty-specific terms
+        beauty_terms = ["belleza", "beauty", "maquillaje", "cosmeticos", "skincare", "cuidado facial"]
+        if any(term in base for term in beauty_terms):
+            expansions.update([
+                "makeup", "skincare", "cosmetics", "perfume", "crema", "serum",
+                "labial", "brocha", "paleta", "rubor", "base", "corrector"
+            ])
+        
         # Add general synonyms
         for key, syns in _SYNONYMS.items():
             if key in base:
@@ -117,9 +112,14 @@ class Retriever:
             for s in syns:
                 if s in base:
                     expansions.add(key)
+        
+        # Ensure the original query is always included
+        if base not in expansions:
+            expansions.add(base)
+        
         return list(expansions)
 
-    def build_index(self, products: List[Product], batch_size: int = 1000) -> None:
+    ''' def build_index(self, products: List[Product], batch_size: int = 1000) -> None:
         """Build index with proper error handling and batching"""
         try:
             if not products:
@@ -189,8 +189,7 @@ class Retriever:
 
         except Exception as e:
             logger.error(f"❌ Index build failed: {str(e)}")
-            raise RuntimeError(f"Index construction failed: {str(e)}")
-
+            raise RuntimeError(f"Index construction failed: {str(e)}")''' 
 
     def _raw_retrieve(
         self,
@@ -213,8 +212,6 @@ class Retriever:
         try:
             if not doc.metadata:
                 return None
-
-            import json  # Add this line to ensure json is available
 
             # Safely handle JSON parsing
             def safe_json_loads(json_str, default):
@@ -270,7 +267,7 @@ class Retriever:
         query: str,
         k: int = 5,
         filters: Optional[Dict] = None,
-        min_similarity: float = 0.6  # New threshold
+        min_similarity: float = 0.5  # New threshold
     ) -> List[Product]:
         """Hybrid retrieval with deduplication and relevance filtering"""
         try:
@@ -326,24 +323,54 @@ class Retriever:
             print(doc.metadata.get("title"), doc.metadata.get("category"))
 
     def index_exists(self) -> bool:
-        """Verifica si el índice de Chroma existe, con logging detallado."""
+        """Verifica si el índice de Chroma existe de manera más flexible"""
         index_path = Path(self.index_path)
-        exists = index_path.exists()
-        
-        # Log detallado
-        logger.info(
-            f"Verificando índice en: {self.index_path}\n"
-            f"• Directorio existe: {exists}\n"
-            f"• Contenido del directorio: {list(index_path.glob('*')) if exists else 'N/A'}"
-        )
-        
-        # Verificación adicional de archivos críticos de Chroma
-        if exists:
-            required_files = ['chroma.sqlite3', 'chroma-collections.parquet', 'chroma-embeddings.parquet']
-            missing_files = [f for f in required_files if not (index_path / f).exists()]
+        if not index_path.exists():
+            return False
             
-            if missing_files:
-                logger.warning(f"Índice incompleto. Faltan archivos: {missing_files}")
-                return False
-        
-        return exists
+        # Verificación mínima - solo que exista el directorio
+        return True
+
+    def build_index(self, products: List[Product], batch_size: int = 1000) -> None:
+        """Build index with improved error handling"""
+        try:
+            if not products:
+                raise ValueError("No products provided to build index")
+
+            logger.info(f"Starting index build with {len(products)} products")
+            
+            # Convertir productos a documentos
+            documents = [
+                Document(
+                    page_content=product.to_text(),
+                    metadata=product.to_metadata()
+                )
+                for product in products
+                if product.title and product.title != "Untitled Product"
+            ]
+
+            # Crear directorio si no existe
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Construir índice con persistencia
+            self.store = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embedder,
+                persist_directory=str(self.index_path),
+                collection_metadata={"hnsw:space": "cosine"}
+            )
+            
+            # Forzar persistencia inmediata
+            self.store.persist()
+            
+            logger.info(f"✅ Successfully built index with {len(documents)} documents")
+
+        except Exception as e:
+            logger.error(f"❌ Index build failed: {str(e)}")
+            # Limpiar índice incompleto
+            if hasattr(self, 'store') and self.store:
+                try:
+                    self.store.delete_collection()
+                except:
+                    pass
+            raise RuntimeError(f"Index construction failed: {str(e)}")

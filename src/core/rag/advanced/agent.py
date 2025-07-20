@@ -45,7 +45,33 @@ class RAGAgent:
     Agente conversacional basado en recuperación aumentada (RAG)
     para recomendar productos según consultas de lenguaje natural.
     """
+    def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
+        print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
+        system = get_system()
+        self.products = products or system.products
 
+        print("Paso 2/4: Inicializando retriever")
+        self.retriever = system.retriever
+        
+        # Configuración mejorada del índice
+        if not self.retriever.index_exists():
+            print("Construyendo nuevo índice...")
+            self.retriever.build_index(self.products)
+        else:
+            print("Cargando índice existente...")
+            try:
+                from langchain_community.vectorstores import Chroma
+                self.retriever.store = Chroma(
+                    persist_directory=str(settings.VECTOR_INDEX_PATH),
+                    embedding_function=self.retriever.embedder
+                )
+                # Verificación básica
+                _ = self.retriever.store._collection.count()
+            except Exception as e:
+                print(f"Error cargando índice existente: {str(e)}")
+                print("Reconstruyendo índice...")
+                self.retriever.build_index(self.products)
+    """
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
         print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
         system = get_system()
@@ -56,18 +82,21 @@ class RAGAgent:
         max_retries = 3
         retry_delay = 2  # segundos
 
-        for attempt in range(max_retries):
-            try:
-                self.retriever = system.retriever
-                if not self.retriever.store:
-                    print("Construyendo índice...")
-                    self.retriever.build_index(self.products)
-                break
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"Failed to initialize retriever after {max_retries} attempts: {e}")
-                logger.warning(f"Retriever initialization failed (attempt {attempt + 1}), retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
+        self.retriever = system.retriever
+        
+        # Verificar si el índice existe y está cargado correctamente
+        if not self.retriever.index_exists():
+            print("Construyendo índice...")
+            self.retriever.build_index(self.products)
+        else:
+            print("Cargando índice existente...")
+            from langchain_community.vectorstores import Chroma
+            self.retriever.store = Chroma(
+                persist_directory=str(settings.VECTOR_INDEX_PATH),
+                embedding_function=self.retriever.embedder
+            )
+            if not hasattr(self.retriever, 'store') or not self.retriever.store:
+                raise RuntimeError("Failed to load existing Chroma index")
 
         print("Paso 3/4: Configurando traducción")
         self.enable_translation = enable_translation
@@ -98,7 +127,7 @@ class RAGAgent:
 
         self.feedback = FeedbackProcessor(
             feedback_dir=str(settings.DATA_DIR / "feedback")
-        )
+        )"""
 
     def _build_chain(self) -> ConversationalRetrievalChain:
         # Espera activa por el store (máx 10 segundos)
@@ -162,37 +191,40 @@ class RAGAgent:
                 logger.error(f"Translation failed: {e}")
                 return "Error en traducción. Por favor intenta en inglés."
 
-            # 2. Retrieve products with lower threshold and no category filters
+            # 2. Retrieve products with expanded query
             try:
+                # Primero intentar con la consulta exacta
                 products = self.retriever.retrieve(
                     query=processed_query,
-                    k=5,
-                    min_similarity=0.45,  # Umbral más bajo para más coincidencias
-                    filters=None  # Sin filtros por ahora
-                )
-                logger.debug(f"Retrieved {len(products)} products with main query.")
-            except Exception as e:
-                logger.error(f"Retrieval error: {str(e)}")
-                return f"Error al buscar productos: {str(e)}"
-
-            # 3. Si no hay productos, hacer búsqueda de depuración
-            if not products:
-                logger.debug("No se encontraron productos. Ejecutando búsqueda de debug...")
-                debug_products = self.retriever.retrieve(
-                    query="",
                     k=5,
                     min_similarity=0.5,
                     filters=None
                 )
-                logger.debug(f"Debug search found {len(debug_products)} products")
-                return "No encontré productos relevantes. ¿Podrías ser más específico?"
+                
+                # Si no hay resultados, intentar con una búsqueda más amplia
+                if not products:
+                    logger.debug("No results found, trying broader search...")
+                    products = self.retriever.retrieve(
+                        query="beauty",  # Término más general
+                        k=5,
+                        min_similarity=0.4,
+                        filters=None
+                    )
 
-            # 4. Formatear respuesta
-            response = ["Aquí tienes mis recomendaciones:"]
+                logger.debug(f"Retrieved {len(products)} products")
+            except Exception as e:
+                logger.error(f"Retrieval error: {str(e)}")
+                return f"Error al buscar productos: {str(e)}"
+
+            if not products:
+                return "No encontré productos. Intenta con términos más específicos como 'crema facial' o 'labiales'."
+
+            # 3. Formatear respuesta
+            response = ["Aquí tienes mis recomendaciones de belleza:"]
             for i, product in enumerate(products, 1):
                 price = f"${product.price:.2f}" if product.price else "Precio no disponible"
                 rating = f"{product.average_rating}/5" if product.average_rating else "Sin calificaciones"
-                category = product.main_category or "Varios"
+                category = product.main_category or "Belleza"
 
                 response.append(
                     f"{i}. {product.title}\n"
@@ -204,8 +236,6 @@ class RAGAgent:
         except Exception as e:
             logger.exception("Critical error in ask():")
             return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
-
-
 
     def test_retrieval(self, query: str = "beauty") -> bool:
         """Test if retrieval is working"""

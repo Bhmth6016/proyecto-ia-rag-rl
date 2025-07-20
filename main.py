@@ -10,10 +10,10 @@ from typing import Optional, List
 
 from dotenv import load_dotenv
 import google.generativeai as genai
-from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
+from langchain_core.memory import ConversationBufferMemory
 from src.core.data.loader import DataLoader
 from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
@@ -252,38 +252,36 @@ def _handle_rag_mode(system, args):
     if not products:
         raise RuntimeError("No products loaded")
 
-    # Ensure retriever is properly connected to the store
+    # Initialize retriever properly
     if not hasattr(system.retriever, 'store') or not system.retriever.store:
-        logger.info("Initializing Chroma store...")
-        system.retriever.store = Chroma(
-            persist_directory=str(settings.VECTOR_INDEX_PATH),
-            embedding_function=system.retriever.embedder
-        )
-    memory = ConversationBufferMemory(return_messages=True)
-    # modelo con memoria integrada
-    chat_with_memory = ChatGoogleGenerativeAI(
-    model="gemini-pro",
-    memory=memory
-    )
-
-    # Build index if necessary
-    if not system.retriever.index_exists():
-        print("🔨 Building vector index...")
-        system.retriever.build_index(products)
+        print("Initializing Chroma store...")
+        try:
+            system.retriever.store = Chroma(
+                persist_directory=str(settings.VECTOR_INDEX_PATH),
+                embedding_function=system.retriever.embedder
+            )
+        except Exception as e:
+            print(f"Error loading Chroma store: {e}")
+            print("Rebuilding index...")
+            system.retriever.build_index(products)
 
     # Test retrieval
     try:
         test_results = system.retriever.retrieve(query="test", k=1)
-        logger.debug(f"Retriever test successful, got {len(test_results)} results")
+        print(f"Retriever test successful, got {len(test_results)} results")
     except Exception as e:
-        logger.error(f"Retriever test failed: {e}")
+        print(f"Retriever test failed: {e}")
         raise RuntimeError("Retriever initialization failed")
 
-    # Initialize RAG agent
+    # Initialize RAG agent with proper memory
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True
+    )
+    
     agent = RAGAgent(
         products=products,
-        enable_translation=True,
-        llm=chat_with_memory  # Usa el modelo con historial
+        enable_translation=True
     )
 
     print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
@@ -308,18 +306,6 @@ def _handle_rag_mode(system, args):
         except Exception as e:
             logger.error(f"Error in RAG loop: {e}")
             print("⚠️ An error occurred. Please try again.")
-
-
-        try:
-            import json
-            with open("chat_history.json", "w", encoding="utf-8") as f:
-                json.dump(
-                [msg.dict() for msg in memory.chat_memory.messages],
-                f, indent=2, ensure_ascii=False
-            )
-            print("📁 Chat history saved to chat_history.json")
-        except Exception as e:
-            logger.error(f"❌ Failed to save chat history: {e}")
 
 if __name__ == "__main__":
     args = parse_arguments()
