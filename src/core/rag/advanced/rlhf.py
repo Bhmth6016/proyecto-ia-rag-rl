@@ -37,7 +37,7 @@ from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
 from src.core.config import settings
 from src.core.init import get_system
-from src.core.rag.advanced.rlhf import RLHFTrainer
+from src.core.rag.advanced.trainer import RLHFTrainer
 from src.core.rag.advanced.evaluator import RAGEvaluator, load_llm
 # Configuración de logging
 logger = logging.getLogger(__name__)

@@ -9,7 +9,7 @@ load_dotenv()
 
 # GEMINI API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ")
-
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-flash")
 # ChromaDB Configuration
 CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 

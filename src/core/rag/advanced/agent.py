@@ -10,7 +10,7 @@ import uuid
 import time
 import sys
 from sklearn.metrics.pairwise import cosine_similarity
-
+        
 # Imports estándar
 import time
 import sys
@@ -37,8 +37,14 @@ from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
 from src.core.config import settings
 from src.core.init import get_system
-from src.core.rag.advanced.rlhf import RLHFTrainer
+from src.core.rag.advanced.trainer import RLHFTrainer
 from src.core.rag.advanced.evaluator import RAGEvaluator, load_llm
+logging.basicConfig(
+    level=logging.DEBUG,  # Cambiado de INFO a DEBUG
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+
 # Configuración de logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -89,6 +95,7 @@ class RAGAgent:
             temperature=0.3,
         )
         
+        # Use the standard memory implementation for now
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
@@ -214,70 +221,66 @@ class RAGAgent:
 
     def ask(self, query: str) -> str:
         try:
-            logger.info(f"Processing query: {query}")
-
-            # 1. Verificar si hay feedback negativo para consultas similares
-            similar_low_rated = self._find_similar_low_rated(query)
-            if similar_low_rated:
-                # Modificar el prompt para evitar respuestas similares
-                return self._generate_alternative_response(query, similar_low_rated)
-
-            # 1. Process query and extract filters
-            processed_query, source_lang = self._process_query(query)
-            if not processed_query:
-                return "Error en traducción. Por favor intenta de nuevo."
-
-            # 2. Extract filters from query
-            filters = self._extract_filters_from_query(query)
+            logger.debug("=== INICIO DE ASK ===")
             
-            # 3. Retrieve products with filters
-            try:
-                products = self.retriever.retrieve(
-                    query=processed_query,
-                    k=10,
-                    min_similarity=0.3,
-                    filters=filters
-                )
+            # Debug del estado del agente
+            logger.debug(f"Retriever: {hasattr(self, 'retriever')}")
+            logger.debug(f"Translator: {hasattr(self, 'translator')}")
+            logger.debug(f"LLM: {hasattr(self, 'llm')}")
+            
+            # 1. Verificar feedback memory
+            if hasattr(self, 'feedback_memory'):
+                logger.debug(f"Feedback memory items: {len(self.feedback_memory)}")
+            
+            # 2. Procesar consulta
+            logger.debug("Procesando traducción...")
+            processed_query, source_lang = self._process_query(query)
+            logger.debug(f"Query procesada: {processed_query}, lang: {source_lang}")
+            
+            # 3. Extraer filtros
+            filters = self._extract_filters_from_query(query)
+            logger.debug(f"Filtros extraídos: {filters}")
+            
+            # 4. Recuperar productos
+            logger.debug("Iniciando recuperación de productos...")
+            products = []
+            attempts = [
+                (processed_query, filters, 0.3),
+                (processed_query, None, 0.2),
+                (self._generalize_query(processed_query), None, 0.2),
+            ]
 
-                if not products:
-                    # Try without filters if no results
-                    products = self.retriever.retrieve(
-                        query=processed_query,
+            for q, f, min_sim in attempts:
+                logger.debug(f"Intento con query: '{q}', filtros: {f}, sim_min: {min_sim}")
+                try:
+                    new_products = self.retriever.retrieve(
+                        query=q,
                         k=10,
-                        min_similarity=0.2,
-                        filters=None
+                        min_similarity=min_sim,
+                        filters=f
                     )
-                    
-                    if not products:
-                        return NO_RESULTS_TEMPLATE.format(
-                            query=query,
-                            suggestions="Prueba con términos más específicos o menos filtros"
-                        )
-                    else:
-                        return "No encontré productos con esos filtros, pero aquí hay algunas opciones:\n\n" + \
-                               self._format_response(query, products[:3], source_lang)
+                    logger.debug(f"Productos recuperados: {len(new_products)}")
+                    products.extend(p for p in new_products if p not in products)
+                except Exception as e:
+                    logger.error(f"Error en recuperación: {str(e)}", exc_info=True)
 
-                # 4. Format response
-                response = self._format_response(query, products[:3], source_lang)
+            if not products:
+                logger.debug("No se encontraron productos")
+                return NO_RESULTS_TEMPLATE.format(...)
 
-                # Auto-evaluación de la respuesta
-                if self._should_evaluate_response(response):
-                    eval_result = self._evaluate_response(query, response)
-                    if eval_result['score'] < 0.7:  # Umbral de calidad
-                        response = self._improve_response(query, response, eval_result)
-
-                # Save conversation
-                self._save_conversation(query, response)
-
-                return response
-
-            except Exception as e:
-                logger.error(f"Retrieval error: {str(e)}")
-                return f"Error al buscar productos: {str(e)}"
+            # 5. Formatear respuesta
+            logger.debug("Formateando respuesta...")
+            response = self._format_response(query, products[:3], source_lang)
+            logger.debug("Respuesta formateada")
+            
+            # 6. Guardar conversación
+            self._save_conversation(query, response)
+            
+            return response
 
         except Exception as e:
-            logger.exception("Error en ask():")
-            return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
+            logger.error(f"ERROR GLOBAL EN ASK: {str(e)}", exc_info=True)
+            return "Ocurrió un error inesperado. Por favor intenta de nuevo."
 
     def _extract_filters_from_query(self, query: str) -> Dict:
         """Extract filters from natural language query"""
@@ -327,41 +330,81 @@ class RAGAgent:
         return english_query, source_lang
 
     def _format_response(self, original_query: str, products: List, target_lang: Optional[Language]) -> str:
-        """Formatea exactamente 3 productos en un formato consistente"""
-        if len(products) < 3:
-            # Si no hay suficientes productos, completamos con los más relevantes
-            additional = self.retriever.retrieve(
-                query=self._generalize_query(original_query),
-                k=3-len(products),
-                min_similarity=0.2
-            )
-            products.extend(additional[:3-len(products)])
+        logger.info(f"Formatting response for {len(products)} products")
+        if not products:
+            logger.warning("No products to format")
+            return NO_RESULTS_TEMPLATE.format(...)
+        
+        try:
+            # Debug del primer producto
+            if products:
+                logger.debug(f"First product structure: {dir(products[0])}")
+                logger.debug(f"First product title: {getattr(products[0], 'title', 'N/A')}")
+        except Exception as e:
+            logger.error(f"Debug failed: {str(e)}")
+        
+        # Ensure we have unique products
+        unique_products = []
+        seen_ids = set()
+        
+        for product in products:
+            try:
+                # Try different ways to get a unique identifier
+                product_id = getattr(product, 'id', None) or getattr(product, 'product_id', None) or str(getattr(product, 'title', ''))
+                if product_id and product_id not in seen_ids:
+                    seen_ids.add(product_id)
+                    unique_products.append(product)
+            except Exception as e:
+                logger.warning(f"Error processing product: {str(e)}")
+        
+        if not unique_products:
+            return "No se encontraron productos válidos para mostrar."
         
         response = [f"🔍 Resultados para '{original_query}':"]
         
-        for i, product in enumerate(products[:3], 1):
-            price = f"${product.price:.2f}" if product.price else "Precio no disponible"
-            rating = f"{product.average_rating}/5" if product.average_rating else "Sin calificaciones"
-            
-            response.append(
-                f"{i}. 🏷️ **{product.title}** (⭐ {rating})\n"
-                f"   💵 {price} | 📱 {self._get_key_features(product)}\n"
-                f"   📝 {self._get_product_summary(product)}"
-            )
+        for i, product in enumerate(unique_products[:3], 1):
+            try:
+                title = getattr(product, 'title', 'Producto sin nombre')
+                price = getattr(product, 'price', None)
+                rating = getattr(product, 'average_rating', None)
+                
+                price_str = f"${price:.2f}" if price is not None else "Precio no disponible"
+                rating_str = f"{rating}/5" if rating is not None else "Sin calificaciones"
+                
+                response.append(
+                    f"{i}. 🏷️ **{title}** (⭐ {rating_str})\n"
+                    f"   💵 {price_str} | 📱 {self._get_key_features(product)}\n"
+                    f"   📝 {self._get_product_summary(product)}"
+                )
+            except Exception as e:
+                logger.warning(f"Error formatting product {i}: {str(e)}")
+                response.append(f"{i}. [Error mostrando este producto]")
         
         return "\n\n".join(response)
 
     def _get_key_features(self, product) -> str:
-        """Extrae características clave del producto"""
-        features = []
-        if hasattr(product, 'features'):
-            features = product.features[:3]  # Tomar máximo 3 características
-        return " | ".join(features) if features else "Características no especificadas"
+        """Extrae características clave del producto con manejo robusto"""
+        try:
+            features = getattr(product, 'features', [])
+            if isinstance(features, list):
+                return " | ".join(str(f) for f in features[:3]) if features else "Características no especificadas"
+            elif isinstance(features, str):
+                return features[:100] + ("..." if len(features) > 100 else "")
+            return "Características no especificadas"
+        except Exception as e:
+            logger.warning(f"Error getting features: {str(e)}")
+            return "Características no disponibles"
 
     def _get_product_summary(self, product) -> str:
-        """Genera un resumen breve del producto"""
-        desc = getattr(product, 'description', '') or ''
-        return desc[:100] + "..." if len(desc) > 100 else desc or "Descripción no disponible"
+        """Genera un resumen breve del producto con manejo robusto"""
+        try:
+            desc = getattr(product, 'description', None)
+            if not desc:
+                desc = getattr(product, 'title', 'Descripción no disponible')
+            return desc[:100] + ("..." if len(desc) > 100 else "")
+        except Exception as e:
+            logger.warning(f"Error getting description: {str(e)}")
+            return "Descripción no disponible"
 
     def _generalize_query(self, query: str) -> str:
         """Generaliza la consulta para búsquedas más amplias"""
@@ -437,21 +480,17 @@ class RAGAgent:
                 if query.lower() in {"exit", "quit", "q"}:
                     print("\n🤖 Goodbye! Have a nice day!")
                     break
-                
                 # Process query and get response
                 print("\n🤖 Processing your request...")
                 answer = self.ask(query)
-                
                 # Display response
                 print("\n🤖 Recommendation:")
                 print("=" * 50)
                 print(answer)
                 print("=" * 50)
-                
                 # Get feedback
                 while True:
                     feedback = input("\n🤖 Was this helpful? (1-5, 'skip', or 'more' for alternatives): ").strip().lower()
-                    
                     if feedback in {'1', '2', '3', '4', '5'}:
                         self._log_feedback(
                             query=query,
@@ -472,7 +511,6 @@ class RAGAgent:
                         print("-" * 50)
                     else:
                         print("Please enter 1-5, 'skip', or 'more'")
-                        
             except KeyboardInterrupt:
                 print("\n🛑 Session ended by user")
                 break
@@ -485,7 +523,6 @@ class RAGAgent:
             products = self.retriever.retrieve(query=query, k=10)  # Get more results
             if len(products) <= 5:
                 return "No additional options available."
-                
             response = ["Here are some additional options:"]
             for i, product in enumerate(products[5:8], 6):  # Show next 3 results
                 product_info = [
@@ -494,12 +531,10 @@ class RAGAgent:
                     f"   ⭐ Rating: {product.average_rating if product.average_rating else 'No ratings yet'}",
                 ]
                 response.extend(product_info)
-                
             return "\n".join(response)
         except Exception as e:
             logger.error(f"Error getting more options: {str(e)}")
             return "Couldn't retrieve additional options at this time."
-        
 
     @classmethod
     def from_pickle_dir(
