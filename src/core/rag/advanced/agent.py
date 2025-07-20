@@ -162,24 +162,32 @@ class RAGAgent:
                 logger.error(f"Translation failed: {e}")
                 return "Error en traducción. Por favor intenta en inglés."
 
-            # 2. Retrieve products with improved similarity threshold
+            # 2. Retrieve products with lower threshold and no category filters
             try:
-                filters = {"main_category": "All Beauty"} if "belleza" in query.lower() else None
                 products = self.retriever.retrieve(
                     query=processed_query,
                     k=5,
-                    min_similarity=0.65,
-                    filters=filters
+                    min_similarity=0.45,  # Umbral más bajo para más coincidencias
+                    filters=None  # Sin filtros por ahora
                 )
-                logger.debug(f"Retrieved {len(products)} products")
+                logger.debug(f"Retrieved {len(products)} products with main query.")
             except Exception as e:
                 logger.error(f"Retrieval error: {str(e)}")
                 return f"Error al buscar productos: {str(e)}"
 
+            # 3. Si no hay productos, hacer búsqueda de depuración
             if not products:
+                logger.debug("No se encontraron productos. Ejecutando búsqueda de debug...")
+                debug_products = self.retriever.retrieve(
+                    query="",
+                    k=5,
+                    min_similarity=0.5,
+                    filters=None
+                )
+                logger.debug(f"Debug search found {len(debug_products)} products")
                 return "No encontré productos relevantes. ¿Podrías ser más específico?"
 
-            # 3. Format response
+            # 4. Formatear respuesta
             response = ["Aquí tienes mis recomendaciones:"]
             for i, product in enumerate(products, 1):
                 price = f"${product.price:.2f}" if product.price else "Precio no disponible"
@@ -196,6 +204,7 @@ class RAGAgent:
         except Exception as e:
             logger.exception("Critical error in ask():")
             return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
+
 
 
     def test_retrieval(self, query: str = "beauty") -> bool:

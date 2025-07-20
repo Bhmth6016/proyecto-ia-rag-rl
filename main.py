@@ -238,6 +238,10 @@ def _run_index_mode():
         logger.error(f"Failed to build index: {str(e)}")
         return
 
+memory = ConversationBufferMemory(return_messages=True)     
+
+
+
 
 def _handle_rag_mode(system, args):
     """Handle RAG interaction with automatic index creation"""
@@ -255,6 +259,12 @@ def _handle_rag_mode(system, args):
             persist_directory=str(settings.VECTOR_INDEX_PATH),
             embedding_function=system.retriever.embedder
         )
+    memory = ConversationBufferMemory(return_messages=True)
+    # modelo con memoria integrada
+    chat_with_memory = ChatGoogleGenerativeAI(
+    model="gemini-pro",
+    memory=memory
+    )
 
     # Build index if necessary
     if not system.retriever.index_exists():
@@ -272,7 +282,8 @@ def _handle_rag_mode(system, args):
     # Initialize RAG agent
     agent = RAGAgent(
         products=products,
-        enable_translation=True
+        enable_translation=True,
+        llm=chat_with_memory  # Usa el modelo con historial
     )
 
     print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
@@ -297,6 +308,18 @@ def _handle_rag_mode(system, args):
         except Exception as e:
             logger.error(f"Error in RAG loop: {e}")
             print("⚠️ An error occurred. Please try again.")
+
+
+        try:
+            import json
+            with open("chat_history.json", "w", encoding="utf-8") as f:
+                json.dump(
+                [msg.dict() for msg in memory.chat_memory.messages],
+                f, indent=2, ensure_ascii=False
+            )
+            print("📁 Chat history saved to chat_history.json")
+        except Exception as e:
+            logger.error(f"❌ Failed to save chat history: {e}")
 
 if __name__ == "__main__":
     args = parse_arguments()
