@@ -16,6 +16,7 @@ from pydantic import BaseModel  # Updated import
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.evaluator import RAGEvaluator, EvaluationMetric
 from src.core.utils.logger import get_logger
+from src.core.utils.translator import TextTranslator, Language
 
 logger = get_logger(__name__)
 
@@ -76,6 +77,9 @@ class FeedbackProcessor:
         self.failed_queries_log = self.feedback_dir / "failed_queries.log"
         self.failed_queries_log.touch(exist_ok=True)
 
+        # Translator
+        self.translator = TextTranslator()
+
         logger.info("FeedbackProcessor v2 initialized at %s", self.feedback_dir)
 
     # ------------------------------------------------------------------
@@ -98,16 +102,28 @@ class FeedbackProcessor:
         All heavy work (evaluation, category tagging) is delegated to the
         thread-pool so the call returns instantly.
         """
+        # Detectar idioma y traducir
+        lang = self.translator.detect_language(query)
+        query_en = self.translator.translate_for_rlhf(query, lang)
+        answer_es = self.translator.translate_from_english(answer, lang)
+        
+        # Extraer términos de dominio
+        domain_terms = self.translator.extract_domain_terms(query)
+        
         record = {
-            "query": query,
-            "answer": answer,
+            "timestamp": datetime.utcnow().isoformat(),
+            "query_es": query,
+            "query_en": query_en,
+            "answer_en": answer,
+            "answer_es": answer_es,
             "rating": int(rating),
+            "lang": lang.value,
+            "domain_terms": domain_terms,
             "retrieved_docs": retrieved_docs or [],
             "category_path": None,
             "active_filter": active_filter.to_dict() if active_filter else None,
             "eval_scores": None,
             "extra_meta": extra_meta or {},
-            "timestamp": datetime.utcnow().isoformat(),
             "processed": False,
         }
 
@@ -132,9 +148,9 @@ class FeedbackProcessor:
             # 1. Evaluate if we have docs and an evaluator
             if record["retrieved_docs"] and self.evaluator:
                 evals = self.evaluator.evaluate_all(
-                    question=record["query"],
+                    question=record["query_en"],
                     documents=record["retrieved_docs"],
-                    answer=record["answer"],
+                    answer=record["answer_en"],
                 )
                 # Serialize EvaluationMetric objects
                 record["eval_scores"] = {
@@ -218,15 +234,15 @@ class FeedbackProcessor:
                 continue
             samples.append(
                 {
-                    "prompt": f"User: {rec['query']}\nContext: {rec['retrieved_docs']}\nAnswer:",
-                    "response": rec["answer"],
+                    "prompt": f"User: {rec['query_en']}\nContext: {rec['retrieved_docs']}\nAnswer:",
+                    "response": rec["answer_en"],
                     "quality_score": rec.get("eval_scores", {})
                     .get("quality", {})
                     .get("score"),
                     "metadata": {
                         k: v
                         for k, v in rec.items()
-                        if k not in {"query", "answer", "retrieved_docs"}
+                        if k not in {"query_en", "answer_en", "retrieved_docs"}
                     },
                 }
             )
@@ -257,7 +273,7 @@ class FeedbackProcessor:
                 quality_sum += q
                 quality_cnt += 1
 
-            query = rec["query"].lower()
+            query = rec["query_en"].lower()
             stats["common_queries"][query] = stats["common_queries"].get(query, 0) + 1
 
         if stats["total"]:
@@ -321,7 +337,7 @@ class FeedbackProcessor:
             for line in f:
                 try:
                     record = json.loads(line)
-                    query = record["query"].lower()
+                    query = record["query_en"].lower()
                     # Detect new synonyms
                     for word in query.split():
                         if re.match(r"\b\w+\b", word):
@@ -357,7 +373,7 @@ class FeedbackProcessor:
         """
         if not record.get("retrieved_docs"):
             return "no_documents_retrieved"
-        elif not record.get("answer"):
+        elif not record.get("answer_en"):
             return "empty_response"
         else:
             return "low_relevance"

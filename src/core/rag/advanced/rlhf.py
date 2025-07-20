@@ -18,7 +18,7 @@ from transformers import (
     DataCollatorForSeq2SeqLM,
 )
 from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from src.core.config import settings
 from src.core.category_search.category_tree import ProductFilter
@@ -92,7 +92,142 @@ class RLHFTrainer:
 
         self.evaluator = RAGEvaluator(load_evaluator_llm())
 
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+
         logger.info("RLHFTrainer initialised on %s", self.device)
+
+    def prepare_rlhf_dataset(self, feedback_dir: Path, min_samples: int = 1000):
+        """Carga y procesa los feedbacks para RLHF"""
+        feedback_files = list(feedback_dir.glob("*.jsonl"))
+        
+        # Validar que hay suficientes muestras
+        samples = []
+        for file in feedback_files:
+            with open(file) as f:
+                samples.extend([json.loads(line) for line in f])
+        
+        if len(samples) < min_samples:
+            raise ValueError(f"Se requieren al menos {min_samples} muestras, solo hay {len(samples)}")
+        
+        # Procesar cada muestra
+        dataset = []
+        for sample in samples:
+            reward_data = self.compute_reward(
+                query=sample["query_es"],
+                response=sample["answer_en"],
+                rating=sample["rating"],
+                source_lang=sample["lang"],
+                translated_query=sample["query_en"]
+            )
+            
+            dataset.append({
+                "prompt": sample["query_en"],
+                "response": sample["answer_en"],
+                "reward": reward_data["reward"],
+                "metadata": {
+                    "original_query": sample["query_es"],
+                    "lang": sample["lang"],
+                    "domain_terms": sample.get("domain_terms", {})
+                }
+            })
+        
+        return dataset
+
+    def compute_reward(
+        self,
+        query: str,
+        response: str,
+        rating: int,
+        source_lang: str,
+        translated_query: str
+    ) -> Dict[str, float]:
+        """Cálculo de recompensa mejorado con múltiples componentes"""
+        
+        # 1. Componente humano (normalizado y suavizado)
+        human_norm = self._normalize_human_feedback(rating)
+        
+        # 2. Métricas automáticas
+        auto_metrics = {
+            'consistency': self._check_consistency(response, translated_query),
+            'translation_quality': self._eval_translation_quality(query, response, source_lang),
+            'domain_term_presence': self._check_domain_terms(response, source_lang),
+            'response_quality': self._evaluate_response_quality(response)
+        }
+        
+        # 3. Pesos dinámicos
+        weights = self._calculate_dynamic_weights(auto_metrics, human_norm)
+        
+        # 4. Recompensa final
+        reward = sum(
+            weights[component] * auto_metrics[component]
+            for component in auto_metrics
+        ) + weights['human'] * human_norm
+        
+        return {
+            'reward': float(np.clip(reward, 0.0, 1.0)),
+            'weights': weights,
+            'components': {
+                'human': human_norm,
+                **auto_metrics
+            }
+        }
+    
+    def _normalize_human_feedback(self, rating: int) -> float:
+        """Normaliza el rating 1-5 a rango 0-1 con suavizado"""
+        rating = max(1, min(5, rating))  # Asegurar rango
+        return (rating - 1) / 4.0  # 1→0.0, 5→1.0
+    
+    def _check_consistency(self, response: str, query: str) -> float:
+        """Evalúa consistencia semántica entre pregunta y respuesta"""
+        # Embeddings de pregunta y respuesta
+        query_embedding = self.embedder.encode(query, convert_to_tensor=True)
+        response_embedding = self.embedder.encode(response, convert_to_tensor=True)
+        
+        # Similitud coseno
+        cos_sim = torch.nn.functional.cosine_similarity(
+            query_embedding, response_embedding, dim=0
+        )
+        return float(cos_sim.item())
+    
+    def _eval_translation_quality(self, original_query: str, response_en: str, source_lang: str) -> float:
+        """Evalúa preservación de términos clave en la respuesta"""
+        if source_lang == 'en':
+            return 1.0  # No aplica para inglés original
+        
+        # Extraer términos de dominio del query original
+        domain_terms = set(self.translator.DOMAIN_TERMS.keys())
+        found_terms = [term for term in domain_terms if term in original_query.lower()]
+        
+        if not found_terms:
+            return 0.8  # Valor base cuando no hay términos específicos
+        
+        # Verificar términos en respuesta
+        preserved = 0
+        for term in found_terms:
+            en_term = self.translator.DOMAIN_TERMS[term]["en"]
+            if en_term.lower() in response_en.lower():
+                preserved += 1
+        
+        return preserved / len(found_terms)
+    
+    def _calculate_dynamic_weights(self, auto_metrics: Dict, human_score: float) -> Dict:
+        """Calcula pesos dinámicos basados en calidad de señales"""
+        base_weights = {
+            'human': 0.6,
+            'consistency': 0.2,
+            'translation_quality': 0.1,
+            'domain_term_presence': 0.05,
+            'response_quality': 0.05
+        }
+        
+        # Ajustar pesos basado en confianza
+        if human_score < 0.3:  # Feedback humano poco confiable
+            base_weights['human'] *= 0.5
+            base_weights['consistency'] *= 1.5
+        
+        # Re-normalizar
+        total = sum(base_weights.values())
+        return {k: v/total for k, v in base_weights.items()}
 
     def build_dataset(
         self,
@@ -120,38 +255,6 @@ class RLHFTrainer:
         raw = Dataset.from_list(all_records)
         split = raw.train_test_split(test_size=val_ratio, seed=42)
         return split["train"], split["test"]
-
-    def compute_reward(
-        self,
-        query: str,
-        response: str,
-        sources: List[str],
-        record: Dict[str, Any],
-    ) -> float:
-        """
-        Multi-component reward:
-        R = w1*R_human + w2*R_eval + w3*R_consistency
-        """
-        rewards = []
-
-        rating = int(record.get("rating", 3))
-        rewards.append(rating / 5.0)
-
-        eval_scores = record.get("eval_scores", {})
-        if eval_scores:
-            rewards.append(eval_scores.get("quality", {}).get("score", 3.0) / 5.0)
-        else:
-            rewards.append(0.5)
-
-        if self.cross_encoder and sources:
-            scores = self.cross_encoder.predict(
-                [(response, doc) for doc in sources]
-            )
-            rewards.append(float(np.mean(scores)))
-        else:
-            rewards.append(0.5)
-
-        return float(np.clip(np.mean(rewards), 0.0, 1.0))
 
     def train(
         self,

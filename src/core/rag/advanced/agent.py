@@ -3,10 +3,13 @@ from __future__ import annotations
 import re
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import uuid
+import time
+import sys
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Imports estándar
 import time
@@ -34,7 +37,8 @@ from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
 from src.core.config import settings
 from src.core.init import get_system
-
+from src.core.rag.advanced.rlhf import RLHFTrainer
+from src.core.rag.advanced.evaluator import RAGEvaluator, load_llm
 # Configuración de logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -93,6 +97,62 @@ class RAGAgent:
         
         # Nueva cadena con el prompt mejorado
         self.chain = self._build_chain()
+        
+        self.feedback_processor = FeedbackProcessor()
+        self.last_rlhf_check = datetime.now()
+        self._setup_rlhf_pipeline()
+        
+        self.feedback_memory = self._load_feedback_memory()
+
+    def _setup_rlhf_pipeline(self):
+        """Verifica periódicamente si hay suficientes feedbacks para reentrenar"""
+        # Verificar cada semana y si hay al menos 1000 muestras
+        if datetime.now() - self.last_rlhf_check > timedelta(days=7):
+            self.last_rlhf_check = datetime.now()
+            feedback_dir = Path("data/feedback")
+            if feedback_dir.exists():
+                feedback_files = list(feedback_dir.glob("*.jsonl"))
+                total_samples = sum(1 for f in feedback_files for _ in open(f))
+                if total_samples >= 1000:
+                    self._retrain_rlhf_model()
+
+    def _retrain_rlhf_model(self):
+        """Ejecuta el pipeline completo de RLHF"""
+        print("Iniciando reentrenamiento RLHF...")
+        trainer = RLHFTrainer(
+            base_model_name=settings.MODEL_NAME,
+            device=settings.DEVICE
+        )
+        
+        # 1. Preparar dataset
+        dataset = trainer.prepare_rlhf_dataset(
+            feedback_dir=Path("data/feedback"),
+            min_samples=1000
+        )
+        
+        # 2. Entrenar modelo
+        trainer.train(
+            dataset=dataset,
+            save_dir=Path("models/rlhf_checkpoints")
+        )
+        
+        # 3. Actualizar modelo en producción
+        self.llm = load_llm(model_name="models/rlhf_checkpoints/latest")
+        print("Reentrenamiento RLHF completado y modelo actualizado")
+
+    def _load_feedback_memory(self):
+        """Carga feedbacks previos para evitar repetir respuestas mal evaluadas"""
+        feedback_dir = Path("data/feedback")
+        if not feedback_dir.exists():
+            return []
+        
+        feedbacks = []
+        for file in feedback_dir.glob("*.jsonl"):
+            with open(file) as f:
+                feedbacks.extend([json.loads(line) for line in f])
+        
+        # Filtrar feedbacks con rating bajo
+        return [fb for fb in feedbacks if fb.get('rating', 5) <= 3]
 
     def _build_chain(self) -> ConversationalRetrievalChain:
         # Espera activa por el store (máx 10 segundos)
@@ -156,6 +216,12 @@ class RAGAgent:
         try:
             logger.info(f"Processing query: {query}")
 
+            # 1. Verificar si hay feedback negativo para consultas similares
+            similar_low_rated = self._find_similar_low_rated(query)
+            if similar_low_rated:
+                # Modificar el prompt para evitar respuestas similares
+                return self._generate_alternative_response(query, similar_low_rated)
+
             # 1. Process query and extract filters
             processed_query, source_lang = self._process_query(query)
             if not processed_query:
@@ -193,6 +259,12 @@ class RAGAgent:
 
                 # 4. Format response
                 response = self._format_response(query, products[:3], source_lang)
+
+                # Auto-evaluación de la respuesta
+                if self._should_evaluate_response(response):
+                    eval_result = self._evaluate_response(query, response)
+                    if eval_result['score'] < 0.7:  # Umbral de calidad
+                        response = self._improve_response(query, response, eval_result)
 
                 # Save conversation
                 self._save_conversation(query, response)
@@ -297,6 +369,61 @@ class RAGAgent:
         if any(term in query.lower() for term in beauty_terms):
             return "productos de belleza"
         return query.split()[0] if query else "producto"
+
+    def _find_similar_low_rated(self, query: str, threshold: float = 0.8):
+        """Busca consultas similares con baja calificación"""
+        query_embedding = self.retriever.embedder.encode(query)
+        
+        similar = []
+        for fb in self.feedback_memory:
+            fb_embedding = self.retriever.embedder.encode(fb['query_en'])
+            similarity = cosine_similarity([query_embedding], [fb_embedding])[0][0]
+            if similarity > threshold:
+                similar.append(fb)
+        
+        return similar
+
+    def _generate_alternative_response(self, query: str, bad_feedbacks: list):
+        """Genera una respuesta alternativa basada en feedback negativo"""
+        # Construir prompt con contexto de feedback negativo
+        prompt = f"""
+        El usuario preguntó: {query}
+        
+        Respuestas anteriores con baja calificación (evitar):
+        {', '.join([fb['answer_en'] for fb in bad_feedbacks])}
+        
+        Por favor proporciona una respuesta alternativa diferente y más útil.
+        """
+        
+        return self.llm(prompt)
+
+    def _should_evaluate_response(self, response: str) -> bool:
+        """Determina si una respuesta debe ser evaluada"""
+        # Evaluar solo respuestas largas o con ciertas características
+        return len(response.split()) > 20
+
+    def _evaluate_response(self, query: str, response: str) -> dict:
+        """Evalúa la calidad de una respuesta"""
+        evaluator = RAGEvaluator(llm=self.llm)
+        return evaluator.evaluate_all(
+            question=query,
+            documents=[],  # Opcional: documentos de referencia
+            answer=response
+        )
+
+    def _improve_response(self, query: str, response: str, evaluation: dict) -> str:
+        """Mejora una respuesta basada en evaluación"""
+        prompt = f"""
+        La siguiente respuesta recibió una baja evaluación:
+        Evaluación: {evaluation['explanation']}
+        
+        Respuesta original:
+        {response}
+        
+        Por favor genera una versión mejorada para la pregunta:
+        {query}
+        """
+        return self.llm(prompt)
 
     def chat_loop(self) -> None:
         print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
