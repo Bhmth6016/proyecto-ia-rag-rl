@@ -318,16 +318,28 @@ class RAGAgent:
         return filters
 
     def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
-        if not self.enable_translation:
-            return query, None
+        try:
+            logger.debug(f"Procesando query: {query}")
+            if not self.enable_translation:
+                logger.debug("Traducción desactivada")
+                return query, None
 
-        source_lang = self.translator.detect_language(query)
-        if source_lang == Language.ENGLISH:
-            return query, None
+            logger.debug("Detectando idioma...")
+            source_lang = self.translator.detect_language(query)
+            logger.debug(f"Idioma detectado: {source_lang}")
 
-        english_query = self.translator.translate_to_english(query, source_lang)
-        logger.debug("Translated query: %s -> %s", query, english_query)
-        return english_query, source_lang
+            if source_lang == Language.ENGLISH:
+                logger.debug("Idioma es inglés, no se traduce")
+                return query, None
+
+            logger.debug("Traduciendo a inglés...")
+            english_query = self.translator.translate_to_english(query, source_lang)
+            logger.debug(f"Query traducida: {english_query}")
+            return english_query, source_lang
+
+        except Exception as e:
+            logger.error(f"Error en _process_query: {str(e)}", exc_info=True)
+            raise
 
     def _format_response(self, original_query: str, products: List, target_lang: Optional[Language]) -> str:
         logger.info(f"Formatting response for {len(products)} products")
