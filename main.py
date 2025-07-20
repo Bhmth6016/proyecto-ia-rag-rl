@@ -13,7 +13,7 @@ import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from langchain_community.vectorstores import Chroma
-from langchain_core.memory import ConversationBufferMemory
+from langchain.memory import ConversationBufferMemory
 from src.core.data.loader import DataLoader
 from src.core.rag.advanced.agent import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
