@@ -11,15 +11,14 @@ import numpy as np
 import torch
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model, TaskType
+from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
+from sentence_transformers import CrossEncoder, SentenceTransformer
 from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
     TrainingArguments,
-    DataCollatorForSeq2SeqLM,
+    DataCollatorForSeq2Seq  # Note the name change
 )
-from trl import PPOTrainer, PPOConfig, AutoModelForCausalLMWithValueHead
-from sentence_transformers import CrossEncoder, SentenceTransformer
-
 from src.core.config import settings
 from src.core.category_search.category_tree import ProductFilter
 from src.core.rag.advanced.evaluator import RAGEvaluator, load_evaluator_llm
