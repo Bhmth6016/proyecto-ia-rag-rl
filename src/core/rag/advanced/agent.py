@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
+import uuid
 
 # Imports estándar
 import time
@@ -42,34 +45,31 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 
 
 class RAGAgent:
-    """
-    Agente conversacional basado en recuperación aumentada (RAG)
-    para recomendar productos según consultas de lenguaje natural.
-    """
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
         print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
         system = get_system()
         self.products = products or system.products
-
+        
+        # Configurar directorio de historial
+        self.history_dir = settings.PROC_DIR / "historial"
+        self.history_dir.mkdir(exist_ok=True)
+        
         print("Paso 2/4: Inicializando retriever")
         self.retriever = system.retriever
         
-        # Configuración mejorada del índice
         if not self.retriever.index_exists():
             print("Construyendo nuevo índice...")
             self.retriever.build_index(self.products)
         else:
             print("Cargando índice existente...")
             try:
-                from langchain_community.vectorstores import Chroma
+                from langchain_chroma import Chroma  # Versión actualizada
                 self.retriever.store = Chroma(
                     persist_directory=str(settings.VECTOR_INDEX_PATH),
                     embedding_function=self.retriever.embedder
                 )
-                # Verificación básica
-                _ = self.retriever.store._collection.count()
             except Exception as e:
-                print(f"Error cargando índice existente: {str(e)}")
+                print(f"Error cargando índice: {str(e)}")
                 print("Reconstruyendo índice...")
                 self.retriever.build_index(self.products)
 
@@ -77,32 +77,21 @@ class RAGAgent:
         self.enable_translation = enable_translation
         self.translator = TextTranslator() if enable_translation else None
 
-        print("Paso 4/4: Creando cadena de conversación")
-        self.tree = CategoryTree(self.products).build_tree()
-        self.active_filter = ProductFilter()
-
+        print("Paso 4/4: Configurando cadena de conversación")
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
             google_api_key=settings.GEMINI_API_KEY,
             temperature=0.3,
         )
-
-        self.constraint_extractor = (
-            {"query": RunnablePassthrough()}
-            | QUERY_CONSTRAINT_EXTRACTION_PROMPT
-            | self.llm
-        )
-
+        
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
             return_messages=True,
         )
+        
+        # Nueva cadena con el prompt mejorado
         self.chain = self._build_chain()
-
-        self.feedback = FeedbackProcessor(
-            feedback_dir=str(settings.DATA_DIR / "feedback")
-        )
 
     def _build_chain(self) -> ConversationalRetrievalChain:
         # Espera activa por el store (máx 10 segundos)
@@ -130,6 +119,131 @@ class RAGAgent:
             return_source_documents=False,
         )
 
+    def _save_conversation(self, query: str, response: str, feedback: Optional[str] = None):
+        """Guarda la interacción en un archivo JSON"""
+        timestamp = datetime.now().isoformat()
+        session_id = str(uuid.uuid4())
+        
+        data = {
+            "session_id": session_id,
+            "timestamp": timestamp,
+            "query": query,
+            "response": response,
+            "feedback": feedback,
+            "translation_used": self.enable_translation
+        }
+        
+        filename = self.history_dir / f"conversation_{timestamp[:10]}.json"
+        
+        try:
+            # Si el archivo ya existe, cargamos y agregamos
+            if filename.exists():
+                with open(filename, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+                if not isinstance(existing, list):
+                    existing = [existing]
+                existing.append(data)
+            else:
+                existing = [data]
+                
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error saving conversation: {str(e)}")
+
+    def ask(self, query: str) -> str:
+        try:
+            logger.info(f"Processing query: {query}")
+
+            # 1. Procesamiento de consulta
+            processed_query, source_lang = self._process_query(query)
+            if not processed_query:
+                return "Error en traducción. Por favor intenta de nuevo."
+
+            # 2. Recuperación de productos con expansión de consulta
+            try:
+                products = self.retriever.retrieve(
+                    query=processed_query,
+                    k=10,  # Recuperamos más para tener opciones
+                    min_similarity=0.3,
+                    filters=None
+                )
+
+                if not products:
+                    logger.debug("No results found, trying broader search...")
+                    products = self.retriever.retrieve(
+                        query=self._generalize_query(processed_query),
+                        k=10,
+                        min_similarity=0.2,
+                        filters=None
+                    )
+
+                    if not products:
+                        return NO_RESULTS_TEMPLATE.format(
+                            query=query,
+                            suggestions="Prueba con términos más específicos como 'crema hidratante' o 'labial mate'"
+                        )
+
+                # 3. Formatear respuesta directamente
+                response = self._format_response(query, products[:3], source_lang)
+
+                # Guardar conversación
+                self._save_conversation(query, response)
+
+                return response
+
+            except Exception as e:
+                logger.error(f"Retrieval error: {str(e)}")
+                return f"Error al buscar productos: {str(e)}"
+
+        except Exception as e:
+            logger.exception("Error en ask():")
+            return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
+
+    def _format_response(self, original_query: str, products: List, target_lang: Optional[Language]) -> str:
+        """Formatea exactamente 3 productos en un formato consistente"""
+        if len(products) < 3:
+            # Si no hay suficientes productos, completamos con los más relevantes
+            additional = self.retriever.retrieve(
+                query=self._generalize_query(original_query),
+                k=3-len(products),
+                min_similarity=0.2
+            )
+            products.extend(additional[:3-len(products)])
+        
+        response = [f"🔍 Resultados para '{original_query}':"]
+        
+        for i, product in enumerate(products[:3], 1):
+            price = f"${product.price:.2f}" if product.price else "Precio no disponible"
+            rating = f"{product.average_rating}/5" if product.average_rating else "Sin calificaciones"
+            
+            response.append(
+                f"{i}. 🏷️ **{product.title}** (⭐ {rating})\n"
+                f"   💵 {price} | 📱 {self._get_key_features(product)}\n"
+                f"   📝 {self._get_product_summary(product)}"
+            )
+        
+        return "\n\n".join(response)
+
+    def _get_key_features(self, product) -> str:
+        """Extrae características clave del producto"""
+        features = []
+        if hasattr(product, 'features'):
+            features = product.features[:3]  # Tomar máximo 3 características
+        return " | ".join(features) if features else "Características no especificadas"
+
+    def _get_product_summary(self, product) -> str:
+        """Genera un resumen breve del producto"""
+        desc = getattr(product, 'description', '') or ''
+        return desc[:100] + "..." if len(desc) > 100 else desc or "Descripción no disponible"
+
+    def _generalize_query(self, query: str) -> str:
+        """Generaliza la consulta para búsquedas más amplias"""
+        beauty_terms = ["belleza", "beauty", "crema", "labial", "maquillaje", "skincare"]
+        if any(term in query.lower() for term in beauty_terms):
+            return "productos de belleza"
+        return query.split()[0] if query else "producto"
+
     def _process_query(self, query: str) -> Tuple[str, Optional[Language]]:
         if not self.enable_translation:
             return query, None
@@ -153,95 +267,6 @@ class RAGAgent:
             if category.lower() in query.lower():
                 return category
         return None
-
-    def ask(self, query: str) -> str:
-        try:
-            logger.info(f"Processing query: {query}")
-
-            # 1. Translation and preprocessing
-            try:
-                processed_query, source_lang = self._process_query(query)
-                logger.debug(f"Processed query: {processed_query}")
-            except Exception as e:
-                logger.error(f"Translation failed: {e}")
-                return "Error en traducción. Por favor intenta en inglés."
-
-            # 2. Retrieve products with expanded query
-            try:
-                # Primero intentar con la consulta exacta
-                products = self.retriever.retrieve(
-                    query=processed_query,
-                    k=5,
-                    min_similarity=0.5,
-                    filters=None
-                )
-                
-                # Si no hay resultados, intentar con una búsqueda más amplia
-                if not products:
-                    logger.debug("No results found, trying broader search...")
-                    products = self.retriever.retrieve(
-                        query="beauty",  # Término más general
-                        k=5,
-                        min_similarity=0.4,
-                        filters=None
-                    )
-
-                logger.debug(f"Retrieved {len(products)} products")
-            except Exception as e:
-                logger.error(f"Retrieval error: {str(e)}")
-                return f"Error al buscar productos: {str(e)}"
-
-            if not products:
-                return "No encontré productos. Intenta con términos más específicos como 'crema facial' o 'labiales'."
-
-            # 3. Evaluate relevance of retrieved documents
-            relevant_products = []
-            for product in products:
-                doc_text = f"Titulo: {product.title}\nDescripcion: {product.description}"
-                relevance_result = RELEVANCE_PROMPT.format(document=doc_text, question=processed_query).invoke()
-                if relevance_result == "yes":
-                    relevant_products.append(product)
-
-            if not relevant_products:
-                return "No encontré productos relevantes. Intenta con términos más específicos."
-
-            # 4. Formatear respuesta
-            response = ["Aquí tienes mis recomendaciones de belleza:"]
-            for i, product in enumerate(relevant_products[:3], 1):
-                price = f"${product.price:.2f}" if product.price else "Precio no disponible"
-                rating = f"{product.average_rating}/5" if product.average_rating else "Sin calificaciones"
-                category = product.main_category or "Belleza"
-
-                response.append(
-                    f"{i}. {product.title}\n"
-                    f"   💵 {price} | ⭐ {rating} | 📍 {category}"
-                )
-
-            return "\n".join(response)
-
-        except Exception as e:
-            logger.exception("Critical error in ask():")
-            return "Ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo."
-
-    def test_retrieval(self, query: str = "beauty") -> bool:
-        """Test if retrieval is working"""
-        try:
-            results = self.retriever.retrieve(query=query, k=1)
-            return len(results) > 0
-        except Exception as e:
-            logger.error(f"Retrieval test failed: {e}")
-            return False
-
-    def _log_feedback(self, query: str, answer: str, rating: int, retrieved_docs: List[str], category_tree: CategoryTree, active_filter: ProductFilter, extra_meta: Dict):
-        self.feedback.save_feedback(
-            query=query,
-            answer=answer,
-            rating=rating,
-            retrieved_docs=retrieved_docs,
-            category_tree=category_tree,
-            active_filter=active_filter,
-            extra_meta=extra_meta,
-        )
 
     def chat_loop(self) -> None:
         print("\n=== Amazon RAG ===\nType 'exit' to quit\n")

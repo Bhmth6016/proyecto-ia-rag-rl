@@ -240,9 +240,6 @@ def _run_index_mode():
 
 memory = ConversationBufferMemory(return_messages=True)     
 
-
-
-
 def _handle_rag_mode(system, args):
     """Handle RAG interaction with automatic index creation"""
     print("🛠️ Preparing RAG system...")
