@@ -24,6 +24,7 @@ from src.core.rag.advanced.prompts import (
     NO_RESULTS_TEMPLATE,
     PARTIAL_RESULTS_TEMPLATE,
     QUERY_REWRITE_PROMPT,
+    RELEVANCE_PROMPT  # Importar RELEVANCE_PROMPT
 )
 from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
@@ -71,32 +72,6 @@ class RAGAgent:
                 print(f"Error cargando índice existente: {str(e)}")
                 print("Reconstruyendo índice...")
                 self.retriever.build_index(self.products)
-    """
-    def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
-        print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
-        system = get_system()
-        self.products = products or system.products
-        print(f"DEBUG - Productos cargados: {len(self.products)}")
-
-        print("Paso 2/4: Inicializando retriever")
-        max_retries = 3
-        retry_delay = 2  # segundos
-
-        self.retriever = system.retriever
-        
-        # Verificar si el índice existe y está cargado correctamente
-        if not self.retriever.index_exists():
-            print("Construyendo índice...")
-            self.retriever.build_index(self.products)
-        else:
-            print("Cargando índice existente...")
-            from langchain_community.vectorstores import Chroma
-            self.retriever.store = Chroma(
-                persist_directory=str(settings.VECTOR_INDEX_PATH),
-                embedding_function=self.retriever.embedder
-            )
-            if not hasattr(self.retriever, 'store') or not self.retriever.store:
-                raise RuntimeError("Failed to load existing Chroma index")
 
         print("Paso 3/4: Configurando traducción")
         self.enable_translation = enable_translation
@@ -127,7 +102,7 @@ class RAGAgent:
 
         self.feedback = FeedbackProcessor(
             feedback_dir=str(settings.DATA_DIR / "feedback")
-        )"""
+        )
 
     def _build_chain(self) -> ConversationalRetrievalChain:
         # Espera activa por el store (máx 10 segundos)
@@ -219,9 +194,20 @@ class RAGAgent:
             if not products:
                 return "No encontré productos. Intenta con términos más específicos como 'crema facial' o 'labiales'."
 
-            # 3. Formatear respuesta
+            # 3. Evaluate relevance of retrieved documents
+            relevant_products = []
+            for product in products:
+                doc_text = f"Titulo: {product.title}\nDescripcion: {product.description}"
+                relevance_result = RELEVANCE_PROMPT.format(document=doc_text, question=processed_query).invoke()
+                if relevance_result == "yes":
+                    relevant_products.append(product)
+
+            if not relevant_products:
+                return "No encontré productos relevantes. Intenta con términos más específicos."
+
+            # 4. Formatear respuesta
             response = ["Aquí tienes mis recomendaciones de belleza:"]
-            for i, product in enumerate(products, 1):
+            for i, product in enumerate(relevant_products[:3], 1):
                 price = f"${product.price:.2f}" if product.price else "Precio no disponible"
                 rating = f"{product.average_rating}/5" if product.average_rating else "Sin calificaciones"
                 category = product.main_category or "Belleza"

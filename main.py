@@ -247,40 +247,9 @@ def _handle_rag_mode(system, args):
     """Handle RAG interaction with automatic index creation"""
     print("🛠️ Preparing RAG system...")
 
-    # Load products
-    products = system.products
-    if not products:
-        raise RuntimeError("No products loaded")
-
-    # Initialize retriever properly
-    if not hasattr(system.retriever, 'store') or not system.retriever.store:
-        print("Initializing Chroma store...")
-        try:
-            system.retriever.store = Chroma(
-                persist_directory=str(settings.VECTOR_INDEX_PATH),
-                embedding_function=system.retriever.embedder
-            )
-        except Exception as e:
-            print(f"Error loading Chroma store: {e}")
-            print("Rebuilding index...")
-            system.retriever.build_index(products)
-
-    # Test retrieval
-    try:
-        test_results = system.retriever.retrieve(query="test", k=1)
-        print(f"Retriever test successful, got {len(test_results)} results")
-    except Exception as e:
-        print(f"Retriever test failed: {e}")
-        raise RuntimeError("Retriever initialization failed")
-
     # Initialize RAG agent with proper memory
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        return_messages=True
-    )
-    
     agent = RAGAgent(
-        products=products,
+        products=system.products,
         enable_translation=True
     )
 
@@ -295,10 +264,18 @@ def _handle_rag_mode(system, args):
             answer = agent.ask(query)
             print(f"\n🤖 {answer}\n")
 
-            if not getattr(args, 'no_feedback', False):
-                rating = input("Helpful? (y/n): ").strip().lower()
-                score = parse_binary_score(rating)
-                logging.info(f"Feedback|{query}|{score.name}")
+            # Mejorado el sistema de feedback
+            while True:
+                feedback = input("¿Fue útil esta respuesta? (1-5, 'skip'): ").strip().lower()
+                if feedback in {'1', '2', '3', '4', '5'}:
+                    agent._save_conversation(query, answer, feedback)
+                    print("¡Gracias por tu feedback!")
+                    break
+                elif feedback == 'skip':
+                    agent._save_conversation(query, answer, None)
+                    break
+                else:
+                    print("Por favor ingresa 1-5 o 'skip'")
 
         except KeyboardInterrupt:
             print("\n🛑 Session ended")
