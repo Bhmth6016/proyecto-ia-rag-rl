@@ -19,6 +19,8 @@ import sys
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chat_models import ChatOpenAI
+
 from langchain_core.memory import BaseMemory
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
@@ -94,6 +96,13 @@ class RAGAgent:
             google_api_key=settings.GEMINI_API_KEY,
             temperature=0.3,
         )
+        
+        #self.llm = ChatOpenAI(
+         #   model=settings.OPENAI_MODEL_NAME,
+          #  openai_api_key=settings.OPENAI_API_KEY,
+           # temperature=0.3,
+        #)
+
         
         # Use the standard memory implementation for now
         self.memory = ConversationBufferWindowMemory(

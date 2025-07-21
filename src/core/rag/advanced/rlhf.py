@@ -59,6 +59,14 @@ class RAGAgent:
         self.history_dir = settings.PROC_DIR / "historial"
         self.history_dir.mkdir(exist_ok=True)
         
+        # Initialize feedback counter
+        self.feedback_count = 0
+        feedback_dir = Path("data/feedback")
+        if feedback_dir.exists():
+            feedback_files = list(feedback_dir.glob("*.jsonl"))
+            self.feedback_count = sum(1 for f in feedback_files for _ in open(f))
+        print(f"Cargando {self.feedback_count} feedbacks de data/feedback")
+        
         print("Paso 2/4: Inicializando retriever")
         self.retriever = system.retriever
         
@@ -88,7 +96,13 @@ class RAGAgent:
             google_api_key=settings.GEMINI_API_KEY,
             temperature=0.3,
         )
-        
+        #from langchain.chat_models import ChatOpenAI
+        #self.llm = ChatOpenAI(
+        #    model=settings.OPENAI_MODEL_NAME,
+        #    openai_api_key=settings.OPENAI_API_KEY,
+        #    temperature=0.3,
+        #)
+
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
@@ -113,13 +127,14 @@ class RAGAgent:
     def _setup_rlhf_pipeline(self):
         """Verifica periódicamente si hay suficientes feedbacks para reentrenar"""
         # Verificar cada semana y si hay al menos 1000 muestras
-        if datetime.now() - self.last_rlhf_check > timedelta(days=7):
+        #if datetime.now() - self.last_rlhf_check > timedelta(days=7):
+        if True:
             self.last_rlhf_check = datetime.now()
             feedback_dir = Path("data/feedback")
             if feedback_dir.exists():
                 feedback_files = list(feedback_dir.glob("*.jsonl"))
                 total_samples = sum(1 for f in feedback_files for _ in open(f))
-                if total_samples >= 1000:
+                if total_samples >= 5:
                     self._retrain_rlhf_model()
 
     def _retrain_rlhf_model(self):
@@ -145,6 +160,7 @@ class RAGAgent:
         # 3. Actualizar modelo en producción
         self.llm = load_llm(model_name="models/rlhf_checkpoints/latest")
         print("Reentrenamiento RLHF completado y modelo actualizado")
+        print("✅ Modelo actualizado con RLHF:", self.llm)
 
     def _load_feedback_memory(self):
         """Carga feedbacks previos para evitar repetir respuestas mal evaluadas"""
@@ -528,3 +544,117 @@ class RAGAgent:
         if not products:
             raise RuntimeError("No products found")
         return cls(products=products, enable_translation=enable_translation)
+
+    def _log_feedback(
+        self,
+        query: str,
+        answer: str,
+        rating: int,
+        extra_meta: Optional[dict] = None,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Log user feedback to a JSONL file for RLHF training.
+        
+        Args:
+            query: Original user query
+            answer: Agent's response
+            rating: User rating (1-5)
+            extra_meta: Additional metadata to store
+            timestamp: Optional timestamp for the feedback
+        """
+        feedback_dir = Path("data/feedback")
+        feedback_dir.mkdir(exist_ok=True)
+        
+        timestamp = timestamp or datetime.now().isoformat()
+        date_str = timestamp[:10]  # YYYY-MM-DD
+        
+        # Translate query and answer to English for consistent storage
+        query_en = query
+        answer_en = answer
+        if self.enable_translation:
+            try:
+                source_lang = self.translator.detect_language(query)
+                if source_lang != Language.ENGLISH:
+                    query_en = self.translator.translate(query, source_lang, Language.ENGLISH)
+                    answer_en = self.translator.translate(answer, source_lang, Language.ENGLISH)
+            except Exception as e:
+                logger.warning(f"Could not translate feedback: {str(e)}")
+        
+        feedback_data = {
+            "timestamp": timestamp,
+            "query": query,
+            "query_en": query_en,
+            "answer": answer,
+            "answer_en": answer_en,
+            "rating": rating,
+            "metadata": extra_meta or {},
+        }
+        
+        # Append to daily feedback file
+        feedback_file = feedback_dir / f"feedback_{date_str}.jsonl"
+        
+        try:
+            with open(feedback_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(feedback_data, ensure_ascii=False) + "\n")
+            
+            # Update in-memory feedback for immediate use
+            if rating <= 3:  # Only store negative feedbacks in memory
+                self.feedback_memory.append(feedback_data)
+                
+            logger.info(f"Feedback logged (rating: {rating})")
+        except Exception as e:
+            logger.error(f"Error saving feedback: {str(e)}")
+
+    def evaluate_model_performance(
+        self,
+        test_dataset_path: Path,
+        baseline_model: Optional[str] = None,
+        num_samples: int = 100,
+    ) -> Dict[str, float]:
+        """Evaluate current model against a baseline on a test dataset.
+        
+        Args:
+            test_dataset_path: Path to JSONL file with test queries
+            baseline_model: Name of baseline model to compare against
+            num_samples: Number of samples to evaluate (0 for all)
+            
+        Returns:
+            Dictionary with evaluation metrics
+        """
+        # Load test dataset
+        try:
+            with open(test_dataset_path) as f:
+                test_data = [json.loads(line) for line in f]
+                
+            if num_samples > 0:
+                test_data = test_data[:num_samples]
+                
+            if not test_data:
+                raise ValueError("Test dataset is empty")
+        except Exception as e:
+            logger.error(f"Error loading test dataset: {str(e)}")
+            return {"error": str(e)}
+        
+        evaluator = RAGEvaluator(llm=self.llm)
+        metrics = {
+            "current_model": evaluator.evaluate_batch(test_data),
+            "baseline": None,
+        }
+        
+        # Compare with baseline if provided
+        if baseline_model:
+            try:
+                baseline_llm = load_llm(model_name=baseline_model)
+                baseline_evaluator = RAGEvaluator(llm=baseline_llm)
+                metrics["baseline"] = baseline_evaluator.evaluate_batch(test_data)
+                
+                # Calculate improvement
+                if metrics["baseline"] and metrics["current_model"]:
+                    for metric in ["accuracy", "relevance", "coherence"]:
+                        improvement = metrics["current_model"][metric] - metrics["baseline"][metric]
+                        metrics[f"{metric}_improvement"] = improvement
+            except Exception as e:
+                logger.error(f"Error evaluating baseline: {str(e)}")
+                metrics["baseline_error"] = str(e)
+        
+        return metrics

@@ -1,4 +1,11 @@
 # src/core/rag/advanced/evaluator.py
+"""
+Unified evaluation module for RAG.
+Combines:
+  - Generic and evaluator LLM loading (transformers + LangChain)
+  - RAGEvaluator with relevance, hallucination and quality metrics
+  - Auxiliary prompts and utilities
+"""
 
 from typing import List, Dict, Any
 from dataclasses import dataclass

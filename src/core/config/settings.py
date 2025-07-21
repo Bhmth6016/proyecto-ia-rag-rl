@@ -7,10 +7,14 @@ import torch
 # Load environment variables from .env file
 load_dotenv()
 
+#OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+#MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4")
+
+
 # GEMINI API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-flash")
-# ChromaDB Configuration
+#chromaDB Configuration
 CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 
 # Logging Configuration

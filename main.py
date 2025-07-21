@@ -11,6 +11,10 @@ from typing import Optional, List
 from dotenv import load_dotenv
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
+
+
 
 from langchain_community.vectorstores import Chroma
 from langchain.memory import ConversationBufferMemory
