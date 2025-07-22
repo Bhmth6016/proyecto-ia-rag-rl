@@ -58,7 +58,7 @@ def _setup_rlhf_pipeline(self):
         if feedback_dir.exists():
             feedback_files = list(feedback_dir.glob("*.jsonl"))
             total_samples = sum(1 for f in feedback_files for _ in open(f))
-            if total_samples >= 1000:
+            if total_samples >= 5:
                 self._retrain_rlhf_model()
 
 def _retrain_rlhf_model(self):
