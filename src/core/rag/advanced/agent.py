@@ -18,13 +18,12 @@ import sys
 # Imports de terceros
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.chat_models import ChatOpenAI
-
+#from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain_core.memory import BaseMemory
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
-
+from chromadb.config import Settings as ChromaSettings
 # Imports locales
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
@@ -93,7 +92,11 @@ class RAGAgent:
                 from langchain_chroma import Chroma  # Versión actualizada
                 self.retriever.store = Chroma(
                     persist_directory=str(settings.VECTOR_INDEX_PATH),
-                    embedding_function=self.retriever.embedder
+                    embedding_function=self.retriever.embedder,
+                    client_settings=ChromaSettings(
+                        chroma_db_impl="duckdb+parquet",
+                        anonymized_telemetry=False
+                    )
                 )
             except Exception as e:
                 print(f"Error cargando índice: {str(e)}")
