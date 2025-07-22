@@ -1,5 +1,4 @@
 from __future__ import annotations
-# src/core/rag/advanced/agent.py
 import re
 import logging
 import json
@@ -9,22 +8,24 @@ from typing import List, Dict, Optional, Tuple
 import uuid
 import time
 import sys
+import torch
 from sklearn.metrics.pairwise import cosine_similarity
 import openai
-# Imports estándar
-import time
-import sys
 
-# Imports de terceros
+# Third-party imports
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
-#from langchain_openai import ChatOpenAI
 from langchain_community.chat_models import ChatOpenAI
 from langchain_core.memory import BaseMemory
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
+from langchain_chroma import Chroma
 from chromadb.config import Settings as ChromaSettings
-# Imports locales
+from chromadb import PersistentClient
+
+# Local imports
 from src.core.category_search.category_tree import CategoryTree, ProductFilter
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.rag.advanced.prompts import (
@@ -32,7 +33,7 @@ from src.core.rag.advanced.prompts import (
     NO_RESULTS_TEMPLATE,
     PARTIAL_RESULTS_TEMPLATE,
     QUERY_REWRITE_PROMPT,
-    RELEVANCE_PROMPT  # Importar RELEVANCE_PROMPT
+    RELEVANCE_PROMPT
 )
 from src.core.utils.translator import TextTranslator, Language
 from src.core.rag.basic.retriever import Retriever
@@ -54,13 +55,7 @@ from src.core.rag.advanced.rlhf import (
     evaluate_model_performance
 )
 
-logging.basicConfig(
-    level=logging.DEBUG,  # Cambiado de INFO a DEBUG
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
-# Configuración de logging
+# Configure logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -72,50 +67,62 @@ logging.getLogger("transformers").setLevel(logging.WARNING)
 
 class RAGAgent:
     def __init__(self, products: Optional[List[Dict]] = None, enable_translation: bool = True):
-        print("Inicializando RAGAgent - Paso 1/4: Cargando productos")
+        logger.info("Initializing RAGAgent - Step 1/4: Loading products")
         system = get_system()
         self.products = products or system.products
         
-        # Configurar directorio de historial
+        # Configure history directory
         self.history_dir = settings.PROC_DIR / "historial"
         self.history_dir.mkdir(exist_ok=True)
         
-        print("Paso 2/4: Inicializando retriever")
+        logger.info("Step 2/4: Initializing retriever")
         self.retriever = system.retriever
         
         if not self.retriever.index_exists():
-            print("Construyendo nuevo índice...")
+            logger.info("Building new index...")
             self.retriever.build_index(self.products)
         else:
-            print("Cargando índice existente...")
+            logger.info("Loading existing index...")
             try:
-                from langchain_chroma import Chroma  # Versión actualizada
+                client_settings = ChromaSettings(
+                    chroma_db_impl="duckdb+parquet",
+                    persist_directory=str(settings.VECTOR_INDEX_PATH),
+                    anonymized_telemetry=False
+                )
+                
                 self.retriever.store = Chroma(
                     persist_directory=str(settings.VECTOR_INDEX_PATH),
                     embedding_function=self.retriever.embedder,
-                    client_settings=ChromaSettings(
-                        chroma_db_impl="duckdb+parquet",
-                        anonymized_telemetry=False
-                    )
+                    client_settings=client_settings
                 )
+                
+                # Verify index is loaded
+                if not self.retriever.store._collection.count():
+                    logger.warning("Index exists but is empty - rebuilding")
+                    raise ValueError("Empty index")
+                    
             except Exception as e:
-                print(f"Error cargando índice: {str(e)}")
-                print("Reconstruyendo índice...")
+                logger.warning(f"Failed to load index: {str(e)} - rebuilding")
                 self.retriever.build_index(self.products)
 
-        print("Paso 3/4: Configurando traducción")
+        logger.info("Step 3/4: Configuring translation")
         self.enable_translation = enable_translation
-        self.translator = TextTranslator() if enable_translation else None
+        # Use GPU if available
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.translator = TextTranslator(device=device) if enable_translation else None
 
-        print("Paso 4/4: Configurando cadena de conversación")
+        logger.info("Step 4/4: Configuring conversation chain")
         self.llm = ChatOpenAI(
-            model=settings.OPENAI_MODEL_NAME,
+            model_name=settings.OPENAI_MODEL_NAME,
             openai_api_key=settings.OPENAI_API_KEY,
             temperature=0.3,
         )
         
+        # Initialize memory with proper message history
+        self.message_history = ChatMessageHistory()
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
+            chat_memory=self.message_history,
             k=5,
             return_messages=True,
         )
@@ -128,13 +135,21 @@ class RAGAgent:
         
         self.feedback_memory = self._load_feedback_memory()
 
+    def index_is_compatible(self) -> bool:
+        """Check if existing index is compatible with current version"""
+        try:
+            return hasattr(self.retriever.store, '_client') and isinstance(self.retriever.store._client, PersistentClient)
+        except:
+            return False
+
     def _build_chain(self) -> ConversationalRetrievalChain:
-        # Espera activa por el store (máx 10 segundos)
+        # Wait for store to initialize (max 10 seconds)
         start_time = time.time()
         while not hasattr(self.retriever, 'store') or self.retriever.store is None:
             if time.time() - start_time > 10:
                 raise RuntimeError("Timeout waiting for retriever store to initialize")
             time.sleep(0.5)
+        
         if not self.retriever.store:
             raise ValueError("Retriever store is not initialized. Please check the index path and ensure the index is built.")
         
@@ -146,12 +161,14 @@ class RAGAgent:
             "Pregunta: {question}\n"
             "Respuesta:"
         )
+        
         return ConversationalRetrievalChain.from_llm(
             llm=self.llm,
             retriever=self.retriever.store.as_retriever(search_kwargs={"k": 5}),
             memory=self.memory,
             combine_docs_chain_kwargs={"prompt": prompt},
-            return_source_documents=False,
+            return_source_documents=True,
+            verbose=True
         )
 
     def _save_conversation(self, query: str, response: str, feedback: Optional[str] = None):
