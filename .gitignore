@@ -30,3 +30,4 @@ __pycache__/
 Thumbs.db
 /build
 /env
+src/core/config/settings.py

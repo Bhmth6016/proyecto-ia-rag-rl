@@ -10,7 +10,7 @@ import uuid
 import time
 import sys
 from sklearn.metrics.pairwise import cosine_similarity
-        
+import openai
 # Imports estándar
 import time
 import sys
@@ -18,7 +18,7 @@ import sys
 # Imports de terceros
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain.chat_models import ChatOpenAI
 
 from langchain_core.memory import BaseMemory
@@ -41,6 +41,20 @@ from src.core.config import settings
 from src.core.init import get_system
 from src.core.rag.advanced.trainer import RLHFTrainer
 from src.core.rag.advanced.evaluator import RAGEvaluator, load_llm
+from src.core.rag.advanced.rlhf import (
+    _setup_rlhf_pipeline,
+    _retrain_rlhf_model,
+    _load_feedback_memory,
+    _find_similar_low_rated,
+    _generate_alternative_response,
+    _should_evaluate_response,
+    _evaluate_response,
+    _improve_response,
+    _log_feedback,
+    _get_more_options,
+    evaluate_model_performance
+)
+
 logging.basicConfig(
     level=logging.DEBUG,  # Cambiado de INFO a DEBUG
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
@@ -91,27 +105,18 @@ class RAGAgent:
         self.translator = TextTranslator() if enable_translation else None
 
         print("Paso 4/4: Configurando cadena de conversación")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            google_api_key=settings.GEMINI_API_KEY,
+        self.llm = ChatOpenAI(
+            model=settings.OPENAI_MODEL_NAME,
+            openai_api_key=settings.OPENAI_API_KEY,
             temperature=0.3,
         )
         
-        #self.llm = ChatOpenAI(
-         #   model=settings.OPENAI_MODEL_NAME,
-          #  openai_api_key=settings.OPENAI_API_KEY,
-           # temperature=0.3,
-        #)
-
-        
-        # Use the standard memory implementation for now
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
             return_messages=True,
         )
         
-        # Nueva cadena con el prompt mejorado
         self.chain = self._build_chain()
         
         self.feedback_processor = FeedbackProcessor()
@@ -119,56 +124,6 @@ class RAGAgent:
         self._setup_rlhf_pipeline()
         
         self.feedback_memory = self._load_feedback_memory()
-
-    def _setup_rlhf_pipeline(self):
-        """Verifica periódicamente si hay suficientes feedbacks para reentrenar"""
-        # Verificar cada semana y si hay al menos 1000 muestras
-        if datetime.now() - self.last_rlhf_check > timedelta(days=7):
-            self.last_rlhf_check = datetime.now()
-            feedback_dir = Path("data/feedback")
-            if feedback_dir.exists():
-                feedback_files = list(feedback_dir.glob("*.jsonl"))
-                total_samples = sum(1 for f in feedback_files for _ in open(f))
-                if total_samples >= 1000:
-                    self._retrain_rlhf_model()
-
-    def _retrain_rlhf_model(self):
-        """Ejecuta el pipeline completo de RLHF"""
-        print("Iniciando reentrenamiento RLHF...")
-        trainer = RLHFTrainer(
-            base_model_name=settings.MODEL_NAME,
-            device=settings.DEVICE
-        )
-        
-        # 1. Preparar dataset
-        dataset = trainer.prepare_rlhf_dataset(
-            feedback_dir=Path("data/feedback"),
-            min_samples=1000
-        )
-        
-        # 2. Entrenar modelo
-        trainer.train(
-            dataset=dataset,
-            save_dir=Path("models/rlhf_checkpoints")
-        )
-        
-        # 3. Actualizar modelo en producción
-        self.llm = load_llm(model_name="models/rlhf_checkpoints/latest")
-        print("Reentrenamiento RLHF completado y modelo actualizado")
-
-    def _load_feedback_memory(self):
-        """Carga feedbacks previos para evitar repetir respuestas mal evaluadas"""
-        feedback_dir = Path("data/feedback")
-        if not feedback_dir.exists():
-            return []
-        
-        feedbacks = []
-        for file in feedback_dir.glob("*.jsonl"):
-            with open(file) as f:
-                feedbacks.extend([json.loads(line) for line in f])
-        
-        # Filtrar feedbacks con rating bajo
-        return [fb for fb in feedbacks if fb.get('rating', 5) <= 3]
 
     def _build_chain(self) -> ConversationalRetrievalChain:
         # Espera activa por el store (máx 10 segundos)
@@ -179,7 +134,7 @@ class RAGAgent:
             time.sleep(0.5)
         if not self.retriever.store:
             raise ValueError("Retriever store is not initialized. Please check the index path and ensure the index is built.")
-
+        
         prompt = ChatPromptTemplate.from_template(
             "Responde la pregunta basándote en el contexto siguiente. "
             "Si no sabes la respuesta, di que no sabes. "
@@ -285,7 +240,17 @@ class RAGAgent:
             # 6. Guardar conversación
             self._save_conversation(query, response)
             
-            return response
+            # 7. Use OpenAI to generate a response
+            openai_response = openai.ChatCompletion.create(
+                model=settings.OPENAI_MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "Eres un asistente de recomendaciones de Amazon."},
+                    {"role": "user", "content": query}
+                ]
+            )
+            openai_response_content = openai_response.choices[0].message.content
+            
+            return openai_response_content
 
         except Exception as e:
             logger.error(f"ERROR GLOBAL EN ASK: {str(e)}", exc_info=True)
@@ -434,61 +399,6 @@ class RAGAgent:
             return "productos de belleza"
         return query.split()[0] if query else "producto"
 
-    def _find_similar_low_rated(self, query: str, threshold: float = 0.8):
-        """Busca consultas similares con baja calificación"""
-        query_embedding = self.retriever.embedder.encode(query)
-        
-        similar = []
-        for fb in self.feedback_memory:
-            fb_embedding = self.retriever.embedder.encode(fb['query_en'])
-            similarity = cosine_similarity([query_embedding], [fb_embedding])[0][0]
-            if similarity > threshold:
-                similar.append(fb)
-        
-        return similar
-
-    def _generate_alternative_response(self, query: str, bad_feedbacks: list):
-        """Genera una respuesta alternativa basada en feedback negativo"""
-        # Construir prompt con contexto de feedback negativo
-        prompt = f"""
-        El usuario preguntó: {query}
-        
-        Respuestas anteriores con baja calificación (evitar):
-        {', '.join([fb['answer_en'] for fb in bad_feedbacks])}
-        
-        Por favor proporciona una respuesta alternativa diferente y más útil.
-        """
-        
-        return self.llm(prompt)
-
-    def _should_evaluate_response(self, response: str) -> bool:
-        """Determina si una respuesta debe ser evaluada"""
-        # Evaluar solo respuestas largas o con ciertas características
-        return len(response.split()) > 20
-
-    def _evaluate_response(self, query: str, response: str) -> dict:
-        """Evalúa la calidad de una respuesta"""
-        evaluator = RAGEvaluator(llm=self.llm)
-        return evaluator.evaluate_all(
-            question=query,
-            documents=[],  # Opcional: documentos de referencia
-            answer=response
-        )
-
-    def _improve_response(self, query: str, response: str, evaluation: dict) -> str:
-        """Mejora una respuesta basada en evaluación"""
-        prompt = f"""
-        La siguiente respuesta recibió una baja evaluación:
-        Evaluación: {evaluation['explanation']}
-        
-        Respuesta original:
-        {response}
-        
-        Por favor genera una versión mejorada para la pregunta:
-        {query}
-        """
-        return self.llm(prompt)
-
     def chat_loop(self) -> None:
         print("\n=== Amazon RAG ===\nType 'exit' to quit\n")
         
@@ -538,24 +448,6 @@ class RAGAgent:
             except Exception as e:
                 logger.error(f"Error in chat loop: {str(e)}")
                 print("⚠️ An error occurred. Please try again.")
-
-    def _get_more_options(self, query: str) -> str:
-        try:
-            products = self.retriever.retrieve(query=query, k=10)  # Get more results
-            if len(products) <= 5:
-                return "No additional options available."
-            response = ["Here are some additional options:"]
-            for i, product in enumerate(products[5:8], 6):  # Show next 3 results
-                product_info = [
-                    f"{i}. {product.title}",
-                    f"   💵 Price: {product.price if product.price else 'Not specified'}",
-                    f"   ⭐ Rating: {product.average_rating if product.average_rating else 'No ratings yet'}",
-                ]
-                response.extend(product_info)
-            return "\n".join(response)
-        except Exception as e:
-            logger.error(f"Error getting more options: {str(e)}")
-            return "Couldn't retrieve additional options at this time."
 
     @classmethod
     def from_pickle_dir(
