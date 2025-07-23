@@ -1,7 +1,61 @@
-Creación del Ambiente para el Proyecto de Recomendación de Amazon
-A continuación te detallo cómo crear un ambiente completo para tu proyecto, incluyendo la configuración del entorno virtual, instalación de dependencias, estructura de directorios y variables de entorno.
+Amazon Recommendation System
 
-1. Estructura de Directorios Completa
+
+Un sistema avanzado de recomendación de productos de Amazon que combina búsqueda semántica, filtrado por categorías y aprendizaje por refuerzo con feedback humano (RLHF).
+
+Características Principales
+🔍 Búsqueda semántica con embeddings y ChromaDB
+
+🗂️ Navegación por categorías con filtros interactivos
+
+💬 Interfaz conversacional en múltiples idiomas
+
+🧠 Aprendizaje continuo con feedback de usuarios
+
+⚡ Optimizado para rendimiento con procesamiento por lotes
+
+Tabla de Contenidos
+Configuración Inicial
+
+Estructura del Proyecto
+
+Instalación
+
+Configuración
+
+Uso
+
+Desarrollo
+
+Arquitectura
+
+Contribución
+
+Configuración Inicial
+Requisitos Previos
+Python 3.8+
+
+pip 20.0+
+
+Microsoft C++ Build Tools (solo Windows)
+
+8GB+ RAM (recomendado para grandes datasets)
+
+Configuración del Entorno
+
+# Crear entorno virtual (Python 3.8+ recomendado)
+python -m venv venv
+
+# Activar el entorno (Windows)
+venv\Scripts\activate
+
+# Activar el entorno (Linux/Mac)
+source venv/bin/activate
+
+# Actualizar pip
+pip install --upgrade pip
+
+Estructura del Proyecto
 amazon-recommendation-system/
 ├── .env                    # Archivo para variables de entorno
 ├── .gitignore
@@ -16,197 +70,99 @@ amazon-recommendation-system/
 │   └── rlhf_config.yaml    # Configuración para RLHF
 ├── demo/
 │   └── generator.py        # Script para generación de datos
-├── src/                    # (Todo tu código fuente existente)
+├── src/                    # Código fuente principal
 └── tests/                  # Tests unitarios
 
-2. Configuración del Entorno Virtual
-Ejecuta los siguientes comandos en tu terminal:
-# Crear entorno virtual (Python 3.8+ recomendado)
-python -m venv venv
-
-# Activar el entorno (Windows)
-venv\Scripts\activate
-
-# Actualizar pip
-pip install --upgrade pip
-
-3. Verificar que se tenga el archivo requeriments.txt
-# Core dependencies
-langchain==0.1.13
-openai==1.12.0
-python-dotenv==1.0.0
-faiss-cpu==1.7.4
-chromadb==0.4.22
-numpy==1.26.4
-
-# Procesamiento de datos
-pydantic==2.6.4
-pandas==2.2.1
-tqdm==4.66.2
-
-# Interfaz
-textual==0.54.0
-rich==13.7.1
-
-# Machine Learning
-torch==2.7.1
-transformers==4.38.2
-sentence-transformers==2.5.1
-peft==0.9.0
-trl==0.7.11
-
-4. Verificar que se tenga el archivo requirements_dev.txt
-En la carpeta raíz del proyecto, actualizado sino.
-crea un archivo llamado requirements.txt y agrega las siguientes líneas:
-# Testing
-pytest==8.0.2
-pytest-cov==4.1.0
-pytest-mock==3.12.0
-
-# Linting and formatting
-black==24.2.0
-flake8==7.0.0
-mypy==1.8.0
-isort==5.13.2
-
-# Documentation
-mkdocs==1.5.3
-mkdocs-material==9.5.3
-
-# Jupyter (para experimentación)
-jupyter==1.0.0
-ipython==8.22.2
-
-5. Archivo .env
-Crea este archivo en la raíz con tus claves API:
-# OpenAI
-OPENAI_API_KEY=tu_clave_aqui
-
-# Configuración de ChromaDB
-CHROMA_DB_PATH=./data/processed/chroma_db
-CHROMA_DB_COLLECTION=amazon_products
-
-# Configuración de logging
-LOG_LEVEL=INFO
-LOG_FILE=./logs/amazon_recommendations.log
-
-# Límites del sistema
-MAX_PRODUCTS_TO_LOAD=10000
-MAX_QUERY_LENGTH=200
-
-6. Archivo .gitignore
-# Entorno virtual
-venv/
-.env
-
-# Datos y modelos
-data/processed/
-*.pkl
-*.index
-
-# Logs
-logs/
-*.log
-
-# IDE
-.vscode/
-.idea/
-__pycache__/
-*.py[cod]
-
-# Sistema operativo
-.DS_Store
-Thumbs.db
-
-7. Instalación de Dependencias
-Con el entorno virtual activado:
-# Instalar dependencias principales
+Instalación
+Instalar dependencias principales:
 pip install -r requirements.txt
-
-# Instalar dependencias de desarrollo (opcional)
+Para desarrollo, instalar dependencias adicionales:
 pip install -r requirements_dev.txt
 
-8. Configuración Inicial del Proyecto
-Crea un script setup.py en la raíz para inicialización:
-#!/usr/bin/env python3
-# setup.py - Configuración inicial del proyecto
+Nota para Windows: Si tienes problemas instalando numpy u otras librerías científicas:
 
-import os
-from pathlib import Path
+Instala Microsoft C++ Build Tools
 
-def create_directory_structure():
-    """Crea la estructura de directorios necesaria"""
-    dirs = [
-        'data/raw',
-        'data/processed',
-        'logs',
-        'configs'
-    ]
-    
-    for dir_path in dirs:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
-        print(f"Directorio creado: {dir_path}")
+Selecciona:
 
-    # Crear archivos de configuración básicos si no existen
-    if not Path('.env').exists():
-        with open('.env', 'w') as f:
-            f.write("# Configuración del entorno\n")
-            f.write("OPENAI_API_KEY=tu_clave_aqui\n\n")
-        print("Archivo .env creado - Por favor completa tus credenciales")
+"Desarrollo de escritorio con C++"
 
-if __name__ == "__main__":
-    print("Configurando proyecto Amazon Recommendation System...")
-    create_directory_structure()
-    print("\nConfiguración completada. Por favor:")
-    print("1. Completa el archivo .env con tus credenciales")
-    print("2. Coloca tus datos en data/raw/")
-    print("3. Ejecuta 'python main.py' para iniciar el sistema")
+Windows 10 SDK (más reciente)
 
+C++ CMake tools
 
-9. Ejecución del Proyecto
-# Primero configura la estructura (solo primera vez)
+Configuración
+Copia el archivo .env.example a .env y completa tus credenciales:
+# .env
+DATA_DIR=./data/raw
+
+VECTOR_INDEX_PATH=./data/vector
+GEMINI_API_KEY=AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ
+CHROMA_DB_PATH=./data/processed/chroma_db
+CHROMA_DB_COLLECTION=amazon_products
+LOG_LEVEL=INFO
+LOG_FILE=./logs/amazon_recommendations.log
+DEVICE=cpu
+MAX_PRODUCTS_TO_LOAD=1000000
+MAX_QUERY_LENGTH=20000
+MAX_QUERY_RESULTS=5
+VECTOR_INDEX_PATH=./data/processed/chroma_db
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+VECTOR_BACKEND=chroma
+CACHE_ENABLED=true
+ANONYMIZED_TELEMETRY=false
+
+Coloca tus archivos de datos en data/raw/ (formato JSON o JSONL)
+
+# Inicializa la estructura del proyecto:
 python setup.py
 
-# Luego inicia el sistema
-python main.py --ui  # Para interfaz gráfica
-# o
-python main.py       # Para línea de comandos
+Uso
+Modos de Operación
+
+# Modo RAG (Recomendación Inteligente)
+python main.py rag
+
+Interfaz conversacional para búsquedas semánticas
+
+Ejemplo: "auriculares inalámbricos con cancelación de ruido bajo $100"
+
+# Modo Categoría (Navegación Manual)
+python main.py category
+
+Explora productos por categorías jerárquicas
+
+Filtra por precio, rating y marcas
+
+# Modo Indexación
+python main.py index [--force]
+
+Reconstruye el índice vectorial
+
+Usa --force para reindexar completamente
 
 
-10. Ayudas
+Ejemplos de Uso
 
-python -m pip install --upgrade pip
+# Iniciar con interfaz de categorías
+python main.py category --category "Electrónicos"
 
+# Búsqueda semántica con feedback
+python cli.py rag --top-k 5
 
-Para que puedas instalar numpy==1.26.4 (y otras librerías científicas que requieren compilación en Windows), necesitas instalar Microsoft C++ Build Tools, con los siguientes componentes específicos:
+# Reindexar completamente
+python main.py index --force
 
-✅ Pasos exactos para instalar los C++ Build Tools correctos
-Descarga el instalador desde:
-👉 https://visualstudio.microsoft.com/visual-cpp-build-tools/
+Desarrollo
+Estructura del Código
+Los componentes principales están en src/:
 
-Ejecuta el instalador y selecciona:
+agent.py: Clase principal del agente RAG
 
-🔧 Workload (caja grande a la izquierda):
-✅ "Desarrollo de escritorio con C++" (Desktop development with C++)
+category_tree.py: Manejo de categorías y filtros
 
-En la parte derecha (componentes individuales), asegúrate de que estén seleccionados:
+chroma_builder.py: Construcción del índice vectorial
 
-✅ MSVC v143 - VS 2022 C++ x64/x86 build tools
+retriever.py: Búsqueda semántica de productos
 
-✅ Windows 10 SDK (versión más reciente)
-
-✅ C++ CMake tools for Windows
-
-✅ C++ ATL for v143 build tools (x86 & x64) (opcional pero útil)
-
-✅ C++ CLI support (opcional)
-
-✅ C++/WinRT (opcional)
-
-Dale clic a "Instalar" (puede tardar unos minutos).
-
-📌 Verifica que esté funcionando
-Después de la instalación, reinicia la terminal, activa tu entorno virtual, y prueba:
-pip install numpy==1.26.4
-Si aún quieres evitar compilar, sigue siendo más rápido usar:
-pip install numpy==1.26.4 --only-binary=:all:
+rlhf.py: Fine-tuning con feedback humano (opcional)

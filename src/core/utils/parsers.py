@@ -1,16 +1,5 @@
-# src/core/utils/parsers.py
-"""
-Reusable text-parsing helpers used across the stack
-(RAG evaluator, RLHF reward models, feedback scoring, etc.).
-
-Supports:
-• Binary scores (yes/no/unknown)  
-• Numeric ranges with safe bounds  
-• JSON, list and boolean extraction  
-• All functions return Pydantic models for type safety
-"""
-
 from __future__ import annotations
+# src/core/utils/parsers.py
 
 import json
 import re

@@ -1,17 +1,5 @@
-# src/core/utils/logger.py
-"""
-Centralised, reusable logging utilities.
-
-Features
---------
-• JSON or plain-text formatting  
-• Console + rotating file handlers  
-• Per-module level overrides  
-• Thread-safe, no duplicate handlers
-"""
-
 from __future__ import annotations
-
+# src/core/utils/logger.py
 import logging
 import logging.handlers
 import sys
@@ -50,70 +38,20 @@ class JSONFormatter(logging.Formatter):
 # --------------------------------------------------
 # Logger factory
 # --------------------------------------------------
-def get_logger(
-    name: str,
-    *,
-    log_file: Optional[str] = None,
-    level: int = logging.WARNING,  # Cambia de logging.INFO a logging.WARNING
-    json_format: bool = False,
-    max_bytes: int = 10 * 1024 * 1024,  # 10 MB
-    backup_count: int = 5,
-) -> logging.Logger:
-    """
-    Obtain or reuse a configured logger.
-
-    Parameters
-    ----------
-    name : str
-        Logger name (usually __name__)
-    log_file : str or Path, optional
-        When given, a RotatingFileHandler is added.
-    level : int
-        Logging level for this logger.
-    json_format : bool
-        Use JSONFormatter instead of plain text.
-    max_bytes : int
-        Max size of each log file before rotation.
-    backup_count : int
-        Number of rotated files to keep.
-
-    Returns
-    -------
-    logging.Logger
-        Ready-to-use logger instance.
-    """
+def get_logger(name: str, verbose: bool = False):
     logger = logging.getLogger(name)
-
-    # Prevent duplicate handlers on reload (Jupyter, pytest, etc.)
-    if logger.handlers:
-        return logger
-
-    formatter = JSONFormatter() if json_format else logging.Formatter(
-        fmt="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    # Console handler (stderr)
-    console = logging.StreamHandler(sys.stderr)
-    console.setFormatter(formatter)
-    logger.addHandler(console)
-
-    # Optional file handler
-    if log_file:
-        log_path = Path(log_file).expanduser().resolve()
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        file_handler = logging.handlers.RotatingFileHandler(
-            filename=log_path,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-        )
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
-    logger.setLevel(level)
-    logger.propagate = False  # Avoid double logging from root
+    if verbose:
+        logger.setLevel(logging.DEBUG)
+    
+    # Configurar handlers si no existen
+    if not logger.handlers:
+        console = logging.StreamHandler()
+        console.setFormatter(logging.Formatter(
+            fmt='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        ))
+        logger.addHandler(console)
+    
     return logger
 
 # --------------------------------------------------
