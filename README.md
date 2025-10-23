@@ -113,7 +113,8 @@ CACHE_ENABLED=true
 ANONYMIZED_TELEMETRY=false
 
 Coloca tus archivos de datos en data/raw/ (formato JSON o JSONL)
-
+https://amazon-reviews-2023.github.io
+solo descargar los archivos tipo meta
 # Inicializa la estructura del proyecto:
 python setup.py
 
