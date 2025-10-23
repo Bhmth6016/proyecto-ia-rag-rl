@@ -7,14 +7,10 @@ import torch
 # Load environment variables from .env file
 load_dotenv()
 
-#OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-#MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4")
-
-
 # GEMINI API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-flash")
-#chromaDB Configuration
+# ChromaDB Configuration
 CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION", "amazon_products")
 
 # Logging Configuration
@@ -28,11 +24,13 @@ MAX_QUERY_RESULTS = int(os.getenv("MAX_QUERY_RESULTS", 5))
 
 # Data Paths
 BASE_DIR = Path.cwd().resolve()
-DATA_DIR = BASE_DIR / "data"  # Ensure this matches your structure
+DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROC_DIR = DATA_DIR / "processed"
-VEC_DIR = DATA_DIR / "vector"  # Chroma
 LOG_DIR = BASE_DIR / "logs"
+MODELS_DIR = DATA_DIR / "models" 
+FEEDBACK_DIR = BASE_DIR / "data/feedback"
+HISTORIAL_DIR = BASE_DIR / "data/processed/historial"
 # Vector Store Configuration
 VECTOR_INDEX_PATH = os.getenv("VECTOR_INDEX_PATH", str(DATA_DIR / "processed" / "chroma_db"))
 CHROMA_DB_PATH = VECTOR_INDEX_PATH
@@ -41,7 +39,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM
 DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 
 # Ensure directories exist
-for d in (DATA_DIR, RAW_DIR, PROC_DIR, VEC_DIR, LOG_DIR):
+for d in (DATA_DIR, RAW_DIR, PROC_DIR, LOG_DIR, MODELS_DIR):  # Removió VEC_DIR y agregó MODELS_DIR
     d.mkdir(parents=True, exist_ok=True)
 
 # Cache / RLHF

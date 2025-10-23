@@ -1,20 +1,14 @@
 # src/core/rag/advanced/evaluator.py
-"""
-Unified evaluation module for RAG.
-Combines:
-  - Generic and evaluator LLM loading (transformers + LangChain)
-  - RAGEvaluator with relevance, hallucination and quality metrics
-  - Auxiliary prompts and utilities
-"""
 
 from typing import List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 from pydantic import BaseModel, Field 
-
+import torch
 from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
+    AutoModelForSequenceClassification,
     pipeline,
 )
 from langchain_huggingface import HuggingFacePipeline
@@ -73,7 +67,21 @@ def load_llm(
     )
     return HuggingFacePipeline(pipeline=pipe)
 
+def load_llm_for_reward_model(model_path: str):
+    """
+    Carga un modelo fine-tuned de clasificación como función evaluadora.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForSequenceClassification.from_pretrained(model_path)
+    model.eval()
 
+    def reward_fn(prompt: str) -> float:
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, padding=True)
+        with torch.no_grad():
+            outputs = model(**inputs)
+        return outputs.logits.squeeze().item()  # retorna score como float
+
+    return reward_fn
 # ------------------------------------------------------------------
 # Deterministic evaluator LLM
 # ------------------------------------------------------------------

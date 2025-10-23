@@ -11,15 +11,11 @@ from typing import Optional, List
 from dotenv import load_dotenv
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.chat_models import ChatOpenAI
-from langchain_community.chat_models import ChatOpenAI
-
-
 
 from langchain_community.vectorstores import Chroma
 from langchain.memory import ConversationBufferMemory
 from src.core.data.loader import DataLoader
-from src.core.rag.advanced.agent import RAGAgent
+from src.core.rag.advanced.rlhf import RAGAgent
 from src.core.category_search.category_tree import CategoryTree
 from src.interfaces.cli import main as cli_main  # Import the main function from cli.py
 from src.core.utils.logger import configure_root_logger
