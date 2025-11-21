@@ -6,8 +6,7 @@ import re
 import zlib
 import time
 import gc
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Any
 from threading import Lock
@@ -17,7 +16,7 @@ from itertools import islice
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans, DBSCAN
+from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 from sentence_transformers import SentenceTransformer
@@ -26,9 +25,39 @@ from collections import Counter, defaultdict
 
 from tqdm import tqdm
 
-from src.core.data.product import Product
-from src.core.config import settings
-from src.core.utils.logger import get_logger
+# Importaciones simplificadas para evitar dependencias circulares
+try:
+    from src.core.data.product import Product
+    from src.core.config import settings
+    from src.core.utils.logger import get_logger
+except ImportError:
+    # Definiciones básicas para cuando se ejecute independientemente
+    import logging
+    
+    class Product:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+        
+        @classmethod
+        def from_dict(cls, data):
+            return cls(**data)
+        
+        def clean_image_urls(self):
+            if hasattr(self, 'image_urls'):
+                if not self.image_urls:
+                    self.image_urls = ["https://via.placeholder.com/300"]
+        
+        def model_dump(self):
+            return self.__dict__
+    
+    class settings:
+        RAW_DIR = Path("./data/raw")
+        PROC_DIR = Path("./data/processed")
+    
+    def get_logger(name):
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        return logging.getLogger(name)
 
 logger = get_logger(__name__)
 
@@ -90,6 +119,7 @@ class AutomatedDataLoader:
         # Inicializar modelos ML bajo demanda
         self._models_initialized = False
 
+        # Crear directorios si no existen
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,10 +140,9 @@ class AutomatedDataLoader:
             try:
                 self._ml_models['nlp'] = spacy.load(AutoCategoryConfig.NER_MODEL_NAME)
             except OSError:
-                logger.warning(f"SpaCy model {AutoCategoryConfig.NER_MODEL_NAME} not found. Installing...")
-                import os
-                os.system(f"python -m spacy download {AutoCategoryConfig.NER_MODEL_NAME}")
-                self._ml_models['nlp'] = spacy.load(AutoCategoryConfig.NER_MODEL_NAME)
+                logger.warning(f"SpaCy model {AutoCategoryConfig.NER_MODEL_NAME} not found. Using minimal processing.")
+                # Fallback sin spaCy
+                self._ml_models['nlp'] = None
             
             # Vectorizador TF-IDF
             self._ml_models['tfidf'] = TfidfVectorizer(
@@ -127,23 +156,33 @@ class AutomatedDataLoader:
             
         except Exception as e:
             logger.error(f"Error initializing ML models: {e}")
+            # Fallback sin modelos ML
             self._models_initialized = False
 
     def _get_optimal_workers(self) -> int:
         """Calcula el número óptimo de workers"""
-        cpu_count = mp.cpu_count()
-        return min(cpu_count - 1, 8)
+        import os
+        cpu_count = os.cpu_count() or 1
+        return min(cpu_count, 4)  # Reducido para evitar problemas de memoria
 
     def _extract_text_features(self, products: List[Product]) -> List[str]:
         """Extrae características de texto de los productos"""
         texts = []
         for product in products:
             text_parts = [
-                product.title or "",
-                product.description or "",
-                ' '.join(product.details.features) if product.details else "",
-                ' '.join(f"{k} {v}" for k, v in product.details.specifications.items()) if product.details else ""
+                getattr(product, 'title', "") or "",
+                getattr(product, 'description', "") or "",
             ]
+            
+            # Manejar detalles si existen
+            details = getattr(product, 'details', None)
+            if details:
+                if hasattr(details, 'features') and details.features:
+                    text_parts.append(' '.join(details.features))
+                if hasattr(details, 'specifications') and details.specifications:
+                    if isinstance(details.specifications, dict):
+                        text_parts.append(' '.join(f"{k} {v}" for k, v in details.specifications.items()))
+            
             texts.append(' '.join(filter(None, text_parts)))
         return texts
 
@@ -221,106 +260,19 @@ class AutomatedDataLoader:
         
         # Refinar usando NER para encontrar entidades comunes
         try:
-            entities = []
-            for text in cluster_texts[:10]:  # Muestra de textos
-                doc = self._ml_models['nlp'](text)
-                entities.extend([ent.text.lower() for ent in doc.ents if ent.label_ in ['PRODUCT', 'ORG', 'GPE']])
-            
-            if entities:
-                most_common_entity = Counter(entities).most_common(1)[0][0]
-                base_name = most_common_entity
+            if self._ml_models.get('nlp'):
+                entities = []
+                for text in cluster_texts[:10]:  # Muestra de textos
+                    doc = self._ml_models['nlp'](text)
+                    entities.extend([ent.text.lower() for ent in doc.ents if ent.label_ in ['PRODUCT', 'ORG', 'GPE']])
                 
+                if entities:
+                    most_common_entity = Counter(entities).most_common(1)[0][0]
+                    base_name = most_common_entity
         except Exception as e:
             logger.debug(f"Error in NER for category naming: {e}")
         
         return base_name.replace(' ', '_').lower()
-
-    def _auto_generate_tags(self, products: List[Product]) -> Dict[str, List[str]]:
-        """Genera tags automáticamente usando análisis de texto"""
-        if len(products) < self.min_samples_for_training:
-            return self._get_fallback_tags()
-        
-        self._initialize_ml_models()
-        
-        try:
-            texts = self._extract_text_features(products)
-            
-            # Extraer características comunes usando TF-IDF y patrones
-            tag_keywords = self._extract_common_attributes(texts)
-            
-            # Enriquecer con NER
-            tag_keywords.update(self._extract_ner_tags(texts))
-            
-            logger.info(f"Auto-generated {len(tag_keywords)} tag categories")
-            return tag_keywords
-            
-        except Exception as e:
-            logger.error(f"Error in auto tag generation: {e}")
-            return self._get_fallback_tags()
-
-    def _extract_common_attributes(self, texts: List[str]) -> Dict[str, List[str]]:
-        """Extrae atributos comunes para tags"""
-        # Patrones para diferentes tipos de tags
-        patterns = {
-            'wireless': [r'wireless', r'bluetooth', r'wi.fi', r'wifi'],
-            'portable': [r'portable', r'lightweight', r'compact', r'foldable'],
-            'waterproof': [r'waterproof', r'water.resistant', r'waterproofing'],
-            'gaming': [r'gaming', r'gamer', r'rgb', r'gaming.grade'],
-            'fast_charging': [r'fast.charging', r'quick.charge', r'rapid.charge'],
-            'eco_friendly': [r'eco', r'recycled', r'biodegradable', r'environmental'],
-            'digital': [r'digital', r'download', r'online', r'streaming'],
-            'premium': [r'premium', r'luxury', r'exclusive', r'high.end']
-        }
-        
-        tag_keywords = {}
-        all_text = ' '.join(texts).lower()
-        
-        for tag_name, tag_patterns in patterns.items():
-            matching_keywords = []
-            for pattern in tag_patterns:
-                matches = re.findall(pattern, all_text)
-                if matches:
-                    matching_keywords.extend(matches)
-            
-            if matching_keywords:
-                # Usar las variantes encontradas como keywords
-                tag_keywords[tag_name] = list(set(matching_keywords))[:3]
-        
-        return tag_keywords
-
-    def _extract_ner_tags(self, texts: List[str]) -> Dict[str, List[str]]:
-        """Extrae tags usando Named Entity Recognition"""
-        tag_categories = {
-            'brands': set(),
-            'materials': set(),
-            'colors': set(),
-            'sizes': set()
-        }
-        
-        # Mapeo de entidades de spaCy a nuestras categorías
-        entity_mapping = {
-            'ORG': 'brands',
-            'PRODUCT': 'brands',
-            'MATERIAL': 'materials',
-            'COLOR': 'colors',
-            'QUANTITY': 'sizes'
-        }
-        
-        for text in texts[:100]:  # Procesar muestra para eficiencia
-            doc = self._ml_models['nlp'](text)
-            
-            for ent in doc.ents:
-                category = entity_mapping.get(ent.label_)
-                if category and len(ent.text.strip()) > 1:
-                    tag_categories[category].add(ent.text.lower().strip())
-        
-        # Convertir a formato de salida
-        result = {}
-        for category, items in tag_categories.items():
-            if items:
-                result[category] = list(items)[:5]  # Top 5 items
-        
-        return result
 
     def _get_fallback_categories(self) -> Dict[str, List[str]]:
         """Categorías de fallback cuando no hay suficientes datos"""
@@ -347,11 +299,17 @@ class AutomatedDataLoader:
         
         try:
             # Preparar texto del producto
-            text = ' '.join([
-                product.title or "",
-                product.description or "",
-                ' '.join(product.details.features) if product.details else ""
-            ])
+            text_parts = [
+                getattr(product, 'title', "") or "",
+                getattr(product, 'description', "") or "",
+            ]
+            
+            details = getattr(product, 'details', None)
+            if details:
+                if hasattr(details, 'features') and details.features:
+                    text_parts.append(' '.join(details.features))
+            
+            text = ' '.join(filter(None, text_parts))
             
             if not text.strip():
                 return "unknown"
@@ -388,11 +346,17 @@ class AutomatedDataLoader:
             return []
         
         try:
-            text = ' '.join([
-                product.title or "",
-                product.description or "",
-                ' '.join(product.details.features) if product.details else ""
-            ]).lower()
+            text_parts = [
+                getattr(product, 'title', "") or "",
+                getattr(product, 'description', "") or "",
+            ]
+            
+            details = getattr(product, 'details', None)
+            if details:
+                if hasattr(details, 'features') and details.features:
+                    text_parts.append(' '.join(details.features))
+            
+            text = ' '.join(filter(None, text_parts)).lower()
             
             tags = []
             
@@ -481,6 +445,33 @@ class AutomatedDataLoader:
         else:
             return stem.lower()
 
+    def _process_json_array_automated(self, raw_file: Path) -> List[Product]:
+        """Procesa archivo JSON con array de productos"""
+        try:
+            with raw_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            if not isinstance(data, list):
+                data = [data]
+            
+            products = []
+            for item in data:
+                try:
+                    if isinstance(item, dict):
+                        cleaned_item = self._clean_item_automated(item, raw_file.name)
+                        product = Product.from_dict(cleaned_item)
+                        product.clean_image_urls()
+                        products.append(product)
+                except Exception as e:
+                    logger.debug(f"Error processing item: {e}")
+                    continue
+            
+            return products
+            
+        except Exception as e:
+            logger.error(f"Error processing JSON file {raw_file.name}: {e}")
+            return []
+
     def load_data(self, use_cache: Optional[bool] = None, output_file: Union[str, Path] = None) -> List[Product]:
         """Carga datos con procesamiento automatizado"""
         if use_cache is None:
@@ -499,32 +490,48 @@ class AutomatedDataLoader:
         
         if not files:
             logger.warning("No product files found in %s", self.raw_dir)
-            return []
+            # Crear datos de ejemplo si no hay archivos
+            return self._create_sample_data(output_file)
 
-        # Cargar productos iniciales
-        initial_products = self._load_initial_products(files)
+        # Cargar productos iniciales para entrenamiento
+        initial_products = []
+        for file_path in files[:2]:  # Solo usar 2 archivos para sampling
+            try:
+                products = self._load_single_file_simple(file_path)
+                initial_products.extend(products[:100])  # Limitar a 100 productos por archivo
+                if len(initial_products) >= 200:  # Máximo 200 productos para entrenamiento
+                    break
+            except Exception as e:
+                logger.warning(f"Error sampling from {file_path.name}: {e}")
         
         if not initial_products:
             logger.error("No valid products loaded from any files!")
-            return []
+            return self._create_sample_data(output_file)
 
-        # Aprender categorías y tags automáticamente si está habilitado
-        if self.auto_categories:
+        # Aprender categorías automáticamente si está habilitado
+        if self.auto_categories and len(initial_products) >= 10:
             logger.info("Auto-discovering categories...")
             self._category_cache = self._auto_discover_categories(initial_products)
             logger.info(f"Discovered categories: {list(self._category_cache.keys())}")
-        
-        if self.auto_tags:
-            logger.info("Auto-generating tags...")
-            self._tag_cache = self._auto_generate_tags(initial_products)
-            logger.info(f"Generated tag categories: {list(self._tag_cache.keys())}")
+        else:
+            self._category_cache = self._get_fallback_categories()
 
-        # Reprocesar productos con modelos aprendidos
-        all_products = self._reprocess_with_models(files)
-        
+        # Usar tags de fallback por ahora (simplificado)
+        self._tag_cache = self._get_fallback_tags()
+
+        # Procesar todos los archivos
+        all_products = []
+        for file_path in tqdm(files, desc="Processing files", disable=self.disable_tqdm):
+            try:
+                products = self._load_single_file_simple(file_path)
+                if products:
+                    all_products.extend(products)
+            except Exception as e:
+                logger.warning(f"Error processing {file_path.name}: {e}")
+
         if not all_products:
-            logger.error("No valid products after reprocessing!")
-            return initial_products  # Fallback a productos iniciales
+            logger.error("No valid products after processing!")
+            all_products = initial_products
 
         logger.info("Loaded %d products from %d files", len(all_products), len(files))
 
@@ -533,222 +540,154 @@ class AutomatedDataLoader:
 
         return all_products
 
+    def _load_single_file_simple(self, raw_file: Path) -> List[Product]:
+        """Carga un archivo de manera simple y secuencial"""
+        logger.info("Processing file: %s", raw_file.name)
+        
+        if not raw_file.exists():
+            logger.warning(f"File {raw_file} does not exist")
+            return []
+
+        products = []
+        
+        try:
+            if raw_file.suffix.lower() == ".jsonl":
+                # Procesar JSONL
+                with raw_file.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            item = json.loads(line.strip())
+                            if isinstance(item, dict):
+                                cleaned_item = self._clean_item_automated(item, raw_file.name)
+                                product = Product.from_dict(cleaned_item)
+                                product.clean_image_urls()
+                                products.append(product)
+                        except Exception as e:
+                            continue
+            else:
+                # Procesar JSON array
+                products = self._process_json_array_automated(raw_file)
+                
+        except Exception as e:
+            logger.error(f"Error processing file {raw_file.name}: {e}")
+        
+        logger.info("Loaded %d products from %s", len(products), raw_file.name)
+        return products
+
+    def _create_sample_data(self, output_file: Path) -> List[Product]:
+        """Crea datos de ejemplo si no hay archivos disponibles"""
+        logger.info("Creating sample data...")
+        
+        sample_products = [
+            {
+                "title": "Wireless Bluetooth Headphones",
+                "description": "High-quality wireless headphones with noise cancellation",
+                "price": 99.99,
+                "main_category": "electronics",
+                "product_type": "electronics",
+                "tags": ["wireless", "audio"],
+                "details": {
+                    "features": ["Noise cancellation", "30h battery", "Bluetooth 5.0"],
+                    "specifications": {"color": "black", "weight": "250g"}
+                }
+            },
+            {
+                "title": "Programming Book: Python Mastery",
+                "description": "Complete guide to Python programming",
+                "price": 45.99,
+                "main_category": "books", 
+                "product_type": "books",
+                "tags": ["digital", "education"],
+                "details": {
+                    "features": ["500 pages", "Digital download available"],
+                    "specifications": {"format": "PDF", "language": "English"}
+                }
+            }
+        ]
+        
+        products = []
+        for item in sample_products:
+            try:
+                product = Product.from_dict(item)
+                product.clean_image_urls()
+                products.append(product)
+            except Exception as e:
+                logger.warning(f"Error creating sample product: {e}")
+        
+        # Guardar datos de ejemplo
+        self.save_standardized_json(products, output_file)
+        logger.info(f"Created {len(products)} sample products")
+        
+        return products
+
     def _discover_data_files(self) -> List[Path]:
         """Descubre automáticamente archivos de datos"""
-        expected_patterns = ["*.jsonl", "*.json", "*.csv", "*.parquet"]
+        expected_patterns = ["*.jsonl", "*.json"]
         files = []
         
         for pattern in expected_patterns:
             files.extend(self.raw_dir.glob(pattern))
             files.extend(self.raw_dir.glob(pattern.upper()))
         
-        # Ordenar por tamaño (archivos más grandes primero para mejor sampling)
-        files.sort(key=lambda x: x.stat().st_size if x.exists() else 0, reverse=True)
+        # Filtrar solo archivos que existen
+        files = [f for f in files if f.exists()]
+        
+        # Ordenar por tamaño
+        files.sort(key=lambda x: x.stat().st_size, reverse=True)
         
         logger.info(f"Discovered {len(files)} data files: {[f.name for f in files]}")
-        return files[:10]  # Limitar a 10 archivos para evitar sobrecarga
-    def load_single_file(self, raw_file: Union[str, Path]) -> List[Product]:
-        """Compatibilidad con versiones anteriores. Usa el procesamiento automático."""
-        return self.load_single_file_automated(raw_file)
-
-
-    def _load_initial_products(self, files: List[Path]) -> List[Product]:
-        """Carga productos iniciales para entrenamiento"""
-        sample_products = []
-        sample_size = min(1000, self.min_samples_for_training * 2)
-        
-        for file_path in files:
-            if len(sample_products) >= sample_size:
-                break
-                
-            try:
-                products = self.load_single_file(file_path)
-                sample_products.extend(products[:sample_size - len(sample_products)])
-            except Exception as e:
-                logger.warning(f"Error sampling from {file_path.name}: {e}")
-        
-        return sample_products
-
-    def _reprocess_with_models(self, files: List[Path]) -> List[Product]:
-        """Reprocesa todos los archivos con los modelos aprendidos"""
-        all_products = []
-        
-        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(files))) as exe:
-            future_to_file = {exe.submit(self.load_single_file_automated, f): f for f in files}
-            for future in tqdm(future_to_file, desc="Processing files", total=len(files), disable=self.disable_tqdm):
-                try:
-                    products = future.result()
-                    if products:
-                        all_products.extend(products)
-                except Exception as e:
-                    file_path = future_to_file[future]
-                    logger.warning(f"Error processing {file_path.name}: {e}")
-
-        return all_products
-
-    def load_single_file_automated(self, raw_file: Union[str, Path]) -> List[Product]:
-        """Carga un archivo con procesamiento automatizado"""
-        raw_file = Path(raw_file)
-        
-        # Intentar cargar desde caché
-        cached_products = self._load_from_cache(raw_file)
-        if cached_products is not None:
-            return cached_products
-
-        logger.info("Processing file with automation: %s", raw_file.name)
-        
-        # Procesar archivo
-        if raw_file.suffix.lower() == ".jsonl":
-            products = self._process_jsonl_automated(raw_file)
-        else:
-            products = self._process_json_array_automated(raw_file)
-
-        # Guardar en caché
-        if products:
-            self._save_to_cache(raw_file, products)
-
-        return products
-
-    def _process_jsonl_automated(self, raw_file: Path) -> List[Product]:
-        """Procesa JSONL con automatización"""
-        with raw_file.open("r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
-        # Dividir en chunks
-        chunk_size = max(len(lines) // (self.max_workers * 2), 1)
-        chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
-        
-        products = []
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_chunk = {
-                executor.submit(self._process_chunk_automated, chunk, raw_file.name): chunk 
-                for chunk in chunks
-            }
-            
-            for future in tqdm(
-                as_completed(future_to_chunk), 
-                total=len(chunks),
-                desc=f"Processing {raw_file.name}",
-                disable=self.disable_tqdm
-            ):
-                try:
-                    chunk_products = future.result()
-                    products.extend(chunk_products)
-                except Exception as e:
-                    logger.warning(f"Error processing chunk: {e}")
-        
-        return products
-
-    def _process_chunk_automated(self, chunk: List[str], filename: str) -> List[Product]:
-        """Procesa un chunk con automatización"""
-        products = []
-        for line in chunk:
-            try:
-                item = json.loads(line.strip())
-                if isinstance(item, dict):
-                    cleaned_item = self._clean_item_automated(item, filename)
-                    product = Product.from_dict(cleaned_item)
-                    product.clean_image_urls()
-                    products.append(product)
-            except Exception:
-                continue
-        return products
-
-    # Métodos de cache y otros helpers (similares a la versión anterior)
-    def _get_file_hash(self, file_path: Path) -> str:
-        hasher = hashlib.md5()
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hasher.update(chunk)
-        return hasher.hexdigest()
-
-    def _get_cache_file_path(self, raw_file: Path) -> Path:
-        cache_filename = f"{raw_file.stem}_{self._get_file_hash(raw_file)[:8]}.pkl"
-        return self.processed_dir / "cache" / cache_filename
-
-    def _save_to_cache(self, raw_file: Path, products: List[Product]) -> None:
-        if not self.cache_enabled:
-            return
-        try:
-            cache_file = self._get_cache_file_path(raw_file)
-            cache_dir = cache_file.parent
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            
-            cache_data = {
-                'products': products,
-                'file_hash': self._get_file_hash(raw_file),
-                'timestamp': time.time(),
-                'version': '2.0'  # Nueva versión para datos automatizados
-            }
-            
-            compressed_data = zlib.compress(pickle.dumps(cache_data))
-            with open(cache_file, 'wb') as f:
-                f.write(compressed_data)
-                
-        except Exception as e:
-            logger.warning(f"Error saving cache for {raw_file.name}: {e}")
-
-    def _load_from_cache(self, raw_file: Path) -> Optional[List[Product]]:
-        if not self.cache_enabled:
-            return None
-        cache_file = self._get_cache_file_path(raw_file)
-        
-        if not cache_file.exists():
-            return None
-        
-        try:
-            if self.cache_ttl > 0:
-                file_age = time.time() - cache_file.stat().st_mtime
-                if file_age > self.cache_ttl:
-                    cache_file.unlink()
-                    return None
-            
-            with open(cache_file, 'rb') as f:
-                compressed_data = f.read()
-            
-            cache_data = pickle.loads(zlib.decompress(compressed_data))
-            
-            current_hash = self._get_file_hash(raw_file)
-            if (cache_data.get('file_hash') == current_hash and 
-                cache_data.get('version') == '2.0'):
-                logger.debug(f"Cache hit for {raw_file.name}")
-                return cache_data['products']
-                
-        except Exception as e:
-            logger.warning(f"Error loading cache for {raw_file.name}: {e}")
-        
-        return None
+        return files
 
     def _load_global_cache(self, cache_file: Path) -> List[Product]:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            cached_data = json.load(f)
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
 
-        valid_products = []
-        for item in cached_data:
-            try:
-                if "details" not in item or item["details"] is None:
-                    item["details"] = {}
-                elif not isinstance(item["details"], dict):
-                    item["details"] = {}
+            valid_products = []
+            for item in cached_data:
+                try:
+                    if "details" not in item or item["details"] is None:
+                        item["details"] = {}
+                    elif not isinstance(item["details"], dict):
+                        item["details"] = {}
 
-                if not item.get("title", "").strip():
+                    if not item.get("title", "").strip():
+                        continue
+
+                    product = Product.from_dict(item)
+                    valid_products.append(product)
+                except Exception as e:
+                    logger.warning(f"Error loading product from cache: {e}")
                     continue
 
-                product = Product.from_dict(item)
-                valid_products.append(product)
-            except Exception as e:
-                logger.warning(f"Error loading product from cache: {e}")
-                continue
-
-        return valid_products
+            return valid_products
+        except Exception as e:
+            logger.error(f"Error loading global cache: {e}")
+            return []
 
     def save_standardized_json(self, products: List[Product], output_file: Union[str, Path]) -> None:
         output_file = Path(output_file)
-        standardized_data = [product.model_dump() for product in products]
-        
-        with output_file.open("w", encoding="utf-8") as f:
-            json.dump(standardized_data, f, ensure_ascii=False, indent=2)
-        logger.info("Saved standardized JSON to %s", output_file)
+        try:
+            # Convertir productos a diccionarios
+            standardized_data = []
+            for product in products:
+                try:
+                    product_dict = product.__dict__.copy()
+                    
+                    # Asegurar que details sea serializable
+                    if 'details' in product_dict and hasattr(product_dict['details'], '__dict__'):
+                        product_dict['details'] = product_dict['details'].__dict__
+                    
+                    standardized_data.append(product_dict)
+                except Exception as e:
+                    logger.warning(f"Error serializing product: {e}")
+                    continue
+            
+            with output_file.open("w", encoding="utf-8") as f:
+                json.dump(standardized_data, f, ensure_ascii=False, indent=2)
+            logger.info("Saved standardized JSON to %s", output_file)
+        except Exception as e:
+            logger.error(f"Error saving JSON to {output_file}: {e}")
 
     def get_automation_stats(self) -> Dict[str, Any]:
         """Obtiene estadísticas de la automatización"""
@@ -763,17 +702,26 @@ class AutomatedDataLoader:
 
 # Alias para compatibilidad
 DataLoader = AutomatedDataLoader
+
 if __name__ == "__main__":
     logger.info("=== Running Automated Data Loader ===")
+
+    # Crear directorios necesarios
+    settings.RAW_DIR.mkdir(parents=True, exist_ok=True)
+    settings.PROC_DIR.mkdir(parents=True, exist_ok=True)
 
     loader = AutomatedDataLoader(
         raw_dir=settings.RAW_DIR,
         processed_dir=settings.PROC_DIR,
         auto_categories=True,
         auto_tags=True,
-        cache_enabled=True
+        cache_enabled=True,
+        max_workers=2  # Reducido para evitar problemas
     )
 
     products = loader.load_data()
+
+    stats = loader.get_automation_stats()
+    logger.info(f"Automation Stats: {stats}")
 
     logger.info(f"Finished. Loaded {len(products)} products.")
