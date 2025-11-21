@@ -1,37 +1,29 @@
-Amazon Recommendation System
+# Amazon Recommendation Hybrid System
+
+Un sistema avanzado de recomendación de productos de Amazon que combina búsqueda semántica y aprendizaje por refuerzo
+
+# Características Principales
 
 
-Un sistema avanzado de recomendación de productos de Amazon que combina búsqueda semántica, filtrado por categorías y aprendizaje por refuerzo con feedback humano (RLHF).
+# Tabla de Contenidos
+## Configuración Inicial
 
-Características Principales
-🔍 Búsqueda semántica con embeddings y ChromaDB
+## Estructura del Proyecto
 
-🗂️ Navegación por categorías con filtros interactivos
+## Instalación
 
-💬 Interfaz conversacional en múltiples idiomas
+## Configuración
 
-🧠 Aprendizaje continuo con feedback de usuarios
+## Uso
 
-⚡ Optimizado para rendimiento con procesamiento por lotes
+## Desarrollo
 
-Tabla de Contenidos
-Configuración Inicial
+## Arquitectura
 
-Estructura del Proyecto
-
-Instalación
-
-Configuración
-
-Uso
-
-Desarrollo
-
-Arquitectura
-
-Contribución
-
-Configuración Inicial
+## Contribución
+_________________________________________________________________________________________________________________________________________________________
+_________________________________________________________________________________________________________________________________________________________
+## Configuración Inicial
 Requisitos Previos
 Python 3.8+
 
@@ -43,57 +35,27 @@ Microsoft C++ Build Tools (solo Windows)
 
 Configuración del Entorno
 
-# Crear entorno virtual (Python 3.8+ recomendado)
+### Crear entorno virtual (Python 3.8+ recomendado)
 python -m venv venv
 
-# Activar el entorno (Windows)
+### Activar el entorno (Windows)
 venv\Scripts\activate
 
-# Activar el entorno (Linux/Mac)
+### Activar el entorno (Linux/Mac)
 source venv/bin/activate
 
-# Actualizar pip
+### Actualizar pip
 pip install --upgrade pip
 
-Estructura del Proyecto
-amazon-recommendation-system/
-├── .env                    # Archivo para variables de entorno
-├── .gitignore
-├── README.md
-├── requirements.txt        # Dependencias principales
-├── requirements_dev.txt    # Dependencias para desarrollo
-├── main.py                 # Punto de entrada principal
-├── data/
-│   ├── raw/                # Datos brutos en JSON/JSONL
-│   └── processed/          # Datos procesados e índices
-├── configs/
-│   └── rlhf_config.yaml    # Configuración para RLHF
-├── demo/
-│   └── generator.py        # Script para generación de datos
-├── src/                    # Código fuente principal
-└── tests/                  # Tests unitarios
+## Estructura del Proyecto
 
-Instalación
-Instalar dependencias principales:
-pip install -r requirements.txt
-Para desarrollo, instalar dependencias adicionales:
-pip install -r requirements_dev.txt
 
-Nota para Windows: Si tienes problemas instalando numpy u otras librerías científicas:
+## Instalación
 
-Instala Microsoft C++ Build Tools
+## Configuración
 
-Selecciona:
-
-"Desarrollo de escritorio con C++"
-
-Windows 10 SDK (más reciente)
-
-C++ CMake tools
-
-Configuración
 Copia el archivo .env.example a .env y completa tus credenciales:
-# .env
+### .env
 DATA_DIR=./data/raw
 
 VECTOR_INDEX_PATH=./data/vector
@@ -115,13 +77,13 @@ ANONYMIZED_TELEMETRY=false
 Coloca tus archivos de datos en data/raw/ (formato JSON o JSONL)
 https://amazon-reviews-2023.github.io
 solo descargar los archivos tipo meta
-# Inicializa la estructura del proyecto:
+### Inicializa la estructura del proyecto?????
 python setup.py
 
-Uso
+## Uso
 Modos de Operación
 
-# Modo RAG (Recomendación Inteligente)
+### Modo RAG (Recomendación Inteligente)
 python main.py rag
 
 Interfaz conversacional para búsquedas semánticas
