@@ -547,6 +547,10 @@ class AutomatedDataLoader:
         
         logger.info(f"Discovered {len(files)} data files: {[f.name for f in files]}")
         return files[:10]  # Limitar a 10 archivos para evitar sobrecarga
+    def load_single_file(self, raw_file: Union[str, Path]) -> List[Product]:
+        """Compatibilidad con versiones anteriores. Usa el procesamiento automático."""
+        return self.load_single_file_automated(raw_file)
+
 
     def _load_initial_products(self, files: List[Path]) -> List[Product]:
         """Carga productos iniciales para entrenamiento"""
