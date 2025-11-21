@@ -51,6 +51,9 @@ pip install --upgrade pip
 
 
 ## Instalación
+Modelos que deben instalarse aparte:
+python -m spacy download en_core_web_sm
+python -m nltk.downloader averaged_perceptron_tagger
 
 ## Configuración
 

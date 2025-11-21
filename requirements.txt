@@ -1,0 +1,13 @@
+# NLP & ML
+scikit-learn
+pandas
+sentence-transformers
+spacy
+nltk
+numpy
+tqdm
+
+# LangChain + Google AI integration
+google-generativeai
+langchain-google-genai
+langchain-core

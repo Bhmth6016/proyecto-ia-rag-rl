@@ -759,3 +759,17 @@ class AutomatedDataLoader:
 
 # Alias para compatibilidad
 DataLoader = AutomatedDataLoader
+if __name__ == "__main__":
+    logger.info("=== Running Automated Data Loader ===")
+
+    loader = AutomatedDataLoader(
+        raw_dir=settings.RAW_DIR,
+        processed_dir=settings.PROC_DIR,
+        auto_categories=True,
+        auto_tags=True,
+        cache_enabled=True
+    )
+
+    products = loader.load_data()
+
+    logger.info(f"Finished. Loaded {len(products)} products.")
