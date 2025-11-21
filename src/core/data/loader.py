@@ -506,7 +506,7 @@ class AutomatedDataLoader:
         all_products = []
         for file_path in tqdm(files, desc="Files", disable=self.disable_tqdm):
             try:
-                products = self._load_single_file_simple(file_path)
+                products = self._load_single_file_simple(file_path)[:100]
                 if products:
                     all_products.extend(products)
             except Exception as e:
