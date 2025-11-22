@@ -13,7 +13,15 @@ import re
 from difflib import SequenceMatcher
 
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
+
+# CAMBIO: Usar la nueva versión de Chroma
+try:
+    from langchain_chroma import Chroma
+    CHROMA_NEW = True
+except ImportError:
+    from langchain_community.vectorstores import Chroma
+    CHROMA_NEW = False
+
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from src.core.utils.logger import get_logger
@@ -22,9 +30,9 @@ from src.core.config import settings
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------- 
-# Synonyms & helpers 
-# ---------------------------------------------------------------------- 
+# ----------------------------------------------------------------------
+# Synonyms & helpers
+# ----------------------------------------------------------------------
 
 _SYNONYMS: Dict[str, List[str]] = {
     "mochila": ["backpack", "bagpack", "laptop bag", "daypack"],
@@ -52,15 +60,16 @@ _SYNONYMS: Dict[str, List[str]] = {
     "videojuego": ["video game", "juego", "game", "pc game"]
 }
 
+
 def _normalize(text: str) -> str:
     """Lower-case + strip accents."""
     text = unicodedata.normalize("NFD", text)
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     return text.lower().strip()
 
-# ---------------------------------------------------------------------- 
-# Retriever 
-# ---------------------------------------------------------------------- 
+# ----------------------------------------------------------------------
+# Retriever
+# ----------------------------------------------------------------------
 
 class Retriever:
     def __init__(
@@ -70,10 +79,11 @@ class Retriever:
         device: str = getattr(settings, "DEVICE", "cpu"),
     ):
         logger.info(f"Initializing Retriever (store exists: {Path(index_path).exists()})")
+        logger.info(f"Using Chroma version: {'NEW' if CHROMA_NEW else 'OLD'}")
 
         self.index_path = Path(index_path).resolve()
         logger.info(f"Initializing Retriever with index path: {self.index_path}")
-        
+
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.embedder_name = embedding_model
@@ -89,12 +99,12 @@ class Retriever:
         )
 
         self.store = None
+        self._ensure_store_loaded()
 
     # ------------------------------------------------------------
-    # UPDATED: Ensure store loaded
+    # Ensure store loaded
     # ------------------------------------------------------------
     def _ensure_store_loaded(self):
-        """Asegurar que el store de Chroma esté cargado correctamente."""
         if not hasattr(self, "store") or self.store is None:
             try:
                 if self.index_exists():
@@ -109,13 +119,9 @@ class Retriever:
                 logger.error(f"❌ Error loading Chroma store: {e}")
                 self.store = None
 
-    # ------------------------------------------------------------
     # Compatible con LangChain retriever
-    # ------------------------------------------------------------
     def as_retriever(self, search_kwargs=None):
-        if not hasattr(self, "store") or self.store is None:
-            self._ensure_store_loaded()
-
+        self._ensure_store_loaded()
         return self.store.as_retriever(search_kwargs=search_kwargs) if self.store else None
 
     # ------------------------------------------------------------
@@ -147,6 +153,12 @@ class Retriever:
     # ------------------------------------------------------------
     def retrieve(self, query: str, k: int = 5, filters: Optional[Dict] = None, min_similarity: float = 0.3) -> List[Product]:
         try:
+            self._ensure_store_loaded()
+
+            if self.store is None:
+                logger.error("❌ Store not available for retrieval")
+                return []
+
             if filters is None:
                 filters = self._parse_filters_from_query(query)
 
@@ -179,7 +191,30 @@ class Retriever:
             return []
 
     # ------------------------------------------------------------
-    # Parse filters from query
+    # Raw chroma retrieve
+    # ------------------------------------------------------------
+    def _raw_retrieve(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
+        if self.store is None:
+            logger.error("❌ Store not available for _raw_retrieve")
+            return []
+
+        query_expanded = " ".join(self._expand_query(query))
+
+        try:
+            if filters:
+                return self.store.similarity_search(
+                    query_expanded,
+                    k=k,
+                    filter=self._chroma_filter(filters)
+                )
+            else:
+                return self.store.similarity_search(query_expanded, k=k)
+        except Exception as e:
+            logger.error(f"❌ Error in similarity_search: {e}")
+            return []
+
+    # ------------------------------------------------------------
+    # Filters desde texto
     # ------------------------------------------------------------
     def _parse_filters_from_query(self, query: str) -> Dict[str, Any]:
         filters = {}
@@ -201,9 +236,6 @@ class Retriever:
 
         return filters
 
-    # ------------------------------------------------------------
-    # Filter matching
-    # ------------------------------------------------------------
     def _matches_all_filters(self, product: Product, filters: Dict) -> bool:
         if "price_range" in filters:
             r = filters["price_range"]
@@ -222,21 +254,6 @@ class Retriever:
                 return False
 
         return True
-
-    # ------------------------------------------------------------
-    # Raw chroma retrieve
-    # ------------------------------------------------------------
-    def _raw_retrieve(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
-        query_expanded = " ".join(self._expand_query(query))
-
-        if filters:
-            return self.store.similarity_search(
-                query_expanded,
-                k=k,
-                filter=self._chroma_filter(filters)
-            )
-
-        return self.store.similarity_search(query_expanded, k=k)
 
     def _doc_to_product(self, doc: Document) -> Optional[Product]:
         try:
@@ -268,9 +285,6 @@ class Retriever:
             logger.error(f"❌ Failed to convert doc -> product: {e}")
             return None
 
-    # ------------------------------------------------------------
-    # Hybrid scoring
-    # ------------------------------------------------------------
     def _score(self, query: str, product: Product) -> float:
         try:
             if hasattr(product, "title") and product.title:
@@ -296,13 +310,11 @@ class Retriever:
             for k, v in (f or {}).items()
         }
 
-    # ------------------------------------------------------------
-    # Debug helpers
-    # ------------------------------------------------------------
     def debug(self, category="Beauty", limit=3):
-        docs = self.store.get(where={"category": category}, limit=limit)["documents"]
-        for d in docs:
-            print(d.metadata["title"], d.metadata.get("price"))
+        if self.store:
+            docs = self.store.get(where={"category": category}, limit=limit)["documents"]
+            for d in docs:
+                print(d.metadata["title"], d.metadata.get("price"))
 
     def debug_search(self, query: str):
         print("Query expansions:", self._expand_query(query))
@@ -314,9 +326,75 @@ class Retriever:
     def index_exists(self):
         return Path(self.index_path).exists()
 
-    # ------------------------------------------------------------
-    # UPDATED: Build index with better error handling
-    # ------------------------------------------------------------
+    # ----------------------------------------------------------------------
+    # MÉTODOS NUEVOS
+    # ----------------------------------------------------------------------
+
+    def _safe_clear_index(self):
+        """Eliminar el índice de forma segura, manejando archivos bloqueados."""
+        import time
+        max_retries = 3
+        retry_delay = 1  # segundos
+
+        for attempt in range(max_retries):
+            try:
+                if self.index_path.exists():
+                    import shutil
+                    shutil.rmtree(self.index_path)
+                    logger.info(f"✅ Index cleared on attempt {attempt + 1}")
+                    return
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️  File locked, retrying in {retry_delay}s... (attempt {attempt + 1})")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"❌ Failed to clear index after {max_retries} attempts: {e}")
+                    self._force_clear_index()
+            except Exception as e:
+                logger.error(f"❌ Unexpected error clearing index: {e}")
+                raise
+
+    def _force_clear_index(self):
+        """Método forzado para limpiar el índice cuando fallan los métodos normales."""
+        try:
+            import os
+
+            if hasattr(self, 'store') and self.store:
+                try:
+                    self.store = None
+                except:
+                    pass
+
+            if self.index_path.exists():
+                for root, dirs, files in os.walk(self.index_path, topdown=False):
+                    for name in files:
+                        file_path = os.path.join(root, name)
+                        try:
+                            os.chmod(file_path, 0o777)
+                            os.remove(file_path)
+                        except Exception as e:
+                            logger.warning(f"Could not remove {file_path}: {e}")
+
+                    for name in dirs:
+                        dir_path = os.path.join(root, name)
+                        try:
+                            os.chmod(dir_path, 0o777)
+                            os.rmdir(dir_path)
+                        except Exception as e:
+                            logger.warning(f"Could not remove directory {dir_path}: {e}")
+
+                try:
+                    os.rmdir(self.index_path)
+                except:
+                    pass
+
+        except Exception as e:
+            logger.error(f"❌ Force clear also failed: {e}")
+            raise RuntimeError(f"Could not clear index directory: {e}")
+
+    # ----------------------------------------------------------------------
+    # build_index actualizado
+    # ----------------------------------------------------------------------
     def build_index(self, products: List[Product], batch_size: int = 1000):
         try:
             if not products:
@@ -324,10 +402,9 @@ class Retriever:
 
             logger.info(f"Building index with {len(products)} products")
 
-            # Limpiar directorio existente
+            # Limpiar directorio existente con manejo seguro
             if self.index_path.exists():
-                import shutil
-                shutil.rmtree(self.index_path)
+                self._safe_clear_index()
                 logger.info("🗑️  Existing index cleared")
 
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -341,23 +418,13 @@ class Retriever:
 
             self.store = Chroma.from_documents(
                 documents=documents,
-                embedding=self.embedder,
+                embedding_function=self.embedder,
                 persist_directory=str(self.index_path),
                 collection_metadata={"hnsw:space": "cosine"}
             )
-
-            try:
-                self.store.persist()
-            except Exception as e:
-                logger.warning(f"Persist not needed in newer Chroma: {e}")
 
             logger.info("✅ Index built successfully")
 
         except Exception as e:
             logger.error(f"❌ Index build failed: {e}")
-
-            if self.index_path.exists():
-                import shutil
-                shutil.rmtree(self.index_path)
-
             raise RuntimeError(f"Index build failed: {e}")
