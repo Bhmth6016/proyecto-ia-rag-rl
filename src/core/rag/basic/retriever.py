@@ -1,5 +1,5 @@
 from __future__ import annotations
-# src/core/retriever.py
+# src/core/rag/basic/retriever.py
 import json
 import numpy as np
 import uuid
@@ -70,34 +70,57 @@ class Retriever:
     ):
         logger.info(f"Initializing Retriever (store exists: {Path(index_path).exists()})")
 
-        """Initialize the Retriever with vector store configuration."""
         self.index_path = Path(index_path).resolve()
         logger.info(f"Initializing Retriever with index path: {self.index_path}")
         
-        # Ensure the parent directory exists
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.embedder_name = embedding_model
         self.device = device
 
-        # Initialize the embedder
         self.embedder = HuggingFaceEmbeddings(
             model_name=self.embedder_name,
             model_kwargs={"device": self.device},
             encode_kwargs={
                 'normalize_embeddings': True,
-                'batch_size': 32  # Reduce if there are memory issues
+                'batch_size': 32
             }
         )
 
         self.store = None
 
+    # ------------------------------------------------------------
+    # 🔥 MÉTODO AÑADIDO: Cargar store de Chroma si está vacío
+    # ------------------------------------------------------------
+    def _ensure_store_loaded(self):
+        """Asegurar que el store de Chroma esté cargado correctamente."""
+        if not hasattr(self, 'store') or self.store is None:
+            try:
+                from langchain_chroma import Chroma as LCChroma
+                self.store = LCChroma(
+                    persist_directory=str(self.index_path),
+                    embedding_function=self.embedder
+                )
+                logger.info("✅ Chroma store loaded successfully")
+            except Exception as e:
+                logger.error(f"❌ Error loading Chroma store: {e}")
+
+    # ------------------------------------------------------------
+    # 🔥 MÉTODO AÑADIDO: compatibilidad con LangChain Retriever
+    # ------------------------------------------------------------
+    def as_retriever(self, search_kwargs=None):
+        """
+        Compatibilidad con LangChain Retriever interface.
+        """
+        if not hasattr(self, 'store') or self.store is None:
+            self._ensure_store_loaded()
+
+        return self.store.as_retriever(search_kwargs=search_kwargs) if self.store else None
+
     def _expand_query(self, query: str) -> List[str]:
-        """More robust query expansion"""
         base = _normalize(query)
         expansions = {base}
         
-        # Add beauty-specific terms
         beauty_terms = ["belleza", "beauty", "maquillaje", "cosmeticos", "skincare", "cuidado facial"]
         if any(term in base for term in beauty_terms):
             expansions.update([
@@ -105,7 +128,6 @@ class Retriever:
                 "labial", "brocha", "paleta", "rubor", "base", "corrector"
             ])
         
-        # Add general synonyms
         for key, syns in _SYNONYMS.items():
             if key in base:
                 expansions.update(syns)
@@ -113,120 +135,90 @@ class Retriever:
                 if s in base:
                     expansions.add(key)
         
-        # Ensure the original query is always included
-        if base not in expansions:
-            expansions.add(base)
-        
+        expansions.add(base)
         return list(expansions)
 
-    def retrieve(
-        self,
-        query: str,
-        k: int = 5,
-        filters: Optional[Dict] = None,
-        min_similarity: float = 0.3
-    ) -> List[Product]:
-        """Enhanced retrieval with better filter support"""
+    def retrieve(self, query: str, k: int = 5, filters: Optional[Dict] = None, min_similarity: float = 0.3) -> List[Product]:
         try:
-            # Parse filters from query if not provided
             if filters is None:
                 filters = self._parse_filters_from_query(query)
 
-            # Semantic search with expanded query
-            expanded_query = self._expand_query(query)
-            docs = self._raw_retrieve(" ".join(expanded_query), k=k*2, filters=filters)
+            expanded = self._expand_query(query)
+            docs = self._raw_retrieve(" ".join(expanded), k=k*2, filters=filters)
             
-            # Convert to products and apply filters
             products = []
-            seen_ids = set()
-            for doc in docs:
-                p = self._doc_to_product(doc)
-                if p and p.id not in seen_ids:
-                    seen_ids.add(p.id)
+            seen = set()
+            for d in docs:
+                p = self._doc_to_product(d)
+                if p and p.id not in seen:
+                    seen.add(p.id)
                     products.append(p)
             
-            # Apply additional filters that couldn't be handled by Chroma
             if filters:
                 products = [p for p in products if self._matches_all_filters(p, filters)]
             
-            # Score and filter by relevance
-            scored_products = []
+            scored = []
             for p in products:
                 score = self._score(query, p)
                 if score >= min_similarity:
-                    scored_products.append((score, p))
+                    scored.append((score, p))
             
-            # Sort and return top-k
-            scored_products.sort(key=lambda x: x[0], reverse=True)
-            return [p for (score, p) in scored_products[:k]]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return [p for (s, p) in scored[:k]]
         
         except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
+            logger.error(f"❌ Retrieval error: {e}")
             return []
 
     def _parse_filters_from_query(self, query: str) -> Dict[str, Any]:
-        """Extract filters from natural language query"""
         filters = {}
         
-        # Price filters
         price_matches = re.findall(r'(?:precio|price)\s*(?:menor|less|below|under|<\s*)\s*(\d+)', query, re.IGNORECASE)
         if price_matches:
             filters["price_range"] = {"max": float(price_matches[0])}
-        
-        # Color filters
+
         color_matches = re.findall(r'(?:color|colou?r)\s+(rojo|azul|verde|negro|blanco|amarillo|rosado)', query, re.IGNORECASE)
         if color_matches:
             filters["color"] = color_matches[0].lower()
-        
-        # Wireless/Bluetooth
+
         if any(word in query.lower() for word in ["inalámbrico", "wireless", "bluetooth"]):
             filters["wireless"] = True
-        
-        # Weight filters
-        weight_matches = re.findall(r'(?:peso|weight)\s*(?:menor|less|below|under|<\s*)\s*(\d+)\s*(?:g|gramos|grams|kg|kilos)', query, re.IGNORECASE)
+
+        weight_matches = re.findall(r'(?:peso|weight)\s*(?:menor|less|below|under|<\s*)\s*(\d+)', query, re.IGNORECASE)
         if weight_matches:
             filters["weight"] = {"max": float(weight_matches[0])}
         
         return filters
 
     def _matches_all_filters(self, product: Product, filters: Dict) -> bool:
-        """Check if product matches all filters"""
-        # Price filter
         if "price_range" in filters:
-            price_range = filters["price_range"]
-            if "max" in price_range and product.price and product.price > price_range["max"]:
+            r = filters["price_range"]
+            if "max" in r and product.price and product.price > r["max"]:
                 return False
-            if "min" in price_range and product.price and product.price < price_range["min"]:
+            if "min" in r and product.price and product.price < r["min"]:
                 return False
         
-        # Color filter
         if "color" in filters:
             product_color = getattr(product, "color", "") or product.details.get("Color", "")
             if not product_color or str(product_color).lower() != filters["color"].lower():
                 return False
         
-        # Wireless filter
         if "wireless" in filters:
-            is_wireless = any(word in (product.title + product.description).lower() 
-                             for word in ["wireless", "inalámbrico", "bluetooth"])
+            is_wireless = any(
+                w in (product.title + product.description).lower()
+                for w in ["wireless", "inalámbrico", "bluetooth"]
+            )
             if not is_wireless:
                 return False
         
         return True
 
-    def _raw_retrieve(
-        self,
-        query: str,
-        k: int,
-        filters: Optional[Dict],
-    ) -> List[Document]:
-        """Internal method for raw document retrieval."""
+    def _raw_retrieve(self, query: str, k: int, filters: Optional[Dict]) -> List[Document]:
         query_expanded = " ".join(self._expand_query(query))
-
         if filters:
             return self.store.similarity_search(
-                query_expanded, 
-                k=k, 
+                query_expanded,
+                k=k,
                 filter=self._chroma_filter(filters)
             )
         return self.store.similarity_search(query_expanded, k=k)
@@ -236,57 +228,60 @@ class Retriever:
             if not doc.metadata:
                 return None
 
-            # Safely handle JSON parsing
-            def safe_json_loads(json_str, default):
+            def safe_json_load(x, default):
                 try:
-                    return json.loads(json_str)
+                    return json.loads(x)
                 except:
                     return default
 
-            # Reconstruct the product dictionary
             product_data = {
                 "id": doc.metadata.get("id", str(uuid.uuid4())),
                 "title": doc.metadata.get("title", "Untitled Product"),
                 "main_category": doc.metadata.get("main_category", "Uncategorized"),
-                "categories": safe_json_loads(doc.metadata.get("categories", "[]"), []),
+                "categories": safe_json_load(doc.metadata.get("categories", "[]"), []),
                 "price": doc.metadata.get("price", 0.0),
                 "average_rating": doc.metadata.get("average_rating", 0.0),
                 "description": doc.metadata.get("description", ""),
                 "details": {
-                    "features": safe_json_loads(doc.metadata.get("features", "[]"), [])
+                    "features": safe_json_load(doc.metadata.get("features", "[]"), [])
                 }
             }
-            
             return Product.from_dict(product_data)
+
         except Exception as e:
-            logger.error(f"Failed to convert document to product: {str(e)}")
+            logger.error(f"❌ Failed to convert doc -> product: {e}")
             return None
 
-    def _text_similarity(self, query: str, text: str) -> float:
-        """Calculate text similarity using SequenceMatcher."""
-        return SequenceMatcher(None, query, text).ratio()
-
+    # ------------------------------------------------------------
+    # 🔥 MÉTODO AÑADIDO / VALIDADO: scoring solicitado
+    # ------------------------------------------------------------
     def _score(self, query: str, product: Product) -> float:
-        """Enhanced hybrid scoring"""
-        # Text similarity (title + description)
-        text_content = f"{product.title or ''} {product.description or ''}"
-        text_sim = self._text_similarity(query.lower(), text_content.lower())
-        
-        # Category boost
-        category_boost = 1.5 if (product.main_category and 
-                                any(cat.lower() in query.lower() 
-                                    for cat in [product.main_category] + product.categories)) else 1.0
-        
-        # Rating influence (normalized)
-        rating_boost = (product.average_rating/5.0 if product.average_rating else 0.5)
-        
-        # Price penalty for null prices
-        price_penalty = 0.8 if product.price is None else 1.0
-        
-        return text_sim * category_boost * rating_boost * price_penalty
+        """
+        Sistema híbrido de scoring compatible con la versión pedida.
+        Garantiza que devuelve float.
+        """
+        try:
+            # — title-based similarity
+            if hasattr(product, "title") and product.title:
+                text_sim = SequenceMatcher(None, query.lower(), product.title.lower()).ratio()
+            else:
+                text_sim = 0.3
+
+            # — rating boost
+            rating_boost = 1.0
+            if hasattr(product, "average_rating") and product.average_rating:
+                rating_boost += product.average_rating / 10.0
+
+            # Score final
+            return float(text_sim * rating_boost)
+
+        except Exception:
+            return 0.1
+
+    def _text_similarity(self, q, t):
+        return SequenceMatcher(None, q, t).ratio()
 
     def _chroma_filter(self, f: Optional[Dict]) -> Dict:
-        """Format filters for ChromaDB."""
         return {
             k: {"$in": v} if isinstance(v, list) else {"$eq": v}
             for k, v in (f or {}).items()
@@ -294,69 +289,50 @@ class Retriever:
 
     # ---------------------- Debug Methods ----------------------
 
-    def debug(self, category: str = "Beauty", limit: int = 3) -> None:
-        """Debug method to inspect indexed documents."""
+    def debug(self, category="Beauty", limit=3):
         docs = self.store.get(where={"category": category}, limit=limit)["documents"]
         for d in docs:
             print(d.metadata["title"], d.metadata.get("price"))
 
-    def debug_search(self, query: str) -> None:
-        """Debug method to test search functionality."""
+    def debug_search(self, query: str):
         print("Query expansions:", self._expand_query(query))
         docs = self._raw_retrieve(query, k=5, filters=None)
-        print(f"Found {len(docs)} documents for '{query}'")
+        print(f"Found {len(docs)} docs for '{query}'")
         for doc in docs:
             print(doc.metadata.get("title"), doc.metadata.get("category"))
 
-    def index_exists(self) -> bool:
-        """Verifica si el índice de Chroma existe de manera más flexible"""
-        index_path = Path(self.index_path)
-        if not index_path.exists():
-            return False
-            
-        # Verificación mínima - solo que exista el directorio
-        return True
+    def index_exists(self):
+        return Path(self.index_path).exists()
 
-    def build_index(self, products: List[Product], batch_size: int = 1000) -> None:
-        """Build index with improved error handling"""
+    def build_index(self, products: List[Product], batch_size: int = 1000):
         try:
             if not products:
                 raise ValueError("No products provided to build index")
 
-            logger.info(f"Starting index build with {len(products)} products")
-            
-            # Convertir productos a documentos
+            logger.info(f"Building index with {len(products)} products")
+
             documents = [
-                Document(
-                    page_content=product.to_text(),
-                    metadata=product.to_metadata()
-                )
-                for product in products
-                if product.title and product.title != "Untitled Product"
+                Document(page_content=p.to_text(), metadata=p.to_metadata())
+                for p in products if p.title
             ]
 
-            # Crear directorio si no existe
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Construir índice con persistencia
             self.store = Chroma.from_documents(
                 documents=documents,
                 embedding=self.embedder,
                 persist_directory=str(self.index_path),
                 collection_metadata={"hnsw:space": "cosine"}
             )
-            
-            # Forzar persistencia inmediata
+
             self.store.persist()
-            
-            logger.info(f"✅ Successfully built index with {len(documents)} documents")
+            logger.info("✅ Index built successfully")
 
         except Exception as e:
-            logger.error(f"❌ Index build failed: {str(e)}")
-            # Limpiar índice incompleto
+            logger.error(f"❌ Index build failed: {e}")
             if hasattr(self, 'store') and self.store:
                 try:
                     self.store.delete_collection()
                 except:
                     pass
-            raise RuntimeError(f"Index construction failed: {str(e)}")
+            raise RuntimeError(f"Index failed: {e}")
