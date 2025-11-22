@@ -352,43 +352,98 @@ class Product(BaseModel):
             cleaned = cleaned[:AutoProductConfig.MAX_DESCRIPTION_LENGTH - 3] + "..."
         
         return cleaned
-
     @classmethod
-    def _auto_parse_price(self, price: Any) -> Optional[float]:
-        """Parsea un precio desde múltiples formatos comunes."""
-        
+    def _auto_parse_price(cls, price: Any) -> Optional[float]:
+        """Extractor de precios altamente robusto para datos reales de ecommerce."""
+
+        # -------- MANEJAR LISTAS --------
+        if isinstance(price, list):
+            # Buscar el primer elemento válido que sea string o número
+            for item in price:
+                if isinstance(item, (str, int, float)):
+                    result = cls._auto_parse_price(item)
+                    if result is not None:
+                        return result
+            return None
+
         if price is None:
             return None
 
-        # Si ya es numérico, retornarlo como float
+        # -------- NUMÉRICO DIRECTO --------
         if isinstance(price, (int, float)):
             return float(price)
 
-        if isinstance(price, str):
-            # Lista unificada de patrones (originales + nuevos)
-            patterns = [
-                r'[\$€£]?\s*(\d+(?:[.,]\d{1,2})?)',            # $123.45  | €123,45 | £ 59
-                r'(\d+(?:[.,]\d{1,2})?)\s*USD',                # 123.45 USD
-                r'price[:\s]*[\$€£]?\s*(\d+(?:[.,]\d{1,2})?)', # Price: $123.45
-                r'(\d+(?:[.,]\d{1,2})?)\s*dollars',            # 59.99 dollars
-                
-                # --- Nuevos patrones ---
-                r'\$(\d+(?:\.\d{2})?)',                        # $58.00
-                r'(\d+(?:\.\d{2})?)\s*(?:USD|dollars)',        # 58.00 USD
-                r'price[\s:]*\$?(\d+(?:\.\d{2})?)',            # Price: 58.00
-            ]
+        # -------- NO STRING → NO SIRVE --------
+        if not isinstance(price, str):
+            return None
 
-            # Intentar todos los patrones
-            for pattern in patterns:
-                match = re.search(pattern, price, re.IGNORECASE)
-                if match:
-                    try:
-                        price_str = match.group(1).replace(',', '.')  # Normalizar
-                        return float(price_str)
-                    except (ValueError, TypeError):
-                        continue
+        text = price.strip()
+
+        # -------- DESCARTAR VALORES QUE NO SON PRECIO --------
+        invalid_keywords = [
+            "unavailable", "see price", "contact", "free",
+            "n/a", "not available", "out of stock", "varies"
+        ]
+        if any(kw in text.lower() for kw in invalid_keywords):
+            return None
+
+        # -------- NORMALIZAR VARIACIONES --------
+        text = text.replace("USD", "$")
+        text = text.replace("usd", "$")
+        text = text.replace("€", "€ ")
+        text = text.replace("£", "£ ")
+
+        # -------- MANEJO DE RANGOS --------
+        range_pattern = (
+            r'([\$€£]?\s*\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d+)?).{0,5}[-~].{0,5}'
+            r'([\$€£]?\s*\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d+)?)'
+        )
+        match_range = re.search(range_pattern, text)
+        if match_range:
+            low = cls._normalize_number(match_range.group(1))
+            high = cls._normalize_number(match_range.group(2))
+            if low and high:
+                return min(low, high)
+
+        # -------- PRECIOS INDIVIDUALES --------
+        single_patterns = [
+            r'[\$€£]\s*\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d+)?',   # $1,299.99 | €1.299,99 | £99.50
+            r'\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d+)?\s*[\$€£]',    # 1299.99 €
+            r'\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d+)?'              # 1299.99 (sin símbolo)
+        ]
+
+        for pattern in single_patterns:
+            match = re.search(pattern, text)
+            if match:
+                number = cls._normalize_number(match.group(0))
+                if number is not None:
+                    return number
 
         return None
+
+
+    @staticmethod
+    def _normalize_number(value: str) -> Optional[float]:
+        """Convierte strings de números internacionales a float."""
+        if not value:
+            return None
+
+        # eliminar símbolos de moneda
+        value = value.replace("$", "").replace("€", "").replace("£", "")
+        value = value.strip()
+
+        # Caso europeo: 1.299,99 → 1299.99
+        if value.count(".") > 1 or ("," in value and value.rfind(",") > value.rfind(".")):
+            value = value.replace(".", "").replace(",", ".")
+
+        # Caso americano: 1,299.99 → 1299.99
+        else:
+            value = value.replace(",", "")
+
+        try:
+            return float(value)
+        except:
+            return None
 
     @classmethod
     def _auto_normalize_categories(cls, categories: Any) -> List[str]:
