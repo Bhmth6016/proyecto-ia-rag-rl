@@ -25,11 +25,11 @@ def test_basic_queries():
         
         # Consultas de prueba
         test_queries = [
-            "laptop gaming",
-            "auriculares inalámbricos",
-            "smartphone android",
-            "tablet dibujo",
-            "cámara fotográfica"
+            "videojuegos",
+            "juegos pc", 
+            "simulador vuelo",
+            "addon profesional",
+            "juegos descargables"
         ]
         
         print("\n" + "="*50)

@@ -513,23 +513,43 @@ class RAGAgent:
         """Formatea top-3 (o top-n) productos en respuesta amigable"""
         if not products:
             return self._handle_no_results(query)
+
         lines = [f"🎯 Recomendaciones para '{query}':"]
+
         for i, p in enumerate(products[:3], 1):
             title = getattr(p, "title", "Producto sin nombre")
             price = getattr(p, "price", None)
             rating = getattr(p, "average_rating", None)
+
             price_str = f"${price:.2f}" if price else "Precio no disponible"
             rating_str = f"{rating}/5" if rating else "Sin calificaciones"
             cat = getattr(p, "main_category", "Categoría")
-            features = getattr(p, "details", {}).get("features", []) if getattr(p, "details", None) else []
+
+            # 🔥 CORRECCIÓN: Acceso seguro a features
+            try:
+                details_obj = getattr(p, "details", None)
+                if details_obj and hasattr(details_obj, "features"):
+                    features = details_obj.features or []
+                else:
+                    features = []
+            except Exception:
+                features = []
+
             feat = " | ".join(features[:2]) if features else "Características no disponibles"
             personal_tag = " 🎯" if cat in self.user_profile.get("preferred_categories", []) else ""
+
             lines.append(f"{i}. {title}{personal_tag}")
             lines.append(f"   {price_str} | {rating_str} | {cat}")
             lines.append(f"   {feat}")
+
         if self.user_profile.get("preferred_categories"):
-            lines.append(f"\n💡 Basado en tus preferencias: {', '.join(self.user_profile.get('preferred_categories', []) )}")
+            lines.append(
+                f"\n💡 Basado en tus preferencias: "
+                f"{', '.join(self.user_profile.get('preferred_categories', []))}"
+            )
+            
         return "\n".join(lines)
+
 
     def _handle_no_results(self, query: str) -> str:
         return (
