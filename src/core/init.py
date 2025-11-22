@@ -4,7 +4,6 @@ from typing import List, Optional
 from src.core.data.loader import DataLoader
 from src.core.data.product import Product
 from src.core.rag.basic.retriever import Retriever
-from src.core.category_search.category_tree import CategoryTree
 from src.core.config import settings
 import logging
 
@@ -23,7 +22,6 @@ class SystemInitializer:
         if not self._initialized:
             self._products = None
             self._retriever = None
-            self._category_tree = None
             self._initialized = True
 
     @property
@@ -38,12 +36,6 @@ class SystemInitializer:
             self._initialize_retriever()
         return self._retriever
 
-    @property
-    def category_tree(self) -> CategoryTree:
-        if self._category_tree is None:
-            self._build_category_tree()
-        return self._category_tree
-    
     @property
     def loader(self) -> DataLoader:
         if not hasattr(self, '_loader'):
@@ -83,10 +75,7 @@ class SystemInitializer:
                 self._load_products()
             self._retriever.build_index(self._products)
 
-    def _build_category_tree(self) -> None:
-        """Build category hierarchy."""
-        self._category_tree = CategoryTree(self.products)
-        self._category_tree.build_tree()
+
 
 def get_system() -> SystemInitializer:
     """Global access point for initialized system."""

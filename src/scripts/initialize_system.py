@@ -3,6 +3,8 @@ from src.core.init import initialize_system
 from src.core.data.loader import FastDataLoader
 from src.core.data.chroma_builder import OptimizedChromaBuilder
 from src.core.rag.basic.retriever import Retriever
+# CORRECCIÓN: Cambiado de rlhf a RAGAgent
+from src.core.rag.advanced.RAGAgent import RAGAgent
 
 def setup_complete_system():
     """Inicializa todo el sistema para RAGAgent"""

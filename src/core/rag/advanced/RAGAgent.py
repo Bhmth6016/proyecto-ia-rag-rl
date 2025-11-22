@@ -4,27 +4,25 @@ import json
 import logging
 import uuid
 import time
-import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 
-# External / LangChain-ish imports (tu stack debe proveerlos)
+# External imports (asegúrate de tener estas dependencias)
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 
-# Local imports (tu repositorio)
-from src.core.rag.basic.evaluator import RAGEvaluator, load_llm_for_reward_model, load_llm
+# Local imports
+from src.core.rag.advanced.evaluator import RAGEvaluator, load_llm_for_reward_model
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 from src.core.rag.basic.retriever import Retriever
 from src.core.data.product import Product
 from src.core.config import settings
 from src.core.init import get_system
 
-# Optional advanced trainer (si existe en tu código)
 try:
     from src.core.rag.advanced.trainer import RLHFTrainer
     HAS_RLHF_TRAINER = True
@@ -32,7 +30,7 @@ except Exception:
     RLHFTrainer = None
     HAS_RLHF_TRAINER = False
 
-# Logger (usa tu util o logging básico)
+# Logger
 try:
     from src.core.utils.logger import get_logger
     logger = get_logger(__name__)
@@ -40,26 +38,26 @@ except Exception:
     logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.INFO)
 
+
+# ============================================================
+# RL CONFIG / SIMPLE RL TRAINER
+# ============================================================
+
 @dataclass
 class RLConfig:
     min_samples_for_training: int = 10
     models_dir: Path = Path("models/rl_models")
-    reward_model_name: str = "reward_model.pkl"  # placeholder
+    reward_model_name: str = "reward_model.pkl"
+
 
 class SimpleRLTrainer:
-    """
-    Entrenador RL simple que:
-    - agrega y organiza logs de feedback
-    - si RLHFTrainer está presente, prepara dataset y llama a su train()
-    - guarda un artefacto de 'reward model' (placeholder) o delega al RLHFTrainer
-    """
+
     def __init__(self, config: RLConfig = RLConfig()):
         self.config = config
         self.config.models_dir.mkdir(parents=True, exist_ok=True)
 
     def collect_logs(self, feedback_dir: Path) -> List[Dict]:
-        """Lee logs JSONL desde feedback_dir y devuelve lista de entradas."""
-        feedbacks: List[Dict] = []
+        feedbacks = []
         if not feedback_dir.exists():
             return feedbacks
 
@@ -67,8 +65,7 @@ class SimpleRLTrainer:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
-                        line = line.strip()
-                        if not line:
+                        if not line.strip():
                             continue
                         try:
                             feedbacks.append(json.loads(line))
@@ -76,91 +73,81 @@ class SimpleRLTrainer:
                             logger.debug("Skipping invalid json line in %s", path)
             except Exception as e:
                 logger.debug("Error reading %s: %s", path, e)
-
         return feedbacks
 
     def prepare_dataset(self, feedbacks: List[Dict]) -> List[Dict]:
-        """
-        Filtra y prepara dataset simple para RL:
-        Ejemplo de registro: {query, answer, rating, selected_product_ids, user_id}
-        Convertimos a registros (query, positive/negative, metadata).
-        """
-        dataset: List[Dict] = []
+        dataset = []
         for fb in feedbacks:
             rating = fb.get("rating", None)
             if rating is None:
                 continue
-            record = {
+            dataset.append({
                 "query": fb.get("query", ""),
                 "answer": fb.get("answer", ""),
                 "rating": rating,
                 "user_id": fb.get("extra_meta", {}).get("user_id", "unknown"),
                 "selected_products": fb.get("extra_meta", {}).get("selected_product_id", None),
-            }
-            dataset.append(record)
+            })
         return dataset
 
     def train(self, dataset: List[Dict]) -> Optional[Path]:
-        """
-        Si existe RLHFTrainer, intenta delegar. Si no, crea un 'pseudo' reward model
-        que es simplemente un summary stats artifact.
-        Retorna path al modelo/artefacto.
-        """
         if not dataset or len(dataset) < self.config.min_samples_for_training:
-            logger.info("Insufficient samples for RL training: %d (need %d)",
-                        len(dataset), self.config.min_samples_for_training)
+            logger.info("Insufficient samples for RL training.")
             return None
 
-        # Si existe el trainer avanzado, use it
+        # Advanced trainer available?
         if HAS_RLHF_TRAINER and RLHFTrainer is not None:
             try:
-                logger.info("Using RLHFTrainer to train reward model...")
+                logger.info("Training with RLHFTrainer...")
                 trainer = RLHFTrainer()
                 prepared = trainer.prepare_rlhf_dataset_from_records(dataset)
                 save_dir = self.config.models_dir / f"rlhf_{int(time.time())}"
                 save_dir.mkdir(parents=True, exist_ok=True)
                 trainer.train(prepared, save_dir)
-                # Asumimos que trainer deja un artefacto listo para load_llm_for_reward_model
-                logger.info("RLHFTrainer finished. Model saved to %s", save_dir)
+                logger.info("RLHFTrainer model saved at %s", save_dir)
                 return save_dir
             except Exception as e:
-                logger.exception("RLHFTrainer failed: %s", e)
-                # Fall through to simple artifact
-        # Fallback: crear un pequeño artefacto de reward_model (json resumen)
+                logger.exception("RLHF trainer failed: %s", e)
+
+        # Simple fallback artifact
         try:
             summary = {
                 "trained_at": datetime.now().isoformat(),
                 "num_samples": len(dataset),
-                "avg_rating": sum(d["rating"] for d in dataset) / len(dataset),
+                "avg_rating": sum(d["rating"] for d in dataset) / len(dataset)
             }
-            artifact_path = self.config.models_dir / f"simple_reward_{int(time.time())}.json"
-            with open(artifact_path, "w", encoding="utf-8") as f:
-                json.dump(summary, f, indent=2)
-            logger.info("Saved simple reward artifact to %s", artifact_path)
-            return artifact_path
+            path = self.config.models_dir / f"simple_reward_{int(time.time())}.json"
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(summary, fh, indent=2)
+            logger.info("Simple reward model saved at %s", path)
+            return path
         except Exception as e:
             logger.exception("Failed to save simple reward artifact: %s", e)
             return None
 
     def get_latest_model_path(self) -> Optional[Path]:
-        """Retorna el path del artefacto/modelo más reciente"""
         files = sorted(self.config.models_dir.glob("*"), key=lambda p: p.stat().st_mtime)
         return files[-1] if files else None
 
+
+# ============================================================
+# RAG AGENT (SIN TRADUCCIÓN)
+# ============================================================
+
 class RAGAgent:
-    def __init__(self, products: Optional[List[Product]] = None, user_id: str = "default", enable_translation: bool = False):
-        """
-        RAGAgent integrado con RL:
-        - products: lista de Product (si None, se carga desde system)
-        - user_id: id del usuario para perfiles
-        """
-        print("Inicializando RAGAgent (integración RL + RAG)...")
+
+    # ========================================================
+    # 🔥 NUEVO __init__ (SIN TRADUCCIÓN)
+    # ========================================================
+    def __init__(self, products: Optional[List[Product]] = None, user_id: str = "default"):
+        """RAGAgent optimizado manteniendo enriquecimiento de datos"""
+        print("🧠 Inicializando RAGAgent (SIN TRADUCCIÓN)")
+
         system = get_system()
         self.products = products or getattr(system, "products", None)
         self.user_id = user_id
-        self.enable_translation = enable_translation
 
-        # directorios
+        # paths
         self.history_dir = Path(settings.PROC_DIR) / "historial"
         self.history_dir.mkdir(parents=True, exist_ok=True)
         self.feedback_dir = Path("data/feedback")
@@ -168,58 +155,54 @@ class RAGAgent:
 
         # retriever
         self.retriever = getattr(system, "retriever", None) or Retriever()
-        # si no existe índice, construirlo si tenemos productos
         try:
             if not self.retriever.index_exists():
                 if self.products:
-                    logger.info("Building retriever index from provided products")
+                    logger.info("Building retriever index...")
                     self.retriever.build_index(self.products)
                 else:
                     logger.warning("No products provided and retriever index missing")
             else:
-                logger.info("Retriever index exists - loading store if needed")
-                # Algunos retrievers necesitan reconstruir el store handle
                 try:
                     self.retriever._ensure_store_loaded()
                 except Exception:
                     pass
         except Exception as e:
-            logger.exception("Error initializing retriever: %s", e)
+            logger.exception("Retriever initialization failed: %s", e)
 
         # LLM
         self.llm = self._initialize_llm()
 
-        # Memory & Chain
+        # memory & chain
         self.memory = ConversationBufferWindowMemory(memory_key="chat_history", k=5, return_messages=True)
         self.chain = self._build_chain()
 
-        # Feedback / Evaluator
+        # feedback & evaluator
         self.feedback_processor = FeedbackProcessor()
         self.evaluator = RAGEvaluator(llm=self.llm)
 
-        # Profiles
+        # perfil
         self.profile_manager = self._initialize_profile_manager()
         self.user_profile = self.profile_manager.get_or_create_profile(self.user_id)
 
-        # RL trainer & reward model
+        # RL
         self.rl_config = RLConfig(min_samples_for_training=getattr(settings, "RL_MIN_SAMPLES", 10))
-        self.rl_trainer = SimpleRLTrainer(config=self.rl_config)
+        self.rl_trainer = SimpleRLTrainer(self.rl_config)
         self.reward_model = None
         self._try_load_reward_model_on_startup()
 
-        # Cargar feedback memory (low-rated feedbacks)
+        # cargar feedback memory
         try:
             self.feedback_memory = self._load_feedback_memory()
         except Exception:
             self.feedback_memory = []
 
-        logger.info("RAGAgent inicializado correctamente")
+        logger.info("RAGAgent inicializado correctamente (sin traducción).")
 
-    # --------------------
-    # Initialization helpers
-    # --------------------
+    # ====================================================
+    # LLM INIT
+    # ====================================================
     def _initialize_llm(self):
-        """Inicializa Gemini si está, si no fallback a HF o mock"""
         try:
             if getattr(settings, "GEMINI_API_KEY", None):
                 logger.info("Initializing Gemini LLM")
@@ -231,7 +214,6 @@ class RAGAgent:
         except Exception as e:
             logger.debug("Gemini init failed: %s", e)
 
-        # Fallback: HuggingFace pipeline (si está disponible en tu stack)
         try:
             from langchain_huggingface import HuggingFacePipeline
             logger.info("Initializing HF pipeline LLM fallback")
@@ -243,16 +225,17 @@ class RAGAgent:
         except Exception as e:
             logger.debug("HF fallback unavailable: %s", e)
 
-        # Último recurso: Mock LLM
+        # Mock LLM
         class _MockLLM:
             def __call__(self, prompt: str):
                 return "Respuesta simulada por MockLLM. Instala Gemini o HF para mejores resultados."
         logger.warning("Using MockLLM. Install Gemini or HF for production usage.")
         return _MockLLM()
 
-    def _build_chain(self) -> ConversationalRetrievalChain:
-        """Construye ConversationalRetrievalChain con prompt simple"""
-        # Esperar que el store del retriever esté listo (timeout corto)
+    # ====================================================
+    # BUILD CHAIN
+    # ====================================================
+    def _build_chain(self):
         start = time.time()
         while not hasattr(self.retriever, "store") or self.retriever.store is None:
             if time.time() - start > 10:
@@ -279,9 +262,13 @@ class RAGAgent:
             logger.debug("Could not build ConversationalRetrievalChain: %s", e)
             return None
 
+    # ====================================================
+    # PROFILES
+    # ====================================================
     def _initialize_profile_manager(self):
-        """Inicializa gestor de perfiles (persistente en disco simple)"""
+
         class ProfileManager:
+
             def __init__(self, path: Path):
                 self.path = path
                 self.path.mkdir(parents=True, exist_ok=True)
@@ -344,8 +331,10 @@ class RAGAgent:
 
         return ProfileManager(Path(settings.PROC_DIR) / "profiles")
 
+    # ====================================================
+    # LOAD REWARD MODEL
+    # ====================================================
     def _try_load_reward_model_on_startup(self):
-        """Cargar reward model si existe en models dir"""
         try:
             latest = self.rl_trainer.get_latest_model_path()
             if latest:
@@ -377,9 +366,9 @@ class RAGAgent:
         except Exception as e:
             logger.debug("Error loading reward model at startup: %s", e)
 
-    # --------------------
-    # Feedback / Logs
-    # --------------------
+    # ====================================================
+    # FEEDBACK / LOGS
+    # ====================================================
     def _load_feedback_memory(self) -> List[Dict]:
         """Carga feedbacks con rating bajo para evitar repetir malas respuestas"""
         feedbacks = []
@@ -428,9 +417,9 @@ class RAGAgent:
         except Exception as e:
             logger.debug("Error saving conversation: %s", e)
 
-    # --------------------
-    # Core query handling
-    # --------------------
+    # ====================================================
+    # CORE QUERY HANDLING
+    # ====================================================
     def ask(self, query: str) -> str:
         """
         Flujo principal:
@@ -465,12 +454,10 @@ class RAGAgent:
                     if callable(self.reward_model):
                         score = float(self.reward_model(f"{query} {response}"))
                     else:
-                        # assume llm-like callable returning float or dict
                         out = self.reward_model(f"{query} {response}")
                         try:
                             score = float(out)
                         except Exception:
-                            # if returns dict with score
                             score = float(out.get("score", 0.0)) if isinstance(out, dict) else 0.0
                     logger.info("Reward score: %.3f", score)
                     if score < 0.25:
@@ -557,9 +544,9 @@ class RAGAgent:
             "Intenta usar términos más generales o explora las categorías principales."
         )
 
-    # --------------------
-    # Training & RL lifecycle
-    # --------------------
+    # ====================================================
+    # TRAINING & RL lifecycle
+    # ====================================================
     def _prepare_training_data_from_feedback(self) -> List[Dict]:
         """Agrupa feedbacks y prepara dataset para trainer"""
         all_feedbacks = self.rl_trainer.collect_logs(self.feedback_dir)
@@ -607,9 +594,9 @@ class RAGAgent:
         except Exception as e:
             logger.debug("Could not save interaction for training: %s", e)
 
-    # --------------------
-    # Feedback API
-    # --------------------
+    # ====================================================
+    # FEEDBACK API
+    # ====================================================
     def _log_feedback(self, query: str, answer: str, rating: int, extra_meta: Optional[Dict] = None):
         """Guardado robusto de feedback en formato jsonl"""
         try:
@@ -632,9 +619,9 @@ class RAGAgent:
         except Exception as e:
             logger.debug("Failed to log feedback: %s", e)
 
-    # --------------------
+    # ====================================================
     # Utilities & CLI loop
-    # --------------------
+    # ====================================================
     def product_selected(self, product_id: str, product_data: Dict):
         """Registrar compra/selección (call desde UI)"""
         try:
