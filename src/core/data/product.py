@@ -354,32 +354,40 @@ class Product(BaseModel):
         return cleaned
 
     @classmethod
-    def _auto_parse_price(cls, price: Any) -> Optional[float]:
-        """Parsea precio automáticamente"""
+    def _auto_parse_price(self, price: Any) -> Optional[float]:
+        """Parsea un precio desde múltiples formatos comunes."""
+        
         if price is None:
             return None
-        
+
+        # Si ya es numérico, retornarlo como float
         if isinstance(price, (int, float)):
             return float(price)
-        
+
         if isinstance(price, str):
-            # Múltiples estrategias de parsing
+            # Lista unificada de patrones (originales + nuevos)
             patterns = [
-                r'[\$€£]?\s*(\d+(?:[.,]\d{1,2})?)',  # $123.45, €123,45
-                r'(\d+(?:[.,]\d{1,2})?)\s*USD',      # 123.45 USD
-                r'price:\s*[\$€£]?\s*(\d+(?:[.,]\d{1,2})?)',  # Price: $123.45
-                r'(\d+(?:[.,]\d{1,2})?)\s*dollars',  # 123.45 dollars
+                r'[\$€£]?\s*(\d+(?:[.,]\d{1,2})?)',            # $123.45  | €123,45 | £ 59
+                r'(\d+(?:[.,]\d{1,2})?)\s*USD',                # 123.45 USD
+                r'price[:\s]*[\$€£]?\s*(\d+(?:[.,]\d{1,2})?)', # Price: $123.45
+                r'(\d+(?:[.,]\d{1,2})?)\s*dollars',            # 59.99 dollars
+                
+                # --- Nuevos patrones ---
+                r'\$(\d+(?:\.\d{2})?)',                        # $58.00
+                r'(\d+(?:\.\d{2})?)\s*(?:USD|dollars)',        # 58.00 USD
+                r'price[\s:]*\$?(\d+(?:\.\d{2})?)',            # Price: 58.00
             ]
-            
+
+            # Intentar todos los patrones
             for pattern in patterns:
                 match = re.search(pattern, price, re.IGNORECASE)
                 if match:
                     try:
-                        price_str = match.group(1).replace(',', '.')
+                        price_str = match.group(1).replace(',', '.')  # Normalizar
                         return float(price_str)
                     except (ValueError, TypeError):
                         continue
-        
+
         return None
 
     @classmethod
