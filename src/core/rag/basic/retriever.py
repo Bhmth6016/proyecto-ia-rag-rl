@@ -108,10 +108,17 @@ class Retriever:
         if not hasattr(self, "store") or self.store is None:
             try:
                 if self.index_exists():
-                    self.store = Chroma(
-                        persist_directory=str(self.index_path),
-                        embedding_function=self.embedder
-                    )
+                    if CHROMA_NEW:
+                        # NO pasar embedding_function
+                        self.store = Chroma(
+                            persist_directory=str(self.index_path)
+                        )
+                    else:
+                        self.store = Chroma(
+                            persist_directory=str(self.index_path),
+                            embedding_function=self.embedder
+                        )
+
                     logger.info("✅ Chroma store loaded successfully")
                 else:
                     logger.warning("⚠️  No index found, need to build first")
@@ -416,12 +423,21 @@ class Retriever:
 
             logger.info(f"📝 Creating {len(documents)} documents")
 
-            self.store = Chroma.from_documents(
-                documents=documents,
-                embedding_function=self.embedder,
-                persist_directory=str(self.index_path),
-                collection_metadata={"hnsw:space": "cosine"}
-            )
+            if CHROMA_NEW:
+    # Versión nueva: NO usa embedding_function aquí
+                self.store = Chroma.from_documents(
+                    documents=documents,
+                    persist_directory=str(self.index_path),
+                    collection_metadata={"hnsw:space": "cosine"}
+                )
+            else:
+                # Versión vieja: sí usa embedding_function
+                self.store = Chroma.from_documents(
+                    documents=documents,
+                    embedding_function=self.embedder,
+                    persist_directory=str(self.index_path),
+                    collection_metadata={"hnsw:space": "cosine"}
+                )
 
             logger.info("✅ Index built successfully")
 
