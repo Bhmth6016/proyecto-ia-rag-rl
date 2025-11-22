@@ -173,7 +173,7 @@ def test_loader_functionality():
         
         # Test 1: Inicialización
         loader = FastDataLoader(
-            max_products_per_file=10,  # Limitado para prueba rápida
+            max_products_per_file=5000,  # Limitado para prueba rápida
             auto_categories=True,
             cache_enabled=False
         )

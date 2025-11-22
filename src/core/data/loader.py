@@ -76,7 +76,7 @@ class FastDataLoader:
         raw_dir: Optional[Union[str, Path]] = None,
         processed_dir: Optional[Union[str, Path]] = None,
         cache_enabled: bool = False,  # Deshabilitado para velocidad
-        max_products_per_file: int = 500,  # Muy limitado
+        max_products_per_file: int = 5000,  # Muy limitado
         auto_categories: bool = True,
         auto_tags: bool = False,  # Deshabilitado para velocidad
         use_progress_bar: bool = True
