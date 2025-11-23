@@ -34,3 +34,4 @@ src/core/config/settings.py
 src/core/config/settings.py
 README.md
 README.md
+src/core/config.py
