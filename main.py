@@ -237,6 +237,8 @@ def _handle_rag_mode(system, user_manager, args):
 # =====================================================
 def _handle_users_mode(user_manager, args):
     """Manejo del comando de usuarios"""
+    import json  # 🔥 AÑADIR ESTA LÍNEA
+    
     if args.list:
         print("\n👥 LISTA DE USUARIOS REGISTRADOS:")
         print("=" * 50)
@@ -248,7 +250,7 @@ def _handle_users_mode(user_manager, args):
                 for user_file in user_files:
                     try:
                         with open(user_file, 'r', encoding='utf-8') as f:
-                            user_data = json.load(f)
+                            user_data = json.load(f)  # ✅ Ahora json está definido
                         print(f"ID: {user_data['user_id']}")
                         print(f"  Age: {user_data['age']} | Gender: {user_data['gender']} | Country: {user_data['country']}")
                         print(f"  Created: {user_data['created_at'][:10]}")
