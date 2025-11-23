@@ -10,8 +10,8 @@ load_dotenv()
 # API / MODEL CONFIG
 # ============================================================
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQAIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ")
-MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyB-KizR_zR6XA8_0aQ_kxQpd4BaW8CNQXk")
+MODEL_NAME = os.getenv("gemini-1.5-flash")
 
 # ============================================================
 # LOGGING

@@ -59,7 +59,7 @@ def test_rag_agent():
     """Prueba el RAGAgent completo"""
     print("\n🧠 Probando RAGAgent...")
     
-    from src.core.rag.advanced.RAGAgent import RAGAgent
+    from src.core.rag.advanced.WorkingRAGAgent import RAGAgent
     
     agent = RAGAgent(user_id="system_test")
     
