@@ -59,27 +59,7 @@ python -m nltk.downloader averaged_perceptron_tagger
 
 Copia el archivo .env.example a .env y completa tus credenciales:
 ### .env
-DATA_DIR=./data/raw
 
-VECTOR_INDEX_PATH=./data/vector
-GEMINI_API_KEY=AIzaSyBnXA2lIP6xfyMICg77XctxmninUOdrzLQ
-CHROMA_DB_PATH=./data/processed/chroma_db
-CHROMA_DB_COLLECTION=amazon_products
-LOG_LEVEL=INFO
-LOG_FILE=./logs/amazon_recommendations.log
-DEVICE=cpu
-MAX_PRODUCTS_TO_LOAD=1000000
-MAX_QUERY_LENGTH=20000
-MAX_QUERY_RESULTS=5
-VECTOR_INDEX_PATH=./data/processed/chroma_db
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-VECTOR_BACKEND=chroma
-CACHE_ENABLED=true
-ANONYMIZED_TELEMETRY=false
-
-Coloca tus archivos de datos en data/raw/ (formato JSON o JSONL)
-https://amazon-reviews-2023.github.io
-solo descargar los archivos tipo meta
 ### Inicializa la estructura del proyecto?????
 python setup.py
 
