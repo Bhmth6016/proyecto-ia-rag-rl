@@ -22,12 +22,12 @@ class CollaborativeFilter:
         self.feedback_cache = {}  # Cache de feedback agregado
         
     def get_collaborative_scores(self, 
-                               target_user: UserProfile,
-                               query: str,
-                               candidate_products: List[Product],
-                               max_similar_users: int = 10) -> Dict[str, float]:
+                            target_user: UserProfile,
+                            query: str,
+                            candidate_products: List[Product],
+                            max_similar_users: int = 10) -> Dict[str, float]:
         """
-        Calcula scores colaborativos basados en usuarios similares
+        Calcula scores colaborativos con fallback inteligente
         """
         try:
             # 1. Encontrar usuarios similares
@@ -37,8 +37,8 @@ class CollaborativeFilter:
             )[:max_similar_users]
             
             if not similar_users:
-                logger.debug("No se encontraron usuarios similares")
-                return {}
+                logger.debug("No se encontraron usuarios similares, usando fallback basado en categorías")
+                return self._get_category_fallback_scores(target_user, query, candidate_products)
             
             logger.info(f"👥 Encontrados {len(similar_users)} usuarios similares para {target_user.user_id}")
             
@@ -57,7 +57,12 @@ class CollaborativeFilter:
                     collaborative_scores[product_id] += feedback_score * similarity
                     similarity_weights[product_id] += similarity
             
-            # 5. Normalizar scores
+            # 5. Si no hay scores colaborativos, usar fallback
+            if not collaborative_scores:
+                logger.debug("No hay feedback colaborativo disponible, usando fallback")
+                return self._get_category_fallback_scores(target_user, query, candidate_products)
+            
+            # 6. Normalizar scores
             normalized_scores = {}
             for product_id, total_score in collaborative_scores.items():
                 if similarity_weights[product_id] > 0:
@@ -67,7 +72,50 @@ class CollaborativeFilter:
             return normalized_scores
             
         except Exception as e:
-            logger.error(f"Error en filtro colaborativo: {e}")
+            logger.error(f"Error en filtro colaborativo, usando fallback: {e}")
+            return self._get_category_fallback_scores(target_user, query, candidate_products)
+
+    def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
+        """
+        Fallback: da scores basados en categorías preferidas del usuario
+        """
+        fallback_scores = {}
+        
+        try:
+            user_categories = set(user.preferred_categories)
+            
+            for product in products:
+                score = 0.0
+                
+                # Verificar categoría del producto
+                product_category = getattr(product, 'main_category', '').lower()
+                product_title = getattr(product, 'title', '').lower()
+                
+                # Score por categoría preferida
+                if any(cat in product_category for cat in user_categories):
+                    score += 0.3
+                
+                # Score por términos en título
+                query_terms = set(query.lower().split())
+                title_terms = set(product_title.split())
+                common_terms = query_terms & title_terms
+                
+                if common_terms:
+                    score += len(common_terms) * 0.1
+                
+                # Score por rating alto
+                rating = getattr(product, 'average_rating', 0)
+                if rating and rating >= 4.0:
+                    score += 0.2
+                
+                if score > 0:
+                    fallback_scores[product.id] = min(score, 1.0)
+            
+            logger.debug(f"🔄 Fallback categórico: {len(fallback_scores)} productos con score")
+            return fallback_scores
+            
+        except Exception as e:
+            logger.debug(f"Error en fallback categórico: {e}")
             return {}
     
     def _get_user_feedback_scores(self, user: UserProfile, query: str) -> Dict[str, float]:
