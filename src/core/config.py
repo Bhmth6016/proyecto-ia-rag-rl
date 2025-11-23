@@ -7,11 +7,11 @@ import torch
 load_dotenv()
 
 # ============================================================
-# API / MODEL CONFIG
+# API / MODEL CONFIG - CORREGIDO
 # ============================================================
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyB-KizR_zR6XA8_0aQ_kxQpd4BaW8CNQXk")
-MODEL_NAME = os.getenv("gemini-1.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAUmuCyHSRTZvWxKdCnrSyEk0kqte8nS9w")
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.0-flash")  # ¡CORREGIDO!
 
 # ============================================================
 # LOGGING
@@ -100,6 +100,7 @@ RLHF_CHECKPOINT = os.getenv("RLHF_CHECKPOINT")
 ANONYMIZED_TELEMETRY = os.getenv("ANONYMIZED_TELEMETRY", "false").lower() in {
     "true", "1", "yes"
 }
+
 class Settings:
     pass
 
