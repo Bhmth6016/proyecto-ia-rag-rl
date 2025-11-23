@@ -1,51 +1,63 @@
-# src/scripts/test_gemini_models.py
-import google.generativeai as genai
-from src.core.config import settings
+# src/scripts/test_final_system.py
+from src.core.rag.advanced.WorkingRAGAgent import WorkingAdvancedRAGAgent
+import logging
 
-def test_gemini_models():
-    """Prueba qué modelos de Gemini están disponibles"""
-    print("🔍 TESTEANDO MODELOS DE GEMINI DISPONIBLES")
-    print("=" * 50)
+logging.basicConfig(level=logging.INFO)
+
+def test_final_system():
+    print("🎮 SISTEMA RAG FINAL - VIDEOJUEGOS")
+    print("=" * 60)
+    print("✅ Sin dependencias externas | ✅ Optimizado para gaming")
+    print("=" * 60)
     
-    try:
-        # Configurar API
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+    agent = WorkingAdvancedRAGAgent()
+    
+    test_cases = [
+        # (consulta, descripción)
+        ("juegos de playstation 5", "Búsqueda por plataforma específica"),
+        ("nintendo switch aventura rpg", "Búsqueda por plataforma y género"),
+        ("xbox one shooters", "Búsqueda por plataforma y género"),
+        ("minecraft edition", "Búsqueda por título específico"), 
+        ("zelda breath of the wild", "Búsqueda por título famoso"),
+        ("juegos de deportes baratos", "Búsqueda con filtro de precio"),
+        ("acción y aventura", "Búsqueda por múltiples géneros"),
+    ]
+    
+    for query, description in test_cases:
+        print(f"\n🎯 '{query}'")
+        print(f"📝 {description}")
+        print("-" * 50)
         
-        # Listar modelos disponibles
-        print("📋 Modelos disponibles:")
-        models = genai.list_models()
+        agent.clear_memory()
+        response = agent.process_query(query)
         
-        gemini_models = []
-        for model in models:
-            if 'gemini' in model.name.lower():
-                gemini_models.append(model.name)
-                print(f"  ✅ {model.name}")
-                # Mostrar métodos soportados
-                if hasattr(model, 'supported_generation_methods'):
-                    print(f"     Métodos: {model.supported_generation_methods}")
+        print(f"✅ Calidad: {response.quality_score:.2f}")
+        print(f"📦 Juegos encontrados: {len(response.products)}")
+        print(f"🤖 LLM externo: {response.used_llm}")
         
-        print(f"\n🎯 Total modelos Gemini: {len(gemini_models)}")
-        
-        # Probar generación con cada modelo
-        print("\n🧪 Probando generación con modelos...")
-        test_prompt = "Hola, responde con 'OK' si funciona."
-        
-        for model_name in gemini_models[:3]:  # Probar solo los primeros 3
-            try:
-                print(f"\n🔧 Probando: {model_name.split('/')[-1]}")
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(test_prompt)
-                
-                if response.text:
-                    print(f"  ✅ FUNCIONA: '{response.text.strip()}'")
+        if response.products:
+            print("\n🎮 PLATAFORMAS ENCONTRADAS:")
+            platforms = {}
+            for product in response.products:
+                title = getattr(product, 'title', '')
+                if 'playstation' in title.lower():
+                    platforms['PlayStation'] = platforms.get('PlayStation', 0) + 1
+                elif 'xbox' in title.lower():
+                    platforms['Xbox'] = platforms.get('Xbox', 0) + 1  
+                elif 'nintendo' in title.lower():
+                    platforms['Nintendo'] = platforms.get('Nintendo', 0) + 1
+                elif 'pc' in title.lower():
+                    platforms['PC'] = platforms.get('PC', 0) + 1
                 else:
-                    print(f"  ❌ FALLÓ: {response.prompt_feedback}")
-                    
-            except Exception as e:
-                print(f"  ❌ ERROR: {e}")
-                
-    except Exception as e:
-        print(f"❌ Error general: {e}")
+                    platforms['Otras'] = platforms.get('Otras', 0) + 1
+            
+            for platform, count in platforms.items():
+                print(f"   {platform}: {count} juegos")
+        
+        print(f"\n💬 RESPUESTA (primeras 2 líneas):")
+        lines = response.answer.split('\n')[:2]
+        for line in lines:
+            print(f"   {line}")
 
 if __name__ == "__main__":
-    test_gemini_models()
+    test_final_system()
