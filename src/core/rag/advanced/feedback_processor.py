@@ -16,11 +16,13 @@ logger = get_logger(__name__)
 
 class FeedbackProcessor:
     """
-    Procesador de feedback especializado en:
+    Procesador de feedback SIN TRADUCCIÓN.
+
+    Funcionalidad:
     - Cargar exclusivamente de conversation_*.json en data/processed/historial
     - Generar failed_queries.log solo con feedback < 4
     - Generar success_queries.log solo con feedback >= 4
-    - SIN TRADUCCIÓN — usa directamente 'query' y 'response'
+    - Trabaja directamente con 'query' y 'response'
     """
 
     def __init__(
@@ -33,7 +35,7 @@ class FeedbackProcessor:
         self.feedback_dir = Path(feedback_dir)
         self.feedback_dir.mkdir(parents=True, exist_ok=True)
 
-        # Configuración de concurrencia
+        # Concurrencia
         self.lock = threading.Lock()
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.batch_size = batch_size
@@ -52,7 +54,7 @@ class FeedbackProcessor:
         self.success_queries_log.parent.mkdir(parents=True, exist_ok=True)
         self.existing_success_ids = self._load_existing_queries(self.success_queries_log)
 
-        # Cargar historial inicial
+        # Pre-cargar historial
         self._load_historial_queries()
 
         # Iniciar flush periódico
@@ -135,7 +137,7 @@ class FeedbackProcessor:
         record = self._create_success_record(conv, source_file)
         entry_id = self._generate_entry_id(conv)
 
-        if entry_id not in self.existing_success_ids:
+        if entryId := entry_id not in self.existing_success_ids:
             self._append_to_queries_log(self.success_queries_log, record)
             self.existing_success_ids.add(entry_id)
             return 1
@@ -158,14 +160,14 @@ class FeedbackProcessor:
             return False
 
     # ----------------------------------------------------------
-    # CREACIÓN DE REGISTROS (SIN _es)
+    # CREACIÓN DE REGISTROS
     # ----------------------------------------------------------
     def _create_failure_record(self, conv: Dict, source_file: str) -> Dict:
         return {
             "timestamp": conv.get("timestamp"),
             "session_id": conv.get("session_id"),
-            "query": conv["query"],       # DIRECTO
-            "response": conv["response"], # DIRECTO
+            "query": conv["query"],
+            "response": conv["response"],
             "feedback": float(conv["feedback"]),
             "failure_reason": self._diagnose_failure(conv),
             "source_file": source_file,
@@ -176,8 +178,8 @@ class FeedbackProcessor:
         return {
             "timestamp": conv.get("timestamp"),
             "session_id": conv.get("session_id"),
-            "query": conv["query"],        # DIRECTO
-            "response": conv["response"],  # DIRECTO
+            "query": conv["query"],
+            "response": conv["response"],
             "feedback": float(conv["feedback"]),
             "selected_product_id": self._extract_product_id(conv["response"]),
             "source_file": source_file,
@@ -195,7 +197,6 @@ class FeedbackProcessor:
     # MANEJO DE LOGS Y DUPLICADOS
     # ----------------------------------------------------------
     def _load_existing_queries(self, log_file: Path) -> set:
-        """Usa 'query' (directo)."""
         existing = set()
 
         if log_file.exists():
@@ -204,7 +205,7 @@ class FeedbackProcessor:
                     for line in f:
                         try:
                             entry = json.loads(line)
-                            query_text = entry.get("query") or entry.get("query_es", "")
+                            query_text = entry.get("query", "")
                             if query_text:
                                 qhash = hashlib.md5(query_text.encode("utf-8")).hexdigest()
                                 entry_id = f"{entry.get('session_id','')}-{qhash}"
@@ -239,6 +240,7 @@ class FeedbackProcessor:
         retrieved_docs: Optional[List[str]] = None,
         extra_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
+
         try:
             rating = int(rating)
 
@@ -260,7 +262,6 @@ class FeedbackProcessor:
                 record["selected_product_id"] = self._extract_product_id(answer)
                 self._write_feedback(record, is_success=True)
 
-            # Buffer para archivo diario
             with self.lock:
                 self.feedback_buffer.append(record)
                 if len(self.feedback_buffer) >= self.batch_size:

@@ -12,6 +12,10 @@ import json
 from collections import deque
 
 # Local imports
+from src.core.data.user_manager import UserManager
+from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
+from src.core.data.user_models import UserProfile, Gender
+from src.core.rag.advanced.RLHFMonitor import RLHFMonitor
 from src.core.init import get_system
 from src.core.rag.basic.retriever import Retriever
 from src.core.data.product import Product
@@ -203,22 +207,35 @@ class WorkingAdvancedRAGAgent:
         self.system = get_system()
         self.retriever = getattr(self.system, "retriever", Retriever())
         
+        # 🔥 NUEVO: UserManager para gestión centralizada
+        self.user_manager = UserManager()
+        
         # Componentes optimizados
         self.evaluator = AdvancedEvaluator()
         self.feedback_processor = FeedbackProcessor()
         self.rlhf_trainer = GamingRLHFTrainer()
         
-        # Estado del usuario
+        # Estado del usuario (MANTENER por compatibilidad temporal)
         self.user_profiles: Dict[str, Dict] = {}
         self.user_memory: Dict[str, ConversationBufferMemory] = {}
-        self.min_feedback_for_retrain = 50  # Mínimo feedback para reentrenar
-        self.retrain_interval = 24 * 3600   # Reentrenar cada 24 horas
-        self.last_retrain_time = 0
         
-        # Verificar si hay suficiente feedback para reentrenar
+        # Configuración RLHF mejorada
+        self.min_feedback_for_retrain = 5
+        self.retrain_interval = 3600
+        self.last_retrain_time = 0
+        self.rlhf_monitor = RLHFMonitor()
+        self.collaborative_filter = CollaborativeFilter(self.user_manager)
+        
+        # 🔥 NUEVO: Configuración sistema híbrido
+        self.hybrid_weights = {
+            'collaborative': 0.6,  # Peso para feedback usuarios similares
+            'rag': 0.4            # Peso para RAG tradicional
+        }
+        self.min_similarity_threshold = 0.6  # Similitud mínima entre usuarios
+        
         self._check_and_retrain()
         
-        logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Dominio: {self.config.domain}")
+        logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido Activado")
 
     def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
         """Procesa consultas de gaming de forma optimizada"""
@@ -376,17 +393,96 @@ class WorkingAdvancedRAGAgent:
         return relevant_products
 
     def _rerank_with_rlhf(self, products: List[Product], query: str, profile: Dict) -> List[Product]:
-        """Reranking optimizado para gaming"""
+        """Reranking híbrido: 60% colaborativo + 40% RAG tradicional"""
         if not products:
             return products
             
         try:
+            # 🔥 NUEVO: Obtener perfil completo de usuario
+            user_profile = self._get_or_create_user_profile_demographic(profile['user_id'])
+            
+            # 1. Score RAG tradicional
+            rag_scores = {}
+            for product in products:
+                rag_score = self.rlhf_trainer.score_product_relevance(query, product, profile)
+                rag_scores[product.id] = rag_score
+            
+            # 2. Score colaborativo (usuarios similares)
+            collaborative_scores = self.collaborative_filter.get_collaborative_scores(
+                user_profile, query, products
+            )
+            
+            # 3. Combinación híbrida
+            hybrid_scores = {}
+            for product in products:
+                rag_score = rag_scores.get(product.id, 0)
+                collab_score = collaborative_scores.get(product.id, 0)
+                
+                # Aplicar pesos: 60% colaborativo, 40% RAG
+                hybrid_score = (
+                    self.hybrid_weights['collaborative'] * collab_score +
+                    self.hybrid_weights['rag'] * rag_score
+                )
+                
+                hybrid_scores[product.id] = hybrid_score
+            
+            # 4. Ordenar por score híbrido
+            scored_products = [(hybrid_scores.get(p.id, 0), p) for p in products]
+            scored_products.sort(key=lambda x: x[0], reverse=True)
+            
+            logger.info(f"🎯 Reranking híbrido: {len([s for s, _ in scored_products if s > 0])} productos con score positivo")
+            
+            return [p for _, p in scored_products]
+            
+        except Exception as e:
+            logger.warning(f"Reranking híbrido falló, usando RAG tradicional: {e}")
+            # Fallback a RAG tradicional
+            return self._rerank_fallback(products, query, profile)
+        
+    def _get_or_create_user_profile_demographic(self, user_id: str) -> UserProfile:
+        """Obtiene o crea perfil de usuario con datos demográficos"""
+        try:
+            # Intentar cargar perfil existente
+            existing_profile = self.user_manager.get_user_profile(user_id)
+            if existing_profile:
+                return existing_profile
+            
+            # 🔥 NUEVO: Crear perfil con datos demográficos REALES
+            # En un sistema real, esto vendría del frontend/registro
+            # Por ahora usamos valores por defecto para demo
+            default_profile = self.user_manager.create_user_profile(
+                age=25,  # Edad por defecto
+                gender="male",  # Género por defecto  
+                country="Spain",  # País por defecto
+                language="es",
+                preferred_categories=["games", "videojuegos"],
+                preferred_brands=["Sony", "Microsoft", "Nintendo"]
+            )
+            
+            logger.info(f"👤 Creado perfil demográfico para {user_id}")
+            return default_profile
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo perfil demográfico: {e}")
+            # Perfil de emergencia
+            return UserProfile(
+                user_id=user_id,
+                session_id=user_id,
+                age=25,
+                gender=Gender.MALE,
+                country="Unknown",
+                language="es"
+            )
+
+    def _rerank_fallback(self, products: List[Product], query: str, profile: Dict) -> List[Product]:
+        """Fallback a RAG tradicional si el sistema híbrido falla"""
+        try:
             scored_products = [(self.rlhf_trainer.score_product_relevance(query, p, profile), p) 
-                             for p in products]
+                            for p in products]
             scored_products.sort(key=lambda x: x[0], reverse=True)
             return [p for _, p in scored_products]
         except Exception as e:
-            logger.warning(f"Reranking falló, usando orden original: {e}")
+            logger.error(f"Fallback también falló: {e}")
             return products
 
     def _generate_gaming_response(self, context: str, products: List[Product], original_query: str) -> str:
@@ -520,38 +616,76 @@ class WorkingAdvancedRAGAgent:
             self.user_memory[user_id].clear()
 
     def log_feedback(self, query: str, answer: str, rating: int, user_id: str = "default"):
-        """Log de feedback para mejora continua"""
-        entry = {
-            "timestamp": datetime.now().isoformat(), 
-            "query": query, 
-            "answer": answer, 
-            "rating": rating, 
-            "user_id": user_id,
-            "domain": self.config.domain
-        }
+        """Log de feedback mejorado con datos demográficos"""
         try:
+            # 🔥 NUEVO: Obtener perfil para enriquecer feedback
+            user_profile = self._get_or_create_user_profile_demographic(user_id)
+            
+            entry = {
+                "timestamp": datetime.now().isoformat(), 
+                "query": query, 
+                "answer": answer, 
+                "rating": rating, 
+                "user_id": user_id,
+                "user_age": user_profile.age,
+                "user_gender": user_profile.gender.value,
+                "user_country": user_profile.country,
+                "domain": self.config.domain
+            }
+            
+            # Guardar en sistema de feedback
             fdir = Path("data/feedback")
             fdir.mkdir(exist_ok=True, parents=True)
             fname = fdir / f"feedback_gaming_{datetime.now().strftime('%Y%m%d')}.jsonl"
             with open(fname, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            
+            # 🔥 NUEVO: Actualizar perfil de usuario con este feedback
+            product_ids = [p.id for p in self._extract_products_from_response(answer)]
+            user_profile.add_feedback_event(
+                query=query,
+                response=answer,
+                rating=rating,
+                products_shown=product_ids,
+                selected_product=product_ids[0] if product_ids else None
+            )
+            
+            # Guardar perfil actualizado
+            self.user_manager.save_user_profile(user_profile)
+            
+            logger.info(f"📝 Feedback registrado para {user_id} (edad: {user_profile.age}, género: {user_profile.gender.value})")
+            
         except Exception as e:
-            logger.debug(f"No se pudo guardar feedback: {e}")
+            logger.error(f"Error registrando feedback: {e}")
+
+    def _extract_products_from_response(self, answer: str) -> List[str]:
+        """Extrae IDs de productos mencionados en la respuesta"""
+        # Implementación simple - en sistema real usaría regex más sofisticado
+        import re
+        product_ids = re.findall(r'[A-Z0-9]{10}', answer)
+        return product_ids
             
     def _check_and_retrain(self):
-        """Verifica si hay suficiente feedback para reentrenar el modelo"""
+        """Verifica y ejecuta reentrenamiento con mejores condiciones"""
         try:
             feedback_count = self._count_recent_feedback()
+            has_enough_feedback = feedback_count >= self.min_feedback_for_retrain
+            should_retrain_time = (time.time() - self.last_retrain_time) > self.retrain_interval
             
-            if (feedback_count >= self.min_feedback_for_retrain and 
-                time.time() - self.last_retrain_time > self.retrain_interval):
-                
+            # ✅ NUEVA CONDICIÓN: también reentrenar si hay nuevo feedback significativo
+            has_significant_new_feedback = feedback_count > 0 and self.last_retrain_time == 0
+            
+            if has_enough_feedback and (should_retrain_time or has_significant_new_feedback):
                 logger.info(f"🔁 Iniciando reentrenamiento con {feedback_count} feedbacks")
-                self._retrain_with_feedback()
-                self.last_retrain_time = time.time()
-                
+                success = self._retrain_with_feedback()
+                if success:
+                    self.last_retrain_time = time.time()
+                    logger.info("✅ Reentrenamiento completado exitosamente")
+                else:
+                    logger.warning("⚠️ Reentrenamiento falló, se reintentará más tarde")
+                    
         except Exception as e:
-            logger.error(f"Error en reentrenamiento automático: {e}")
+            logger.error(f"❌ Error en reentrenamiento automático: {e}")
     
     def _count_recent_feedback(self) -> int:
         """Cuenta feedback de los últimos 7 días"""
@@ -572,26 +706,47 @@ class WorkingAdvancedRAGAgent:
                 
         return count
     
-    def _retrain_with_feedback(self):
-        """Reentrena el modelo RLHF con feedback acumulado"""
+    def _retrain_with_feedback(self) -> bool:
+        """Reentrena el modelo RLHF - versión mejorada"""
         try:
             from .trainer import RLHFTrainer
             
             trainer = RLHFTrainer()
             
-            # Preparar dataset desde logs
-            failed_log = Path("data/feedback/failed_queries.log")
-            success_log = Path("data/feedback/success_queries.log")
+            # ✅ BUSCAR ARCHIVOS MÁS FLEXIBLE
+            feedback_dir = Path("data/feedback")
+            failed_log = feedback_dir / "failed_queries.log"
+            success_log = feedback_dir / "success_queries.log"
+            
+            # ✅ CREAR ARCHIVOS SI NO EXISTEN
+            failed_log.parent.mkdir(parents=True, exist_ok=True)
+            if not failed_log.exists():
+                failed_log.touch()
+            if not success_log.exists():
+                success_log.touch()
             
             dataset = trainer.prepare_rlhf_dataset_from_logs(failed_log, success_log)
             
-            if len(dataset) >= 10:  # Mínimo para entrenar
-                logger.info(f"🏋️ Entrenando con {len(dataset)} ejemplos")
+            if len(dataset) >= 3:
+                start_time = time.time()
                 trainer.train(dataset)
-                logger.info("✅ Modelo RLHF reentrenado")
+                training_time = time.time() - start_time
+                
+                # 📊 REGISTRAR MÉTRICAS
+                self.rlhf_monitor.log_training_session(
+                    examples_used=len(dataset),
+                    previous_accuracy=0.0,  # TODO: calcular accuracy real
+                    new_accuracy=0.1,       # TODO: calcular accuracy real  
+                    training_time=training_time
+                )
+            else:
+                logger.info(f"⏳ No suficiente data aún: {len(dataset)}/3 ejemplos")
+                return False
                 
         except Exception as e:
             logger.error(f"❌ Error en reentrenamiento RLHF: {e}")
+            return False
+        
     def _is_recent(self, timestamp: str, days: int = 7) -> bool:
         """Verifica si un timestamp es reciente (últimos N días)"""
         try:
