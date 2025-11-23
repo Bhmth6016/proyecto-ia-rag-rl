@@ -16,7 +16,7 @@ from langchain.memory import ConversationBufferMemory
 
 # 🔥 Importaciones válidas y usadas
 from src.core.data.loader import DataLoader
-from src.core.rag.advanced.WorkingRAGAgent import WorkingAdvancedRAGAgent
+from src.core.rag.advanced.WorkingRAGAgent import RAGAgent
 from src.interfaces.cli import main as cli_main
 from src.core.utils.logger import configure_root_logger
 from src.core.config import settings
