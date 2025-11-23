@@ -92,7 +92,7 @@ python main.py rag
 Interfaz conversacional para búsquedas semánticas
 
 Ejemplo: "auriculares inalámbricos con cancelación de ruido bajo $100"
-as
+assa
 # Modo Categoría (Navegación Manual)
 python main.py category
 
