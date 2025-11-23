@@ -1,37 +1,57 @@
-# Ignorar todo el directorio data/ (relativo al raíz del proyecto)
-/data/
-src/data/
-/amazon_rag_rlhf.egg-info
-# Entorno virtual
+# ======================
+# ENTORNOS
+# ======================
 venv/
-.env
-venv/
-.env
+env/
+.myenv/
 myenv/
-.myenv
 
-# Datos y modelos
+# ======================
+# VARIABLES SECRETAS
+# ======================
+.env
+
+# ======================
+# CACHE Y BYTES COMPILADOS
+# ======================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ======================
+# DIRECTORIOS DE DATOS
+# ======================
+data/
+src/data/
 data/processed/
 *.pkl
 *.index
 
-# Logs
+# ======================
+# LOGS
+# ======================
 logs/
 *.log
 
-# IDE
+# ======================
+# EDITORES Y SISTEMA
+# ======================
 .vscode/
 .idea/
-__pycache__/
-*.py[cod]
-
-# Sistema operativo
 .DS_Store
 Thumbs.db
-/build
-/env
-src/core/config/settings.py
-src/core/config/settings.py
-README.md
-README.md
+
+# ======================
+# BUILD
+# ======================
+build/
+dist/
+*.egg-info/
+
+# ======================
+# ARCHIVOS QUE QUIERES IGNORAR
+# ======================
 src/core/config.py
+src/core/config/settings.py
+README.md
