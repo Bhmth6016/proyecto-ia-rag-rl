@@ -9,8 +9,6 @@ def parse_binary_score(text: str) -> BinaryScore:
     """
     Parsea entrada del usuario para feedback binario (sí/no).
     Compatible con cli.py y el sistema de logging existente.
-
-    Manejo robusto: valores vacíos, inválidos, None o tipos no string.
     """
     if not text or not isinstance(text, str):
         return BinaryScore.NO
@@ -29,7 +27,6 @@ def parse_binary_score(text: str) -> BinaryScore:
 
     # Por defecto → NO
     return BinaryScore.NO
-
 
 def safe_int_parse(value: Union[str, int, float], default: int = 0) -> int:
     """

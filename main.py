@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from dotenv import load_dotenv
+
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -16,7 +17,7 @@ from langchain.memory import ConversationBufferMemory
 
 # 🔥 Importaciones válidas y usadas
 from src.core.data.loader import DataLoader
-from src.core.rag.advanced.WorkingRAGAgent import RAGAgent
+from src.core.rag.advanced import RAGAgent
 from src.interfaces.cli import main as cli_main
 from src.core.utils.logger import configure_root_logger
 from src.core.config import settings
@@ -26,7 +27,9 @@ from src.core.rag.basic.retriever import Retriever
 
 # Cargar variables de entorno
 load_dotenv()
-
+if settings.GEMINI_API_KEY:
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    print("✅ Gemini API configurada")
 # Logger
 configure_root_logger(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -162,7 +165,12 @@ def _handle_rag_mode(system, args):
                     break
                 else:
                     print("Por favor ingresa 1-5 o 'skip'")
-
+            # Verificar reentrenamiento después de cada interacción
+            try:
+                if hasattr(agent, 'agent') and hasattr(agent.agent, '_check_and_retrain'):
+                    agent.agent._check_and_retrain()
+            except Exception as e:
+                logger.debug(f"Reentrenamiento no disponible: {e}")
         except KeyboardInterrupt:
             print("\n🛑 Session ended")
             break

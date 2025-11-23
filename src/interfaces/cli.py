@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from src.core.config import settings
 from src.core.rag.basic.retriever import Retriever
-from src.core.rag.advanced.WorkingRAGAgent import RAGAgent
+from src.core.rag.advanced import RAGAgent
 from src.core.utils.logger import configure_root_logger
 from src.core.utils.parsers import parse_binary_score
 from src.core.init import get_system

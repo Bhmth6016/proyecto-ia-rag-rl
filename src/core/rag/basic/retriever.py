@@ -100,6 +100,7 @@ class Retriever:
 
         self.store = None
         self._ensure_store_loaded()
+        self.feedback_weights = self._load_feedback_weights()
 
     # ------------------------------------------------------------
     # Ensure store loaded
@@ -154,6 +155,22 @@ class Retriever:
 
         expansions.add(base)
         return list(expansions)
+    
+    def _load_feedback_weights(self) -> Dict[str, float]:
+        """Carga pesos aprendidos de feedback positivo"""
+        weights = {}
+        try:
+            success_log = Path("data/feedback/success_queries.log")
+            if success_log.exists():
+                with open(success_log, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        record = json.loads(line)
+                        product_id = record.get('selected_product_id')
+                        if product_id:
+                            weights[product_id] = weights.get(product_id, 0) + 1.0
+        except:
+            pass
+        return weights
 
     # ------------------------------------------------------------
     # Retrieval principal
@@ -186,17 +203,23 @@ class Retriever:
 
             scored = []
             for p in products:
-                score = self._score(query, p)
-                if score >= min_similarity:
-                    scored.append((score, p))
+                base_score = self._score(query, p)
 
+                if base_score < min_similarity:
+                    continue
+
+                # 🔥 BOOST por feedback positivo — aprendizaje automático
+                feedback_boost = self.feedback_weights.get(p.id, 0) * 0.1
+                final_score = base_score + feedback_boost
+                scored.append((final_score, p))
+
+            # ✅ LÍNEAS CRÍTICAS QUE FALTABAN:
             scored.sort(key=lambda x: x[0], reverse=True)
-            return [p for (s, p) in scored[:k]]
+            return [p for _, p in scored[:k]]
 
         except Exception as e:
             logger.error(f"❌ Retrieval error: {e}")
             return []
-
     # ------------------------------------------------------------
     # Raw chroma retrieve
     # ------------------------------------------------------------

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # src/core/rag/advanced/WorkingRAGAgent.py
+import time
 
 import logging
 from typing import List, Dict, Optional
@@ -210,6 +211,12 @@ class WorkingAdvancedRAGAgent:
         # Estado del usuario
         self.user_profiles: Dict[str, Dict] = {}
         self.user_memory: Dict[str, ConversationBufferMemory] = {}
+        self.min_feedback_for_retrain = 50  # Mínimo feedback para reentrenar
+        self.retrain_interval = 24 * 3600   # Reentrenar cada 24 horas
+        self.last_retrain_time = 0
+        
+        # Verificar si hay suficiente feedback para reentrenar
+        self._check_and_retrain()
         
         logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Dominio: {self.config.domain}")
 
@@ -258,7 +265,8 @@ class WorkingAdvancedRAGAgent:
             )
 
     def _enrich_gaming_query(self, query: str, profile: Dict) -> str:
-        """Enriquecimiento inteligente para consultas de gaming"""
+        """Enriquecimiento inteligente + aprendizaje desde feedback"""
+        # --- 1) Enriquecimiento original basado en plataformas y géneros ---
         query_lower = query.lower()
         enriched_terms = []
         
@@ -285,13 +293,47 @@ class WorkingAdvancedRAGAgent:
         for genre, expansions in genre_map.items():
             if genre in query_lower:
                 enriched_terms.extend(expansions)
-        
+
+        # --- 2) Enriquecimiento dinámico con términos aprendidos del feedback ---
+        learned_terms = self._get_successful_query_terms()
+        if learned_terms:
+            enriched_terms.extend(learned_terms)
+
+        # --- 3) Si hay términos para enriquecer, devolver query expandida ---
         if enriched_terms:
             enriched_query = f"{query} {' '.join(enriched_terms)}"
-            logger.debug(f"🔍 Query enriquecida: '{query}' -> '{enriched_query}'")
+            logger.debug(f"🔍 Query enriquecida con aprendizaje: '{query}' -> '{enriched_query}'")
             return enriched_query
-        
+
         return query
+    
+    def _get_successful_query_terms(self) -> List[str]:
+        """Extrae términos comunes de consultas con feedback positivo"""
+        try:
+            success_log = Path("data/feedback/success_queries.log")
+            if not success_log.exists():
+                return []
+
+            with open(success_log, 'r', encoding='utf-8') as f:
+                queries = [json.loads(line).get('query', '') for line in f]
+
+            from collections import Counter
+            all_terms = []
+            for q in queries:
+                all_terms.extend(q.lower().split())
+
+            # Filtrar términos útiles
+            common_terms = [
+                term for term, count in Counter(all_terms).most_common(5)
+                if len(term) > 3 and count > 1
+            ]
+
+            return common_terms
+
+        except Exception:
+            return []
+
+
 
     def _filter_gaming_products(self, products: List[Product], query: str) -> List[Product]:
         """Filtrado inteligente para productos de gaming"""
@@ -495,3 +537,68 @@ class WorkingAdvancedRAGAgent:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.debug(f"No se pudo guardar feedback: {e}")
+            
+    def _check_and_retrain(self):
+        """Verifica si hay suficiente feedback para reentrenar el modelo"""
+        try:
+            feedback_count = self._count_recent_feedback()
+            
+            if (feedback_count >= self.min_feedback_for_retrain and 
+                time.time() - self.last_retrain_time > self.retrain_interval):
+                
+                logger.info(f"🔁 Iniciando reentrenamiento con {feedback_count} feedbacks")
+                self._retrain_with_feedback()
+                self.last_retrain_time = time.time()
+                
+        except Exception as e:
+            logger.error(f"Error en reentrenamiento automático: {e}")
+    
+    def _count_recent_feedback(self) -> int:
+        """Cuenta feedback de los últimos 7 días"""
+        count = 0
+        feedback_dir = Path("data/feedback")
+        
+        for jsonl_file in feedback_dir.glob("feedback_*.jsonl"):
+            try:
+                with open(jsonl_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        record = json.loads(line)
+                        # Verificar si es reciente (últimos 7 días)
+                        timestamp = record.get('timestamp', '')
+                        if self._is_recent(timestamp, days=7):
+                            count += 1
+            except:
+                continue
+                
+        return count
+    
+    def _retrain_with_feedback(self):
+        """Reentrena el modelo RLHF con feedback acumulado"""
+        try:
+            from .trainer import RLHFTrainer
+            
+            trainer = RLHFTrainer()
+            
+            # Preparar dataset desde logs
+            failed_log = Path("data/feedback/failed_queries.log")
+            success_log = Path("data/feedback/success_queries.log")
+            
+            dataset = trainer.prepare_rlhf_dataset_from_logs(failed_log, success_log)
+            
+            if len(dataset) >= 10:  # Mínimo para entrenar
+                logger.info(f"🏋️ Entrenando con {len(dataset)} ejemplos")
+                trainer.train(dataset)
+                logger.info("✅ Modelo RLHF reentrenado")
+                
+        except Exception as e:
+            logger.error(f"❌ Error en reentrenamiento RLHF: {e}")
+    def _is_recent(self, timestamp: str, days: int = 7) -> bool:
+        """Verifica si un timestamp es reciente (últimos N días)"""
+        try:
+            from datetime import datetime, timezone
+            record_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            current_time = datetime.now(timezone.utc)
+            time_diff = current_time - record_time
+            return time_diff.days <= days
+        except:
+            return False
