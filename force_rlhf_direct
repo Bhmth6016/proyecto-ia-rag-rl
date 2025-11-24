@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""
+Reentrenamiento RLHF directo y forzado
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent))
+
+def force_direct_rlhf():
+    """Reentrenamiento RLHF directo"""
+    
+    print("🎯 REENTRENAMIENTO RLHF DIRECTO")
+    print("=" * 50)
+    
+    try:
+        # Importar el trainer directamente
+        from src.core.rag.advanced.trainer import RLHFTrainer
+        
+        print("🤖 Cargando RLHFTrainer...")
+        trainer = RLHFTrainer()
+        
+        # Definir rutas de feedback
+        feedback_dir = Path("data/feedback")
+        failed_log = feedback_dir / "failed_queries.log"
+        success_log = feedback_dir / "success_queries.log"
+        
+        print("📊 Preparando dataset desde logs...")
+        dataset = trainer.prepare_rlhf_dataset_from_logs(failed_log, success_log)
+        
+        print(f"📁 Dataset preparado: {len(dataset)} ejemplos")
+        
+        if len(dataset) >= 3:  # Mínimo requerido
+            print("🏋️ Iniciando entrenamiento...")
+            trainer.train(dataset)
+            print("🎉 ENTRENAMIENTO RLHF COMPLETADO")
+        else:
+            print(f"⚠️ Dataset insuficiente: {len(dataset)}/3 ejemplos")
+            
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    force_direct_rlhf()

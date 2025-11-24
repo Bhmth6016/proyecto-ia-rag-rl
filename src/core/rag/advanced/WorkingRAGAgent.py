@@ -207,8 +207,15 @@ class WorkingAdvancedRAGAgent:
         self.system = get_system()
         self.retriever = getattr(self.system, "retriever", Retriever())
         
-        # 🔥 NUEVO: UserManager para gestión centralizada
-        self.user_manager = UserManager()
+        # 🔥 CAMBIO 1: Inicialización condicional de UserManager y CollaborativeFilter
+        self.enable_user_features = bool(self.config and getattr(self.config, "use_advanced_features", False))
+
+        if self.enable_user_features:
+            self.user_manager = UserManager()
+            self.collaborative_filter = CollaborativeFilter(self.user_manager)
+        else:
+            self.user_manager = None
+            self.collaborative_filter = None
         
         # Componentes optimizados
         self.evaluator = AdvancedEvaluator()
@@ -224,7 +231,6 @@ class WorkingAdvancedRAGAgent:
         self.retrain_interval = 3600
         self.last_retrain_time = 0
         self.rlhf_monitor = RLHFMonitor()
-        self.collaborative_filter = CollaborativeFilter(self.user_manager)
         
         # 🔥 NUEVO: Configuración sistema híbrido
         self.hybrid_weights = {
@@ -240,8 +246,20 @@ class WorkingAdvancedRAGAgent:
     def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
         """Procesa consultas de gaming de forma optimizada"""
         try:
+            # 🔥 CAMBIO 4: Usar perfil existente y evitar crear users automáticos
             profile = self.get_or_create_user_profile(user_id)
             memory = self.get_or_create_memory(user_id)
+
+            # Si tenemos user manager y se permite, intentar enriquecer profile con datos persistentes
+            if self.enable_user_features and self.user_manager and user_id != "default":
+                try:
+                    persisted = self.user_manager.get_user_profile(user_id)
+                    if persisted:
+                        # mezclar atributos útiles sin sobrescribir completamente
+                        profile["preferred_categories"] = getattr(persisted, "preferred_categories", profile.get("preferred_categories"))
+                        profile["_persisted_profile"] = persisted  # referencia
+                except Exception:
+                    pass
             
             # Enriquecimiento inteligente para gaming
             enriched_query = self._enrich_gaming_query(query, profile)
@@ -271,6 +289,7 @@ class WorkingAdvancedRAGAgent:
                 retrieved_count=len(ranked),
                 used_llm=False
             )
+        
             
         except Exception as e:
             logger.error(f"❌ Error en process_query: {e}")
@@ -280,6 +299,7 @@ class WorkingAdvancedRAGAgent:
                 quality_score=0.0,
                 retrieved_count=0
             )
+        
 
     def _enrich_gaming_query(self, query: str, profile: Dict) -> str:
         """Enriquecimiento inteligente + aprendizaje desde feedback"""
@@ -396,6 +416,17 @@ class WorkingAdvancedRAGAgent:
         """Reranking híbrido: 60% colaborativo + 40% RAG tradicional"""
         if not products:
             return products
+
+        # 🔥 CAMBIO 2: Respetar enable_reranking y enable_rlhf al reranquear
+        if not getattr(self.config, "enable_reranking", True):
+            logger.debug("Reranking deshabilitado por configuración: devolviendo ranking original")
+            # Opcional: ordenar por score RAG simple si enable_rlhf está activo
+            if getattr(self.config, "enable_rlhf", False):
+                try:
+                    return self._rerank_fallback(products, query, profile)
+                except Exception:
+                    return products
+            return products
             
         try:
             # 🔥 NUEVO: Obtener perfil completo de usuario
@@ -408,9 +439,12 @@ class WorkingAdvancedRAGAgent:
                 rag_scores[product.id] = rag_score
             
             # 2. Score colaborativo (usuarios similares)
-            collaborative_scores = self.collaborative_filter.get_collaborative_scores(
-                user_profile, query, products
-            )
+            # 🔥 CAMBIO 5: Validar collaborative_filter existe antes de usarlo
+            if self.collaborative_filter is not None:
+                collaborative_scores = self.collaborative_filter.get_collaborative_scores(user_profile, query, products)
+            else:
+                # Si no hay collaborative filter, usar 0 scores (o fallback)
+                collaborative_scores = {p.id: 0.0 for p in products}
             
             # 3. Combinación híbrida
             hybrid_scores = {}
@@ -440,31 +474,53 @@ class WorkingAdvancedRAGAgent:
             return self._rerank_fallback(products, query, profile)
         
     def _get_or_create_user_profile_demographic(self, user_id: str) -> UserProfile:
-        """Obtiene o crea perfil de usuario con datos demográficos"""
+        """Obtiene o crea perfil de usuario con datos demográficos (solo si está permitido)"""
         try:
-            # Intentar cargar perfil existente
+            # 🔥 CAMBIO 3: No crear perfiles demográficos por defecto en cada llamada
+            # Si no permitimos features de usuario, devolver perfil temporal no persistente
+            if not self.enable_user_features or self.user_manager is None:
+                # Crear perfil temporal (UserProfile o similar)
+                return UserProfile(
+                    user_id=user_id,
+                    session_id=user_id,
+                    age=25,
+                    gender=Gender.MALE,
+                    country="Unknown",
+                    language="es"
+                )
+
+            # Intentar cargar perfil existente (no crear uno nuevo para cada query)
             existing_profile = self.user_manager.get_user_profile(user_id)
             if existing_profile:
                 return existing_profile
-            
-            # 🔥 NUEVO: Crear perfil con datos demográficos REALES
-            # En un sistema real, esto vendría del frontend/registro
-            # Por ahora usamos valores por defecto para demo
-            default_profile = self.user_manager.create_user_profile(
-                age=25,  # Edad por defecto
-                gender="male",  # Género por defecto  
-                country="Spain",  # País por defecto
-                language="es",
-                preferred_categories=["games", "videojuegos"],
-                preferred_brands=["Sony", "Microsoft", "Nintendo"]
+
+            # Si no existe y se permiten features, CREAR solo si explícitamente deseado (evitar creación implícita masiva)
+            # Para evitar creación por cada query, crear solo si user_id no es "default"
+            if user_id and user_id != "default":
+                default_profile = self.user_manager.create_user_profile(
+                    age=25,
+                    gender="male",
+                    country="Spain",
+                    language="es",
+                    preferred_categories=["games", "videojuegos"],
+                    preferred_brands=["Sony", "Microsoft", "Nintendo"]
+                )
+                # 🔥 CAMBIO 6: Reducir logs de creación de usuario
+                logger.debug(f"👤 Creado perfil demográfico para {user_id}")
+                return default_profile
+
+            # Si user_id == "default", devolver perfil temporal
+            return UserProfile(
+                user_id=user_id,
+                session_id=user_id,
+                age=25,
+                gender=Gender.MALE,
+                country="Unknown",
+                language="es"
             )
-            
-            logger.info(f"👤 Creado perfil demográfico para {user_id}")
-            return default_profile
-            
+
         except Exception as e:
             logger.error(f"Error obteniendo perfil demográfico: {e}")
-            # Perfil de emergencia
             return UserProfile(
                 user_id=user_id,
                 session_id=user_id,
@@ -651,7 +707,8 @@ class WorkingAdvancedRAGAgent:
             )
             
             # Guardar perfil actualizado
-            self.user_manager.save_user_profile(user_profile)
+            if self.enable_user_features and self.user_manager:
+                self.user_manager.save_user_profile(user_profile)
             
             logger.info(f"📝 Feedback registrado para {user_id} (edad: {user_profile.age}, género: {user_profile.gender.value})")
             
