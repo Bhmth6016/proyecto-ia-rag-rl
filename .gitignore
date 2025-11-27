@@ -27,6 +27,7 @@ src/data/
 data/processed/
 *.pkl
 *.index
+!src/core/data/
 
 # ======================
 # LOGS
