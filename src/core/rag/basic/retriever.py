@@ -561,3 +561,27 @@ class Retriever:
                 
         except Exception as e:
             logger.error(f"Error guardando pesos de feedback: {e}")
+    def _update_feedback_weights(self, doc_ids: List[str], positive: bool = True):
+        """Actualiza pesos de feedback de forma segura y con clipping"""
+        try:
+            weight_change = 0.1 if positive else -0.1
+
+            for doc_id in doc_ids:
+                # Asegurar que doc_id es string
+                doc_id_str = str(doc_id)
+
+                # Obtener peso actual y asegurar que es numérico
+                current_weight = self.feedback_weights.get(doc_id_str, 0.0)
+                if not isinstance(current_weight, (int, float)):
+                    current_weight = 0.0
+
+                # Actualizar con clipping entre 0 y 1
+                new_weight = max(0.0, min(1.0, current_weight + weight_change))
+                self.feedback_weights[doc_id_str] = new_weight
+
+            # 🔹 Guardar inmediatamente con limitación top 1000
+            self._save_feedback_weights()
+
+        except Exception as e:
+            logger.error(f"❌ Error actualizando pesos de feedback: {e}")
+            # No romper el flujo

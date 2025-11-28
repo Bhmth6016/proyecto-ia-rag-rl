@@ -255,54 +255,80 @@ class WorkingAdvancedRAGAgent:
         logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido Activado")
 
     def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
-        """Procesa consultas de gaming de forma optimizada"""
+        """Procesa consultas de gaming de forma optimizada - VERSIÓN CORREGIDA"""
         try:
-            # 🔥 CORRECCIÓN COMPLETA: Manejar diferentes tipos de entrada
+            # 🔥 CORRECCIÓN COMPLETA: Debug detallado
             original_query = query
-            
-            # Si query es un dict o string JSON, extraer el campo 'query'
-            if isinstance(query, dict):
+            logger.info(f"🔍 INICIO process_query - Tipo: {type(query)}, Valor: {str(query)[:100]}")
+
+            # Extraer texto de consulta de forma segura
+            if hasattr(query, 'lower'):
+                query_text = query
+            elif isinstance(query, dict):
                 query_text = query.get('query', str(query))
             elif isinstance(query, str) and query.strip().startswith('{'):
                 try:
                     query_data = json.loads(query)
                     query_text = query_data.get('query', str(query_data))
                 except json.JSONDecodeError:
-                    query_text = query
+                    query_text = str(query)
             else:
-                query_text = str(query)  # Convertir a string seguro
+                query_text = str(query)
                 
-            # 🔥 CORRECCIÓN: Asegurar que query_text sea string válido
-            if not isinstance(query_text, str):
+            # 🔥 CORRECCIÓN CRÍTICA: Asegurar que query_text sea string y tenga método lower
+            if not hasattr(query_text, 'lower'):
                 query_text = str(query_text)
                 
-            logger.info(f"🔍 Procesando query: '{query_text}' (original: {type(original_query)})")
+            logger.info(f"🔍 Query procesada: '{query_text}'")
                 
-            # 🔥 CAMBIO 4: Usar perfil existente y evitar crear users automáticos
+            # 🔥 CORRECCIÓN: Verificar cada paso del procesamiento
             profile = self.get_or_create_user_profile(user_id)
             memory = self.get_or_create_memory(user_id)
 
-            # Si tenemos user manager y se permite, intentar enriquecer profile con datos persistentes
-            if self.enable_user_features and self.user_manager and user_id != "default":
-                try:
-                    persisted = self.user_manager.get_user_profile(user_id)
-                    if persisted:
-                        # mezclar atributos útiles sin sobrescribir completamente
-                        profile["preferred_categories"] = getattr(persisted, "preferred_categories", profile.get("preferred_categories"))
-                        profile["_persisted_profile"] = persisted  # referencia
-                except Exception:
-                    pass
-            
-            # Enriquecimiento inteligente para gaming - usar query_text en lugar de query
-            enriched_query = self._enrich_gaming_query(query_text, profile)
-            candidates = self.retriever.retrieve(enriched_query, k=self.config.max_retrieved)
-            
-            # Filtrado y reranking avanzado
-            relevant_candidates = self._filter_gaming_products(candidates, query_text)
-            ranked = self._rerank_with_rlhf(relevant_candidates, query_text, profile)
+            # Enriquecimiento inteligente para gaming - con manejo de errores
+            try:
+                enriched_query = self._enrich_gaming_query(query_text, profile)
+                logger.info(f"🔍 Query enriquecida: '{enriched_query}'")
+            except Exception as e:
+                logger.error(f"❌ Error en enriquecimiento: {e}")
+                enriched_query = query_text
+
+            # Recuperación con manejo de errores
+            try:
+                candidates = self.retriever.retrieve(enriched_query, k=self.config.max_retrieved)
+                logger.info(f"🔍 Candidatos recuperados: {len(candidates)} - Tipo: {type(candidates[0]) if candidates else 'None'}")
+            except Exception as e:
+                logger.error(f"❌ Error en recuperación: {e}")
+                candidates = []
+
+            # 🔥 CORRECCIÓN: Convertir IDs a objetos Product para el filtrado
+            product_objects = []
+            for candidate in candidates:
+                if isinstance(candidate, str):
+                    # Es un ID, crear un producto mínimo
+                    product_objects.append(Product(id=candidate, title=f"Producto {candidate}"))
+                else:
+                    product_objects.append(candidate)
+
+            # Filtrado con manejo de errores
+            try:
+                relevant_candidates = self._filter_gaming_products(product_objects, query_text)
+                logger.info(f"🔍 Candidatos filtrados: {len(relevant_candidates)}")
+            except Exception as e:
+                logger.error(f"❌ Error en filtrado: {e}")
+                relevant_candidates = product_objects
+
+            # Reranking con manejo de errores
+            try:
+                ranked = self._rerank_with_rlhf(relevant_candidates, query_text, profile)
+                logger.info(f"🔍 Productos rerankeados: {len(ranked)}")
+            except Exception as e:
+                logger.error(f"❌ Error en reranking: {e}")
+                ranked = relevant_candidates
+
             final_products = ranked[:self.config.max_final]
             
-            # Generación de respuesta optimizada
+            # Generación de respuesta
             context_for_generation = memory.get_context()
             full_context = f"{context_for_generation}\nNueva consulta: {query_text}" if context_for_generation else query_text
             
@@ -312,26 +338,29 @@ class WorkingAdvancedRAGAgent:
             # Guardar en memoria
             memory.add(query_text, response)
             
-            logger.info(f"✅ Query: '{query_text}' -> {len(final_products)} productos | Score: {quality_score}")
+            logger.info(f"✅ Query COMPLETADA: '{query_text}' -> {len(final_products)} productos | Score: {quality_score}")
             
             return RAGResponse(
                 answer=response,
-                products=[p.product_id for p in final_products],     # ahora son IDs
+                products=final_products,  # 🔥 CORRECCIÓN: Devolver productos completos, no solo IDs
                 quality_score=quality_score,
                 retrieved_count=len(ranked),
                 used_llm=False
             )
             
         except Exception as e:
-            logger.error(f"❌ Error en process_query: {e}")
-            logger.error(f"❌ Tipo de query: {type(query)}, Valor: {query}")
+            logger.error(f"❌ ERROR CRÍTICO en process_query: {e}")
+            logger.error(f"❌ Traceback completo:", exc_info=True)
             return RAGResponse(
                 answer=self._error_response(str(query), e),
                 products=[],
                 quality_score=0.0,
                 retrieved_count=0
             )
-        
+    def process_query_with_limit(self, query: str, limit: int = 5) -> List[Dict]:
+        """Versión de process_query que acepta limit parameter"""
+        results = self.process_query(query)
+        return results[:limit] if results else []
 
     def _enrich_gaming_query(self, query: str, profile: Dict) -> str:
         """Enriquecimiento inteligente + aprendizaje desde feedback"""
@@ -404,112 +433,147 @@ class WorkingAdvancedRAGAgent:
 
 
 
-    def _filter_gaming_products(self, products: List[Product], query: str) -> List[Product]:
-        """Filtrado inteligente para productos de gaming"""
+    def _filter_gaming_products(self, products: List, query: str) -> List:
+        """Filtrado inteligente para productos de gaming - VERSIÓN CORREGIDA"""
         if not products:
             return []
+        
+        # 🔥 CORRECCIÓN: Los productos pueden ser IDs strings u objetos Product
+        filtered_products = []
         
         query_lower = query.lower()
         query_words = set(word for word in query_lower.split() if len(word) > 2)
         
         # Términos clave de gaming
         gaming_terms = {'playstation', 'xbox', 'nintendo', 'switch', 'game', 'juego', 
-                       'edición', 'versión', 'ps4', 'ps5', 'xbox one'}
+                    'edición', 'versión', 'ps4', 'ps5', 'xbox one', 'gaming'}
         
-        relevant_products = []
         for product in products:
-            title = str(getattr(product, 'title', '')).lower()
-            category = str(getattr(product, 'main_category', '')).lower()
-            
-            # Coincidencia directa en título
-            title_match = any(word in title for word in query_words)
-            
-            # Coincidencia con términos de gaming
-            gaming_match = any(term in title for term in gaming_terms)
-            
-            # Coincidencia en categoría
-            category_match = any(word in category for word in query_words)
-            
-            # Para gaming, ser más permisivo pero priorizar coincidencias
-            if title_match or (gaming_match and (category_match or len(query_words) == 0)):
-                relevant_products.append(product)
+            try:
+                # 🔥 CORRECCIÓN: Manejar tanto IDs como objetos Product
+                if isinstance(product, str):
+                    # Es un ID de producto, no podemos filtrar por contenido
+                    # Incluirlo y dejar que el reranking lo ordene
+                    filtered_products.append(product)
+                    continue
+                    
+                # Es un objeto Product, podemos filtrar por contenido
+                title = str(getattr(product, 'title', '')).lower()
+                category = str(getattr(product, 'main_category', '')).lower()
+                
+                # Coincidencia directa en título
+                title_match = any(word in title for word in query_words)
+                
+                # Coincidencia con términos de gaming
+                gaming_match = any(term in title for term in gaming_terms)
+                
+                # Coincidencia en categoría
+                category_match = any(word in category for word in query_words)
+                
+                # Para gaming, ser más permisivo pero priorizar coincidencias
+                if title_match or (gaming_match and (category_match or len(query_words) == 0)):
+                    filtered_products.append(product)
+                    
+            except Exception as e:
+                # 🔥 CORRECCIÓN: Si hay error, incluir el producto de todos modos
+                logger.debug(f"Error filtrando producto: {e}")
+                filtered_products.append(product)
         
-        # Fallback: productos que al menos son de gaming
-        if not relevant_products:
-            gaming_products = [p for p in products if any(term in getattr(p, 'title', '').lower()
-                                                         for term in gaming_terms)]
-            if gaming_products:
-                logger.info(f"🔄 Usando {len(gaming_products)} productos gaming como fallback")
-                return gaming_products[:10]
+        # Fallback: si no hay productos filtrados, devolver todos
+        if not filtered_products:
+            logger.info(f"🔄 Usando {len(products)} productos sin filtrar como fallback")
+            return products
         
-        return relevant_products
+        return filtered_products
 
-    def _rerank_with_rlhf(self, products: List[Product], query: str, profile: Dict) -> List[Product]:
-        """Reranking híbrido: 60% colaborativo + 40% RAG tradicional"""
+    def _rerank_with_rlhf(self, products: List, query: str, profile: Dict) -> List:
+        """Reranking híbrido con soporte RLHF y fallback seguro"""
         if not products:
             return products
 
-        # 🔥 CAMBIO 2: Respetar enable_reranking y enable_rlhf al reranquear
+        # 🔥 Si el reranking está deshabilitado por configuración, devolver tal cual
         if not getattr(self.config, "enable_reranking", True):
-            logger.debug("Reranking deshabilitado por configuración: devolviendo ranking original")
-            # Opcional: ordenar por score RAG simple si enable_rlhf está activo
-            if getattr(self.config, "enable_rlhf", False):
-                try:
-                    return self._rerank_fallback(products, query, profile)
-                except Exception:
-                    return products
+            logger.debug("Reranking deshabilitado por configuración")
             return products
-            
+
         try:
-            # 🔥 NUEVO: Obtener perfil completo de usuario
-            user_profile = self._get_or_create_user_profile_demographic(profile['user_id'])
-            
-            # 1. Score RAG tradicional
-            rag_scores = {}
+            # Asegurar que todos los productos son objetos Product
+            scorable_products = []
             for product in products:
-                rag_score = self.rlhf_trainer.score_product_relevance(query, product, profile)
-                rag_scores[product.id] = rag_score
-            
-            # 2. Score colaborativo (usuarios similares)
-            # 🔥 CAMBIO 5: Validar collaborative_filter existe antes de usarlo
-            if (self.collaborative_filter is not None and 
+                if isinstance(product, str):
+                    scorable_products.append(Product(id=product, title=f"Producto {product}"))
+                else:
+                    scorable_products.append(product)
+
+            # Obtener perfil completo del usuario
+            user_profile = self._get_or_create_user_profile_demographic(profile.get('user_id'))
+
+            # 1️⃣ Score RAG / RLHF
+            rag_scores = {}
+            for product in scorable_products:
+                if hasattr(self, 'rlhf_trainer') and self.rlhf_trainer is not None:
+                    score = self.rlhf_trainer.score_product_relevance(query, product, profile)
+                else:
+                    # Fallback a scoring simple si no hay RLHF
+                    score = 0.5
+                rag_scores[getattr(product, 'id', 'unknown')] = score
+
+            # 2️⃣ Score colaborativo
+            collaborative_scores = {}
+            if (self.collaborative_filter is not None and
                 hasattr(self.collaborative_filter, 'get_collaborative_scores')):
                 try:
                     collaborative_scores = self.collaborative_filter.get_collaborative_scores(
-                        user_profile, query, products
+                        user_profile, query, scorable_products
                     )
                 except Exception as e:
                     logger.warning(f"Error en filtro colaborativo: {e}")
                     collaborative_scores = {}
-            else:
-                collaborative_scores = {}
-            
-            # 3. Combinación híbrida
+
+            # 3️⃣ Combinación híbrida con pesos configurables
             hybrid_scores = {}
-            for product in products:
-                rag_score = rag_scores.get(product.id, 0)
-                collab_score = collaborative_scores.get(product.id, 0)
-                
-                # Aplicar pesos: 60% colaborativo, 40% RAG
+            for product in scorable_products:
+                pid = getattr(product, 'id', 'unknown')
+                rag_score = rag_scores.get(pid, 0)
+                collab_score = collaborative_scores.get(pid, 0)
                 hybrid_score = (
-                    self.hybrid_weights['collaborative'] * collab_score +
-                    self.hybrid_weights['rag'] * rag_score
+                    self.hybrid_weights.get('collaborative', 0.4) * collab_score +
+                    self.hybrid_weights.get('rag', 0.6) * rag_score
                 )
-                
-                hybrid_scores[product.id] = hybrid_score
-            
-            # 4. Ordenar por score híbrido
-            scored_products = [(hybrid_scores.get(p.id, 0), p) for p in products]
+                hybrid_scores[pid] = hybrid_score
+
+            # 4️⃣ Ordenar y retornar productos por score híbrido
+            scored_products = [(hybrid_scores.get(getattr(p, 'id', 'unknown'), 0), p) for p in scorable_products]
             scored_products.sort(key=lambda x: x[0], reverse=True)
-            
+
             logger.info(f"🎯 Reranking híbrido: {len([s for s, _ in scored_products if s > 0])} productos con score positivo")
-            
             return [p for _, p in scored_products]
-            
+
         except Exception as e:
             logger.warning(f"Reranking híbrido falló, usando RAG tradicional: {e}")
-            # Fallback a RAG tradicional
             return self._rerank_fallback(products, query, profile)
+    def _log_rlhf_data(self, query: str, response: List[Dict], score: float, user_id: str = None):
+        """Genera datos de entrenamiento para RLHF - VERSIÓN SIMPLIFICADA"""
+        try:
+            # Crear directorio de feedback si no existe
+            feedback_dir = Path("data/feedback")
+            feedback_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Log exitoso
+            log_file = feedback_dir / "successful_queries.jsonl"
+            log_data = {
+                'query': query,
+                'response': str(response[:2]),  # Limitar tamaño
+                'score': score,
+                'user_id': user_id,
+                'timestamp': time.time()
+            }
+            
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(log_data, ensure_ascii=False) + '\n')
+                
+        except Exception as e:
+            print(f"⚠️ Error logging RLHF data: {e}")
         
     def _get_or_create_user_profile_demographic(self, user_id: str) -> UserProfile:
         """Obtiene o crea perfil de usuario con datos demográficos (solo si está permitido)"""
@@ -568,11 +632,19 @@ class WorkingAdvancedRAGAgent:
                 language="es"
             )
 
-    def _rerank_fallback(self, products: List[Product], query: str, profile: Dict) -> List[Product]:
+    def _rerank_fallback(self, products: List, query: str, profile: Dict) -> List:
         """Fallback a RAG tradicional si el sistema híbrido falla"""
         try:
+            # 🔥 CORRECCIÓN: Manejar tanto IDs como objetos Product en el fallback
+            scorable_products = []
+            for product in products:
+                if isinstance(product, str):
+                    scorable_products.append(Product(id=product, title=f"Producto {product}"))
+                else:
+                    scorable_products.append(product)
+                    
             scored_products = [(self.rlhf_trainer.score_product_relevance(query, p, profile), p) 
-                            for p in products]
+                            for p in scorable_products]
             scored_products.sort(key=lambda x: x[0], reverse=True)
             return [p for _, p in scored_products]
         except Exception as e:
