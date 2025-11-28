@@ -283,49 +283,8 @@ class StubUserProfile:
 
 class StubTrainer:
     def __init__(self, *a, **k): pass
-    def prepare_rlhf_dataset_from_logs(self, failed_log_path: Path, success_log_path: Path, min_samples: int = 5) -> Dict[str, Any]:
-        """Prepara dataset RLHF desde logs - VERSIÓN MEJORADA"""
-        import logging
-        logger = logging.getLogger(__name__)
-        samples = []
-        
-        # Crear datos sintéticos si no hay logs
-        if not success_log_path.exists() and not failed_log_path.exists():
-            print("📝 Generando datos sintéticos para RLHF...")
-            synthetic_queries = [
-                "playstation 5 consola gaming",
-                "nintendo switch juegos familia", 
-                "xbox series x videojuegos",
-                "monitor gaming 144hz",
-                "teclado mecánico rgb"
-            ]
-            
-            for i, query in enumerate(synthetic_queries):
-                samples.append({
-                    'query': query,
-                    'answer': f"Productos gaming recomendados para {query}",
-                    'labels': 1,  # Feedback positivo
-                    'score': 0.8 + (i * 0.05)
-                })
-        
-        # Cargar logs existentes (código anterior)...
-        
-        logger.info(f"📊 Muestras válidas encontradas: {len(samples)}")
-
-        if len(samples) < min_samples:
-            logger.warning(f"❌ No hay suficientes muestras: {len(samples)} < {min_samples}")
-            return {'train': None, 'eval': None, 'total_samples': 0}
-
-        # Dividir dataset
-        train_size = int(0.8 * len(samples))
-        train_data = samples[:train_size]
-        eval_data = samples[train_size:]
-
-        return {
-            'train': Dataset.from_list(train_data) if train_data else None,
-            'eval': Dataset.from_list(eval_data) if eval_data else None,
-            'total_samples': len(samples)
-        }
+    def prepare_rlhf_dataset_from_logs(self, logs):
+        return {"n_examples": len(logs)}
     def train(self, dataset):
         return {"trained_examples": dataset.get("n_examples", 0), "loss": 0.1}
 
