@@ -5,6 +5,9 @@ from typing import List, Dict, Optional, Any
 from enum import Enum
 import json
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Gender(Enum):
     MALE = "male"
@@ -70,6 +73,60 @@ class UserProfile:
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
     total_sessions: int = 1
+    
+    def calculate_similarity(self, other: UserProfile) -> float:
+        """Calcula similitud robusta entre usuarios (0-1)"""
+        try:
+            if self.user_id == other.user_id:
+                return 1.0
+            
+            similarity = 0.0
+            total_weight = 0
+            
+            # 1. Edad (peso 25%) - diferencia máxima 40 años
+            age_diff = abs(self.age - other.age)
+            age_similarity = max(0, 1 - (age_diff / 40))
+            similarity += age_similarity * 0.25
+            total_weight += 0.25
+            
+            # 2. Género (peso 20%)
+            if self.gender == other.gender:
+                similarity += 1.0 * 0.20
+            total_weight += 0.20
+            
+            # 3. País (peso 15%)
+            if self.country.lower() == other.country.lower():
+                similarity += 1.0 * 0.15
+            total_weight += 0.15
+            
+            # 4. Categorías preferidas (peso 30%)
+            if self.preferred_categories and other.preferred_categories:
+                set_self = set(self.preferred_categories)
+                set_other = set(other.preferred_categories)
+                if set_self and set_other:
+                    common_categories = set_self & set_other
+                    category_similarity = len(common_categories) / max(len(set_self), len(set_other))
+                    similarity += category_similarity * 0.30
+            total_weight += 0.30
+            
+            # 5. Precio (peso 10%) - similitud en rango de precio preferido
+            self_min, self_max = self.preferred_price_range.get('min', 0), self.preferred_price_range.get('max', 1000)
+            other_min, other_max = other.preferred_price_range.get('min', 0), other.preferred_price_range.get('max', 1000)
+            
+            range_overlap = max(0, min(self_max, other_max) - max(self_min, other_min))
+            range_union = max(self_max, other_max) - min(self_min, other_min)
+            
+            if range_union > 0:
+                price_similarity = range_overlap / range_union
+                similarity += price_similarity * 0.10
+            total_weight += 0.10
+            
+            # Normalizar por el peso total aplicado
+            return similarity / total_weight if total_weight > 0 else 0.0
+            
+        except Exception as e:
+            logger.error(f"Error calculando similitud entre usuarios: {e}")
+            return 0.0
     
     def to_dict(self) -> Dict[str, Any]:
         """Convierte a dict para serialización"""
@@ -198,33 +255,3 @@ class UserProfile:
             selected_product=selected_product
         ))
         self.update_activity()
-    
-    def calculate_similarity(self, other: UserProfile) -> float:
-        """Calcula similitud entre usuarios (0-1)"""
-        similarity = 0.0
-        factors = 0
-        
-        # Edad (diferencia máxima 30 años = 0 similitud)
-        age_diff = abs(self.age - other.age)
-        age_similarity = max(0, 1 - (age_diff / 30))
-        similarity += age_similarity
-        factors += 1
-        
-        # Género
-        if self.gender == other.gender:
-            similarity += 1.0
-        factors += 1
-        
-        # País
-        if self.country == other.country:
-            similarity += 1.0
-        factors += 1
-        
-        # Categorías preferidas
-        common_categories = set(self.preferred_categories) & set(other.preferred_categories)
-        if self.preferred_categories and other.preferred_categories:
-            category_similarity = len(common_categories) / max(len(self.preferred_categories), len(other.preferred_categories))
-            similarity += category_similarity
-            factors += 1
-        
-        return similarity / factors if factors > 0 else 0.0

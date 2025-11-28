@@ -303,7 +303,17 @@ class Product(BaseModel):
             processed['attributes'] = {}
         
         return processed
-
+    @property
+    def product_id(self) -> str:
+        """
+        ID universal del producto, usado por el sistema RAG y RL.
+        Busca en varios campos típicos (asin, id, productId, product_type, code)
+        y usa el título como último fallback.
+        """
+        for key in ["asin", "id", "productId", "product_type", "code"]:
+            if hasattr(self, key):
+                return getattr(self, key)
+        return getattr(self, "title", None)
     @classmethod
     def _auto_clean_title(cls, title: str) -> str:
         """Limpia título automáticamente"""

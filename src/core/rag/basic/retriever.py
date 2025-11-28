@@ -157,26 +157,50 @@ class Retriever:
         return list(expansions)
     
     def _load_feedback_weights(self) -> Dict[str, float]:
-        """Carga pesos aprendidos de feedback positivo"""
+        """Carga pesos aprendidos de feedback positivo - VERSIÓN COMPLETA"""
         weights = {}
         try:
+            # 1. Cargar desde archivo persistente
+            weights_file = Path("data/feedback/feedback_weights.json")
+            if weights_file.exists():
+                with open(weights_file, 'r', encoding='utf-8') as f:
+                    weights = json.load(f)
+            
+            # 2. Enriquecer con datos de success_queries.log
             success_log = Path("data/feedback/success_queries.log")
             if success_log.exists():
                 with open(success_log, 'r', encoding='utf-8') as f:
                     for line in f:
                         record = json.loads(line)
                         product_id = record.get('selected_product_id')
-                        if product_id:
+                        rating = record.get('feedback', 0)
+                        if product_id and rating >= 4:  # Solo feedback positivo
                             weights[product_id] = weights.get(product_id, 0) + 1.0
-        except:
-            pass
+            
+            logger.info(f"✅ Cargados {len(weights)} pesos de feedback positivo")
+            
+        except Exception as e:
+            logger.error(f"Error cargando pesos de feedback: {e}")
+        
         return weights
 
     # ------------------------------------------------------------
     # Retrieval principal
     # ------------------------------------------------------------
-    def retrieve(self, query: str, k: int = 5, filters: Optional[Dict] = None, min_similarity: float = 0.3) -> List[Product]:
+    def retrieve(
+        self,
+        query: str,
+        k: int = 5,
+        filters: Optional[Dict] = None,
+        min_similarity: float = 0.3,
+        top_k: Optional[int] = None,
+    ):
+        """Compatibilidad con deepeval: aceptar top_k además de k."""
         try:
+            # --- compatibilidad ---
+            if top_k is not None:
+                k = top_k
+
             self._ensure_store_loaded()
 
             if self.store is None:
@@ -208,14 +232,12 @@ class Retriever:
                 if base_score < min_similarity:
                     continue
 
-                # 🔥 BOOST por feedback positivo — aprendizaje automático
                 feedback_boost = self.feedback_weights.get(p.id, 0) * 0.1
                 final_score = base_score + feedback_boost
                 scored.append((final_score, p))
 
-            # ✅ LÍNEAS CRÍTICAS QUE FALTABAN:
             scored.sort(key=lambda x: x[0], reverse=True)
-            return [p for _, p in scored[:k]]
+            return [p.id for _, p in scored[:k]]
 
         except Exception as e:
             logger.error(f"❌ Retrieval error: {e}")
@@ -467,3 +489,75 @@ class Retriever:
         except Exception as e:
             logger.error(f"❌ Index build failed: {e}")
             raise RuntimeError(f"Index build failed: {e}")
+        
+    def update_feedback_weights_immediately(self, selected_product_id: str, rating: int, all_shown_products: List[str] = None):
+        """Actualiza pesos de feedback con soft negative filtering"""
+        try:
+            if rating >= 4:  # ✅ Feedback positivo
+                current_weight = self.feedback_weights.get(selected_product_id, 0)
+                self.feedback_weights[selected_product_id] = current_weight + 1.0
+                
+                # Ligero boost a productos mostrados
+                if all_shown_products:
+                    for product_id in all_shown_products:
+                        if product_id != selected_product_id:
+                            self.feedback_weights[product_id] = self.feedback_weights.get(product_id, 0) + 0.1
+                
+            else:  # ❌ Feedback negativo - SOFT NEGATIVE FILTERING
+                current_weight = self.feedback_weights.get(selected_product_id, 0)
+                # ✅ Penalización suave con clipping
+                new_weight = current_weight - 1.0
+                self.feedback_weights[selected_product_id] = max(new_weight, -3.0)  # Clipping en -3
+            
+            # ✅ Aplicar decay temporal periódicamente
+            self._apply_temporal_decay()
+            
+            # Guardar pesos actualizados
+            self._save_feedback_weights()
+            
+        except Exception as e:
+            logger.error(f"Error actualizando pesos de feedback: {e}")
+
+    def _apply_temporal_decay(self):
+        """Aplica decay temporal a pesos antiguos (half-life de 30 días)"""
+        try:
+            current_time = time.time()
+            if not hasattr(self, '_last_decay_time'):
+                self._last_decay_time = current_time
+            
+            # Aplicar decay cada 24 horas
+            if current_time - self._last_decay_time < 86400:
+                return
+            
+            decay_factor = 0.95  # 5% de decay cada día
+            for product_id in list(self.feedback_weights.keys()):
+                self.feedback_weights[product_id] *= decay_factor
+            
+            # Filtrar pesos muy bajos
+            self.feedback_weights = {k: v for k, v in self.feedback_weights.items() 
+                                if abs(v) > 0.01}
+            
+            self._last_decay_time = current_time
+            logger.debug("🕒 Aplicado decay temporal a pesos de feedback")
+            
+        except Exception as e:
+            logger.error(f"Error aplicando decay temporal: {e}")
+
+    def _save_feedback_weights(self):
+        """Guarda pesos con límite de tamaño"""
+        try:
+            weights_file = Path("data/feedback/feedback_weights.json")
+            weights_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # ✅ LIMITAR TAMAÑO: mantener solo top 1000 productos
+            sorted_weights = sorted(self.feedback_weights.items(), 
+                                key=lambda x: abs(x[1]), reverse=True)
+            limited_weights = dict(sorted_weights[:1000])
+            
+            with open(weights_file, 'w', encoding='utf-8') as f:
+                json.dump(limited_weights, f, ensure_ascii=False, indent=2)
+                
+            logger.debug(f"💾 Pesos guardados: {len(limited_weights)} productos (limitado a 1000)")
+                
+        except Exception as e:
+            logger.error(f"Error guardando pesos de feedback: {e}")

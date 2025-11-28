@@ -39,7 +39,14 @@ except ImportError:
         def __init__(self, **kwargs):
             for key, value in kwargs.items():
                 setattr(self, key, value)
-        
+                
+        asin: str | None = None
+        id: str | None = None
+        productId: str | None = None
+        product_type: str | None = None
+        code: str | None = None
+        title: str | None = None
+       
         @classmethod
         def from_dict(cls, data):
             return cls(**data)
@@ -48,6 +55,13 @@ except ImportError:
             if hasattr(self, 'image_urls'):
                 if not self.image_urls:
                     self.image_urls = ["https://via.placeholder.com/300"]
+        @property
+        def product_id(self):
+            for key in ["asin", "id", "productId", "product_type", "code"]:
+                if getattr(self, key, None):
+                    return getattr(self, key)
+
+            return self.title 
     
     class settings:
         RAW_DIR = Path("./data/raw")

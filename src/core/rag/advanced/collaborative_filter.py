@@ -5,7 +5,8 @@ from pathlib import Path
 import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
-
+import hashlib
+import time
 from src.core.data.user_models import UserProfile
 from src.core.data.product import Product
 
@@ -19,61 +20,130 @@ class CollaborativeFilter:
     def __init__(self, user_manager, min_similarity: float = 0.6):
         self.user_manager = user_manager
         self.min_similarity = min_similarity
-        self.feedback_cache = {}  # Cache de feedback agregado
+        self.positive_feedback_cache: Dict[str, Dict[str, float]] = {}
+        self.cache_ttl = 3600
+        self.last_cache_update: Dict[str, float] = {}
+        self.hybrid_weights = {'collaborative': 0.6, 'rag': 0.4}
         
-    def get_collaborative_scores(self, 
-                            target_user: UserProfile,
-                            query: str,
-                            candidate_products: List[Product],
-                            max_similar_users: int = 10) -> Dict[str, float]:
-        """
-        Calcula scores colaborativos con fallback inteligente
-        """
+    def _get_positive_feedback_scores(self, user: UserProfile, query: str) -> Dict[str, float]:
+        """Obtiene SOLO feedback positivo con cache robusto"""
+        # ✅ CACHE KEY ROBUSTO
+        query_hash = hashlib.md5(query.lower().encode()).hexdigest()[:12]
+        cache_key = f"{user.user_id}_{query_hash}"
+        current_time = time.time()
+        
+        # Verificar cache
+        if (cache_key in self.positive_feedback_cache and 
+            current_time - self.last_cache_update.get(cache_key, 0) < self.cache_ttl):
+            return self.positive_feedback_cache[cache_key]
+        
+        feedback_scores = {}
+        
         try:
-            # 1. Encontrar usuarios similares
-            similar_users = self.user_manager.find_similar_users(
-                target_user, 
-                self.min_similarity
-            )[:max_similar_users]
+            relevant_feedback = self._find_relevant_positive_feedback(user, query)
             
-            if not similar_users:
-                logger.debug("No se encontraron usuarios similares, usando fallback basado en categorías")
-                return self._get_category_fallback_scores(target_user, query, candidate_products)
+            for feedback in relevant_feedback:
+                product_id = feedback.get('selected_product_id')
+                if product_id:
+                    rating = feedback.get('rating', 3)
+                    if rating >= 4:  # Solo feedback positivo
+                        normalized_score = (rating - 1) / 4.0
+                        recency_weight = self._calculate_recency_weight(feedback.get('timestamp'))
+                        query_similarity = feedback.get('query_similarity', 0.5)
+                        
+                        final_score = normalized_score * recency_weight * query_similarity
+                        
+                        if final_score > 0.4:
+                            feedback_scores[product_id] = max(
+                                feedback_scores.get(product_id, 0),
+                                final_score
+                            )
             
-            logger.info(f"👥 Encontrados {len(similar_users)} usuarios similares para {target_user.user_id}")
-            
-            # 2. Agregar feedback de usuarios similares
-            collaborative_scores = defaultdict(float)
-            similarity_weights = defaultdict(float)
-            
-            for similar_user in similar_users:
-                similarity = target_user.calculate_similarity(similar_user)
-                
-                # 3. Obtener feedback relevante del usuario similar
-                user_feedback_scores = self._get_user_feedback_scores(similar_user, query)
-                
-                # 4. Combinar scores ponderados por similitud
-                for product_id, feedback_score in user_feedback_scores.items():
-                    collaborative_scores[product_id] += feedback_score * similarity
-                    similarity_weights[product_id] += similarity
-            
-            # 5. Si no hay scores colaborativos, usar fallback
-            if not collaborative_scores:
-                logger.debug("No hay feedback colaborativo disponible, usando fallback")
-                return self._get_category_fallback_scores(target_user, query, candidate_products)
-            
-            # 6. Normalizar scores
-            normalized_scores = {}
-            for product_id, total_score in collaborative_scores.items():
-                if similarity_weights[product_id] > 0:
-                    normalized_scores[product_id] = total_score / similarity_weights[product_id]
-            
-            logger.info(f"📊 Scores colaborativos calculados para {len(normalized_scores)} productos")
-            return normalized_scores
+            # Actualizar cache
+            self.positive_feedback_cache[cache_key] = feedback_scores
+            self.last_cache_update[cache_key] = current_time
             
         except Exception as e:
-            logger.error(f"Error en filtro colaborativo, usando fallback: {e}")
-            return self._get_category_fallback_scores(target_user, query, candidate_products)
+            logger.debug(f"Error obteniendo feedback positivo de {user.user_id}: {e}")
+        
+        return feedback_scores
+
+    def get_collaborative_scores(
+            self,
+            user_or_profile,
+            query_or_candidates,
+            target_user: Optional[UserProfile] = None,
+            query: Optional[str] = None,
+            candidate_products: Optional[List[Product]] = None,
+            max_similar_users: int = 8):
+        
+        # 🔥 CORRECCIÓN: Manejar caso cuando user_or_profile es None
+        if user_or_profile is None:
+            return {}
+            
+        # ---- CASO 1: llamado externo (DeepEval) ----
+        if isinstance(user_or_profile, str) and isinstance(query_or_candidates, list):
+            user_id = user_or_profile
+            product_ids = query_or_candidates
+
+            try:
+                # 🔥 CORRECCIÓN: Manejar caso cuando user_manager no está disponible
+                if self.user_manager is None:
+                    return {}
+                    
+                user = self.user_manager.get_user_profile(user_id)
+            except Exception as e:
+                logger.debug(f"No se pudo obtener perfil de usuario {user_id}: {e}")
+                return {}
+
+            if user is None:
+                return {}
+
+        # ---- CASO 2: llamado interno ----
+        else:
+            user = user_or_profile
+            target_user = user_or_profile
+            query = query_or_candidates
+
+        # ahora sigue tu lógica normal...
+        try:
+            similar_users = self.user_manager.find_similar_users(
+                target_user, self.min_similarity
+            )[:max_similar_users]
+
+            collaborative_scores = {}
+
+            if similar_users:
+                collaborative_scores = self._get_collaborative_from_similar_users(
+                    target_user, similar_users, query, candidate_products
+                )
+
+            if not collaborative_scores:
+                collaborative_scores = self._get_category_fallback_scores(
+                    target_user, query, candidate_products
+                )
+
+            return collaborative_scores
+
+        except Exception as e:
+            logger.error(f"Error en filtro colaborativo: {e}")
+            return {}
+
+    def _get_collaborative_from_similar_users(self, target_user, similar_users, query, candidate_products):
+        """Lógica colaborativa con usuarios similares"""
+        collaborative_scores = defaultdict(float)
+        similarity_weights = defaultdict(float)
+        
+        for similar_user in similar_users:
+            similarity = target_user.calculate_similarity(similar_user)
+            
+            positive_feedback = self._get_positive_feedback_scores(similar_user, query)
+            
+            for product_id, feedback_score in positive_feedback.items():
+                collaborative_scores[product_id] += feedback_score * similarity
+                similarity_weights[product_id] += similarity
+        
+        return self._normalize_with_quality_filter(collaborative_scores, similarity_weights)
 
     def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
         """
@@ -216,3 +286,57 @@ class CollaborativeFilter:
             
         except Exception as e:
             logger.debug(f"Error ajustando pesos híbridos: {e}")
+            
+    def _normalize_with_quality_filter(self, collaborative_scores: Dict[str, float], 
+                                 similarity_weights: Dict[str, float]) -> Dict[str, float]:
+        """Normaliza scores aplicando filtros de calidad"""
+        normalized_scores = {}
+        
+        for product_id, total_score in collaborative_scores.items():
+            weight = similarity_weights[product_id]
+            
+            # Filtros de calidad
+            if (weight > 0.3 and                    # Mínima evidencia agregada
+                total_score > 0.2):                 # Score mínimo absoluto
+                
+                normalized_score = total_score / weight
+                
+                # Solo incluir scores de alta calidad
+                if normalized_score > 0.5:          # Umbral de calidad
+                    normalized_scores[product_id] = normalized_score
+        
+        return normalized_scores
+    def _find_relevant_positive_feedback(self, user: UserProfile, query: str) -> List[Dict]:
+        """Encuentra feedback relevante y positivo basado en similitud de queries"""
+        relevant_feedback = []
+        query_terms = set(query.lower().split())
+        
+        for feedback_event in user.feedback_history:
+            # Solo considerar feedback positivo
+            if feedback_event.rating < 4:
+                continue
+                
+            feedback_query = feedback_event.query.lower()
+            feedback_terms = set(feedback_query.split())
+            
+            # Calcular similitud de Jaccard entre queries
+            intersection = len(query_terms & feedback_terms)
+            union = len(query_terms | feedback_terms)
+            
+            if union > 0:
+                similarity = intersection / union
+                if similarity > 0.3:  # Umbral de similitud
+                    relevant_feedback.append({
+                        'selected_product_id': feedback_event.selected_product,
+                        'rating': feedback_event.rating,
+                        'timestamp': feedback_event.timestamp,
+                        'query_similarity': similarity
+                    })
+        
+        # Ordenar por similitud y luego por recencia
+        relevant_feedback.sort(key=lambda x: (
+            x['query_similarity'], 
+            x['timestamp']
+        ), reverse=True)
+        
+        return relevant_feedback[:8]  # Top 8 más relevantes

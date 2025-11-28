@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # src/core/rag/advanced/WorkingRAGAgent.py
 import time
-
+import re
 import logging
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -43,6 +43,17 @@ class RAGResponse:
     retrieved_count: int
     used_llm: bool = False
 
+    @property
+    def text(self):
+        return self.answer
+    @property
+    def recommended(self):
+        return self.recommended_ids
+    @property
+    def recommended_ids(self):
+        return self.products
+
+    
 # ===============================
 # Memory
 # ===============================
@@ -111,7 +122,7 @@ class AdvancedEvaluator:
         # Relevancia de productos
         product_relevance = 0.0
         for product in products:
-            title = getattr(product, 'title', '').lower()
+            title = str(getattr(product, 'title', '')).lower()
             if any(word in title for word in query_words if len(word) > 2):
                 product_relevance += 0.2
         
@@ -151,7 +162,7 @@ class GamingRLHFTrainer:
         query_words = set(query_lower.split())
         
         title = getattr(product, "title", "").lower()
-        category = getattr(product, "main_category", "").lower()
+        category = str(getattr(product, 'main_category', '')).lower()
         price = getattr(product, "price", None)
         rating = getattr(product, "average_rating", 0)
         
@@ -246,6 +257,27 @@ class WorkingAdvancedRAGAgent:
     def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
         """Procesa consultas de gaming de forma optimizada"""
         try:
+            # 🔥 CORRECCIÓN COMPLETA: Manejar diferentes tipos de entrada
+            original_query = query
+            
+            # Si query es un dict o string JSON, extraer el campo 'query'
+            if isinstance(query, dict):
+                query_text = query.get('query', str(query))
+            elif isinstance(query, str) and query.strip().startswith('{'):
+                try:
+                    query_data = json.loads(query)
+                    query_text = query_data.get('query', str(query_data))
+                except json.JSONDecodeError:
+                    query_text = query
+            else:
+                query_text = str(query)  # Convertir a string seguro
+                
+            # 🔥 CORRECCIÓN: Asegurar que query_text sea string válido
+            if not isinstance(query_text, str):
+                query_text = str(query_text)
+                
+            logger.info(f"🔍 Procesando query: '{query_text}' (original: {type(original_query)})")
+                
             # 🔥 CAMBIO 4: Usar perfil existente y evitar crear users automáticos
             profile = self.get_or_create_user_profile(user_id)
             memory = self.get_or_create_memory(user_id)
@@ -261,40 +293,40 @@ class WorkingAdvancedRAGAgent:
                 except Exception:
                     pass
             
-            # Enriquecimiento inteligente para gaming
-            enriched_query = self._enrich_gaming_query(query, profile)
+            # Enriquecimiento inteligente para gaming - usar query_text en lugar de query
+            enriched_query = self._enrich_gaming_query(query_text, profile)
             candidates = self.retriever.retrieve(enriched_query, k=self.config.max_retrieved)
             
             # Filtrado y reranking avanzado
-            relevant_candidates = self._filter_gaming_products(candidates, query)
-            ranked = self._rerank_with_rlhf(relevant_candidates, query, profile)
+            relevant_candidates = self._filter_gaming_products(candidates, query_text)
+            ranked = self._rerank_with_rlhf(relevant_candidates, query_text, profile)
             final_products = ranked[:self.config.max_final]
             
             # Generación de respuesta optimizada
             context_for_generation = memory.get_context()
-            full_context = f"{context_for_generation}\nNueva consulta: {query}" if context_for_generation else query
+            full_context = f"{context_for_generation}\nNueva consulta: {query_text}" if context_for_generation else query_text
             
-            response = self._generate_gaming_response(full_context, final_products, query)
-            quality_score = self.evaluator.evaluate_response(query, response, final_products)
+            response = self._generate_gaming_response(full_context, final_products, query_text)
+            quality_score = self.evaluator.evaluate_response(query_text, response, final_products)
             
             # Guardar en memoria
-            memory.add(query, response)
+            memory.add(query_text, response)
             
-            logger.info(f"✅ Query: '{query}' -> {len(final_products)} productos | Score: {quality_score}")
+            logger.info(f"✅ Query: '{query_text}' -> {len(final_products)} productos | Score: {quality_score}")
             
             return RAGResponse(
-                answer=response, 
-                products=final_products, 
-                quality_score=quality_score, 
+                answer=response,
+                products=[p.product_id for p in final_products],     # ahora son IDs
+                quality_score=quality_score,
                 retrieved_count=len(ranked),
                 used_llm=False
             )
-        
             
         except Exception as e:
             logger.error(f"❌ Error en process_query: {e}")
+            logger.error(f"❌ Tipo de query: {type(query)}, Valor: {query}")
             return RAGResponse(
-                answer=self._error_response(query, e),
+                answer=self._error_response(str(query), e),
                 products=[],
                 quality_score=0.0,
                 retrieved_count=0
@@ -386,8 +418,8 @@ class WorkingAdvancedRAGAgent:
         
         relevant_products = []
         for product in products:
-            title = getattr(product, 'title', '').lower()
-            category = getattr(product, 'main_category', '').lower()
+            title = str(getattr(product, 'title', '')).lower()
+            category = str(getattr(product, 'main_category', '')).lower()
             
             # Coincidencia directa en título
             title_match = any(word in title for word in query_words)
@@ -404,7 +436,7 @@ class WorkingAdvancedRAGAgent:
         
         # Fallback: productos que al menos son de gaming
         if not relevant_products:
-            gaming_products = [p for p in products if any(term in getattr(p, 'title', '').lower() 
+            gaming_products = [p for p in products if any(term in getattr(p, 'title', '').lower()
                                                          for term in gaming_terms)]
             if gaming_products:
                 logger.info(f"🔄 Usando {len(gaming_products)} productos gaming como fallback")
@@ -440,11 +472,17 @@ class WorkingAdvancedRAGAgent:
             
             # 2. Score colaborativo (usuarios similares)
             # 🔥 CAMBIO 5: Validar collaborative_filter existe antes de usarlo
-            if self.collaborative_filter is not None:
-                collaborative_scores = self.collaborative_filter.get_collaborative_scores(user_profile, query, products)
+            if (self.collaborative_filter is not None and 
+                hasattr(self.collaborative_filter, 'get_collaborative_scores')):
+                try:
+                    collaborative_scores = self.collaborative_filter.get_collaborative_scores(
+                        user_profile, query, products
+                    )
+                except Exception as e:
+                    logger.warning(f"Error en filtro colaborativo: {e}")
+                    collaborative_scores = {}
             else:
-                # Si no hay collaborative filter, usar 0 scores (o fallback)
-                collaborative_scores = {p.id: 0.0 for p in products}
+                collaborative_scores = {}
             
             # 3. Combinación híbrida
             hybrid_scores = {}
@@ -600,7 +638,7 @@ class WorkingAdvancedRAGAgent:
         platforms = {}
         
         for product in products:
-            title = getattr(product, 'title', '').lower()
+            title = str(getattr(product, 'title', '')).lower()
             platform = "Otras plataformas"
             
             # Detección de plataforma mejorada
@@ -671,11 +709,114 @@ class WorkingAdvancedRAGAgent:
         if user_id in self.user_memory:
             self.user_memory[user_id].clear()
 
-    def log_feedback(self, query: str, answer: str, rating: int, user_id: str = "default"):
-        """Log de feedback mejorado con datos demográficos"""
+    def _calculate_dynamic_weights(self, collaborative_count: int, total_products: int) -> Dict[str, float]:
+        """Calcula pesos dinámicos NORMALIZADOS"""
+        if total_products == 0:
+            return self.hybrid_weights
+        
+        collaborative_ratio = collaborative_count / total_products
+        
+        # Ajustar pesos según evidencia
+        if collaborative_ratio < 0.1:  # Poca evidencia
+            rag_weight = 0.7
+            collab_weight = 0.3
+        elif collaborative_ratio < 0.3:  # Evidencia moderada
+            rag_weight = 0.4
+            collab_weight = 0.6
+        else:  # Buena evidencia
+            rag_weight = 0.3
+            collab_weight = 0.7
+        
+        # ✅ NORMALIZAR SIEMPRE
+        total = rag_weight + collab_weight
+        return {
+            'rag': rag_weight / total,
+            'collaborative': collab_weight / total
+        }
+
+    def _infer_selected_product(self, answer: str, rating: int, user_query: str = "") -> Optional[str]:
+        """Infere producto seleccionado de forma inteligente"""
+        product_ids = self._extract_products_from_response(answer)
+        
+        if not product_ids:
+            return None
+        
+        # ✅ ESTRATEGIAS MEJORADAS DE INFERENCIA
+        strategies = []
+        
+        # 1. Por rating positivo + posición
+        if rating >= 4:
+            # Asumir que el primer producto fue el más relevante
+            strategies.append((product_ids[0], 0.8))
+        
+        # 2. Por similitud con query del usuario
+        if user_query:
+            best_match = self._find_best_query_match(user_query, product_ids, answer)
+            if best_match:
+                strategies.append((best_match, 0.9))
+        
+        # 3. Por mención explícita en la respuesta
+        explicit_mention = self._find_explicit_mention(answer, product_ids)
+        if explicit_mention:
+            strategies.append((explicit_mention, 1.0))
+        
+        # Seleccionar la estrategia con mayor confianza
+        if strategies:
+            strategies.sort(key=lambda x: x[1], reverse=True)
+            return strategies[0][0]
+        
+        # Fallback: primer producto para rating positivo
+        return product_ids[0] if rating >= 4 else None
+
+    def _find_best_query_match(self, user_query: str, product_ids: List[str], answer: str) -> Optional[str]:
+        """Encuentra el producto que mejor coincide con la query del usuario"""
         try:
-            # 🔥 NUEVO: Obtener perfil para enriquecer feedback
+            query_terms = set(user_query.lower().split())
+            best_match = None
+            best_score = 0
+            
+            # Buscar en la respuesta secciones que mencionen cada producto
+            for product_id in product_ids:
+                # Buscar contexto alrededor del product_id en la respuesta
+                product_context = self._extract_product_context(answer, product_id)
+                if product_context:
+                    context_terms = set(product_context.lower().split())
+                    common_terms = query_terms & context_terms
+                    score = len(common_terms) / len(query_terms) if query_terms else 0
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = product_id
+            
+            return best_match if best_score > 0.3 else None
+            
+        except Exception:
+            return None
+
+    def _extract_product_context(self, answer: str, product_id: str) -> str:
+        """Extrae contexto alrededor de la mención de un producto"""
+        try:
+            # Buscar líneas que contengan el product_id
+            lines = answer.split('\n')
+            for i, line in enumerate(lines):
+                if product_id in line:
+                    # Tomar línea actual y anterior/siguiente
+                    start = max(0, i - 1)
+                    end = min(len(lines), i + 2)
+                    context_lines = lines[start:end]
+                    return ' '.join(context_lines)
+            return ""
+        except Exception:
+            return ""
+
+    def log_feedback(self, query: str, answer: str, rating: int, user_id: str = "default"):
+        """Log de feedback con inferencia mejorada"""
+        try:
             user_profile = self._get_or_create_user_profile_demographic(user_id)
+            all_product_ids = self._extract_products_from_response(answer)
+            
+            # ✅ INFERENCIA MEJORADA
+            selected_product_id = self._infer_selected_product(answer, rating, query)
             
             entry = {
                 "timestamp": datetime.now().isoformat(), 
@@ -686,31 +827,39 @@ class WorkingAdvancedRAGAgent:
                 "user_age": user_profile.age,
                 "user_gender": user_profile.gender.value,
                 "user_country": user_profile.country,
+                "products_shown": all_product_ids,
+                "selected_product_id": selected_product_id,
+                "inference_method": "multi_strategy",
                 "domain": self.config.domain
             }
             
-            # Guardar en sistema de feedback
+            # Guardar y actualizar pesos
             fdir = Path("data/feedback")
             fdir.mkdir(exist_ok=True, parents=True)
             fname = fdir / f"feedback_gaming_{datetime.now().strftime('%Y%m%d')}.jsonl"
-            with open(fname, "a", encoding="utf-8") as fh:
+            with open(fname, "a", encoding='utf-8') as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
             
-            # 🔥 NUEVO: Actualizar perfil de usuario con este feedback
-            product_ids = [p.id for p in self._extract_products_from_response(answer)]
+            if selected_product_id:
+                self.retriever.update_feedback_weights_immediately(
+                    selected_product_id, 
+                    rating, 
+                    all_product_ids
+                )
+            
+            # Actualizar perfil de usuario
             user_profile.add_feedback_event(
                 query=query,
                 response=answer,
                 rating=rating,
-                products_shown=product_ids,
-                selected_product=product_ids[0] if product_ids else None
+                products_shown=all_product_ids,
+                selected_product=selected_product_id
             )
             
-            # Guardar perfil actualizado
             if self.enable_user_features and self.user_manager:
                 self.user_manager.save_user_profile(user_profile)
             
-            logger.info(f"📝 Feedback registrado para {user_id} (edad: {user_profile.age}, género: {user_profile.gender.value})")
+            logger.info(f"📝 Feedback: rating {rating} para {user_id} (producto: {selected_product_id})")
             
         except Exception as e:
             logger.error(f"Error registrando feedback: {e}")
@@ -814,3 +963,24 @@ class WorkingAdvancedRAGAgent:
             return time_diff.days <= days
         except:
             return False
+        
+    def _find_explicit_mention(self, answer: str, product_ids: List[str]) -> Optional[str]:
+        """Busca menciones explícitas de productos en la respuesta"""
+        try:
+            # Buscar patrones como "recomiendo el producto X", "te sugiero Y"
+            patterns = [
+                r'recomiendo.*?([A-Z0-9]{10})',
+                r'sugiero.*?([A-Z0-9]{10})', 
+                r'te recomiendo.*?([A-Z0-9]{10})',
+                r'producto.*?([A-Z0-9]{10})'
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, answer, re.IGNORECASE)
+                for match in matches:
+                    if match in product_ids:
+                        return match
+            
+            return None
+        except Exception:
+            return None
