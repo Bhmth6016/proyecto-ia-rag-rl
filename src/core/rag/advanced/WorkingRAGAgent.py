@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 from collections import deque
-
+import google.generativeai as genai
 # Local imports
 from src.core.data.user_manager import UserManager
 from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
@@ -217,7 +217,7 @@ class WorkingAdvancedRAGAgent:
         self.config = config or RAGConfig()
         self.system = get_system()
         self.retriever = getattr(self.system, "retriever", Retriever())
-        
+        self.llm_model = genai.GenerativeModel('gemini-pro')  
         # 🔥 CAMBIO 1: Inicialización condicional de UserManager y CollaborativeFilter
         self.enable_user_features = bool(self.config and getattr(self.config, "use_advanced_features", False))
 
@@ -253,7 +253,29 @@ class WorkingAdvancedRAGAgent:
         self._check_and_retrain()
         
         logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido Activado")
-
+    def _generate_with_llm(self, context: str, query: str, products: List[Product]) -> str:
+        prompt = f"""
+        Eres un experto en recomendaciones de videojuegos.
+        
+        CONTEXTO: {context}
+        PRODUCTOS: {[p.title for p in products]}
+        CONSULTA: {query}
+        
+        Genera una respuesta útil y atractiva recomendando estos productos.
+        Incluye:
+        - Títulos y plataformas
+        - Precios y ratings cuando estén disponibles  
+        - Explicación breve de por qué son relevantes
+        - Formato amigable con emojis
+        """
+        
+        try:
+            response = self.llm_model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            logger.error(f"Error LLM: {e}")
+            return self._generate_advanced_gaming_response(query, products)  # Fallback
+        
     def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
         """Procesa consultas de gaming de forma optimizada - VERSIÓN CORREGIDA"""
         try:
@@ -656,7 +678,7 @@ class WorkingAdvancedRAGAgent:
         if not products:
             return self._no_gaming_results_response(original_query)
         
-        return self._generate_advanced_gaming_response(original_query, products)
+        return self._generate_with_llm(context, original_query, products)
 
     def _generate_advanced_gaming_response(self, query: str, products: List[Product]) -> str:
         """Respuesta avanzada para gaming con formato enriquecido"""

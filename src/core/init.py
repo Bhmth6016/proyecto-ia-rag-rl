@@ -6,9 +6,10 @@ from src.core.data.product import Product
 from src.core.rag.basic.retriever import Retriever
 from src.core.config import settings
 import logging
-
+import google.generativeai as genai
 logger = logging.getLogger(__name__)
-
+from dotenv import load_dotenv
+load_dotenv()
 class SystemInitializer:
     _instance = None
 
@@ -23,6 +24,7 @@ class SystemInitializer:
             self._products = None
             self._retriever = None
             self._initialized = True
+            self.llm_model = genai.GenerativeModel("gemini-1.5-flash")
 
     @property
     def products(self) -> List[Product]:

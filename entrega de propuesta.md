@@ -56,13 +56,13 @@ Variables principales del dataset:
 * Numéricas: precio, rating.
 
 * Representaciones profundas: embeddings generados por Transformers.
-
+w
 Este dataset es adecuado para búsqueda semántica, recomendación híbrida y aprendizaje por refuerzo.
 
 ## 4. Arquitecturas que se planean implementar
 
 El proyecto incorporará diversas arquitecturas neuronales modernas:
-
+predecir categorias, eliminar interaccion con el usuario.
 ### 4.1 Transformers (para RAG y búsqueda semántica)
 
 * Modelos: MiniLM, DistilBERT o E5-small.
