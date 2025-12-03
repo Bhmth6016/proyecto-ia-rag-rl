@@ -481,7 +481,16 @@ class WorkingAdvancedRAGAgent:
                     product_objects.append(Product(id=candidate, title=f"Producto {candidate}"))
                 elif isinstance(candidate, ProductReference):
                     # Convertir ProductReference a Product si es necesario
-                    product_objects.append(candidate.to_product())
+                    if hasattr(candidate, 'to_product'):
+                        product = candidate.to_product()
+                        if product:
+                            product_objects.append(product)
+                    else:
+                        # Si candidate ya es un Product, usarlo directamente
+                        if hasattr(candidate, 'id') and hasattr(candidate, 'title'):
+                            product_objects.append(candidate)
+                        else:
+                            logger.warning(f"Candidato no convertible a Product: {type(candidate)}")
                 else:
                     product_objects.append(candidate)
 

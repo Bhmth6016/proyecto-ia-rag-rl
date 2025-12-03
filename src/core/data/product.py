@@ -579,18 +579,27 @@ class Product(BaseModel):
             return data
     
     @classmethod
-    def configure_ml(cls, enabled: bool = None, features: List[str] = None, categories: List[str] = None):
-        """Configura el procesamiento ML para la clase Product"""
-        if enabled is not None:
-            cls._ml_config['enabled'] = enabled and AutoProductConfig.ML_ENABLED
+    def configure_ml(cls, enabled: bool = False, features: Optional[List[str]] = None, 
+                    categories: Optional[List[str]] = None):
+        """Configura ML una sola vez"""
+        # Verificar si ya está configurado
+        if hasattr(cls, '_ml_configured') and cls._ml_configured:
+            return
         
-        if features is not None:
-            cls._ml_config['features'] = features
+        cls._ml_config = {
+            'enabled': enabled,
+            'features': features or ["category", "entities"],
+            'categories': categories or cls.DEFAULT_CATEGORIES
+        }
         
-        if categories is not None:
-            cls._ml_config['categories'] = categories
+        # Marcar como configurado
+        cls._ml_configured = True
         
-        logger.info(f"ML configuration updated: {cls._ml_config}")
+        # Loggear solo una vez
+        if enabled:
+            logger.info(f"✅ ML configuration: {cls._ml_config}")
+        else:
+            logger.debug(f"ML configuration (disabled): {cls._ml_config}")
     
     @property
     def product_id(self) -> str:

@@ -9,10 +9,21 @@ import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-
+from src.core.data.user_manager import UserManager
 from dotenv import load_dotenv
 import google.generativeai as genai
+# 🔥 IMPORTACIONES ACTUALIZADAS CON ML Y CLI
+from src.core.data.loader import DataLoader
+from src.core.rag.advanced.WorkingRAGAgent import WorkingAdvancedRAGAgent, RAGConfig
+from src.core.utils.logger import configure_root_logger, get_ml_logger, log_ml_metric
+from src.core.config import settings
+from src.core.data.product import Product
+from src.core.init import get_system
+from src.core.data.user_manager import UserManager
+from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 
+# 🔥 NUEVO: Importar CLI integrado
+from src.interfaces.cli import main as cli_main
 # Cargar variables de entorno
 load_dotenv()
 
@@ -127,7 +138,7 @@ def handle_rag_mode(args):
         
         # Inicializar sistema
         system = get_system()
-        user_manager = UserManager()
+        user_manager = UserManager(data_dir="data/users")
         
         # Crear usuario
         user_id = f"rag_user_{args.user_age}_{args.user_gender}_{args.user_country}"

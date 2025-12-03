@@ -81,6 +81,57 @@ class ProductReference:
         
         return result
     
+    # En la clase ProductReference, añade este método:
+
+    def to_product(self) -> Optional[Any]:
+        """
+        Convierte ProductReference de vuelta a Product si es posible.
+        
+        Returns:
+            Objeto Product original o None si no está disponible
+        """
+        if self.product is not None:
+            return self.product
+        
+        # 🔥 NUEVO: Intentar recrear Product desde metadata
+        try:
+            from src.core.data.product import Product
+            
+            # Extraer datos básicos del producto
+            product_data = {
+                'id': self.id,
+                'title': self.title,
+                'price': self.price
+            }
+            
+            # Añadir metadata si está disponible
+            if 'description' in self.metadata:
+                product_data['description'] = self.metadata['description']
+            if 'brand' in self.metadata:
+                product_data['brand'] = self.metadata['brand']
+            if 'categories' in self.metadata:
+                product_data['categories'] = self.metadata['categories']
+            
+            # Crear producto básico
+            product = Product(**product_data)
+            
+            # Añadir atributos ML si están disponibles
+            if 'embedding' in self.ml_features:
+                product.embedding = self.ml_features['embedding']
+            if 'predicted_category' in self.ml_features:
+                product.predicted_category = self.ml_features['predicted_category']
+            if self.is_ml_processed:
+                product.ml_processed = True
+            
+            return product
+            
+        except ImportError:
+            # Si Product no está disponible, devolver el objeto original
+            return self.product
+        except Exception as e:
+            logger.error(f"Error convirtiendo ProductReference a Product: {e}")
+            return None
+    
     def _extract_product_data(self, product: Any) -> Dict[str, Any]:
         """Extrae datos del producto de forma segura."""
         try:
