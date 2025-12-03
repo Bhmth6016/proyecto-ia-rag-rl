@@ -4,15 +4,16 @@ from __future__ import annotations
 import time
 import re
 import logging
-from typing import List, Dict, Optional
+import numpy as np  # 🔥 NUEVO: Importar numpy para cálculos de embeddings
+from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
 import json
 from collections import deque
 import google.generativeai as genai
+
 # Local imports
-# EN LA SECCIÓN DE IMPORTS, AÑADE:
 from src.core.data.product_reference import ProductReference
 from src.core.data.user_manager import UserManager
 from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
@@ -36,6 +37,10 @@ class RAGConfig:
     memory_window: int = 3
     domain: str = "videojuegos"
     use_advanced_features: bool = True
+    # 🔥 NUEVO: Configuración ML
+    use_ml_embeddings: bool = True  # Usar embeddings ML para scoring
+    ml_embedding_weight: float = 0.3  # Peso para embeddings ML
+    min_ml_similarity: float = 0.2  # Similitud mínima para considerar embeddings
 
 @dataclass
 class RAGResponse:
@@ -44,6 +49,9 @@ class RAGResponse:
     quality_score: float
     retrieved_count: int
     used_llm: bool = False
+    # 🔥 NUEVO: Información ML
+    ml_embeddings_used: int = 0
+    ml_scoring_method: str = "none"
 
     @property
     def text(self):
@@ -212,7 +220,80 @@ class GamingRLHFTrainer:
         return min(1.0, base_score)
 
 # ===============================
-# Main Agent - VERSIÓN FINAL OPTIMIZADA
+# 🔥 NUEVO: ML Embedding Scorer
+# ===============================
+class MLEmbeddingScorer:
+    """Clase para calcular similitud usando embeddings ML"""
+    
+    def __init__(self, retriever: Retriever = None):
+        self.retriever = retriever
+        self.cache = {}  # Cache de embeddings de queries
+        
+    def calculate_similarity(self, query: str, product: Product) -> float:
+        """Calcula similitud usando embeddings ML si están disponibles"""
+        try:
+            # Verificar si el producto tiene embedding
+            if not hasattr(product, 'embedding') or not product.embedding:
+                return 0.5  # Score neutro si no hay embedding
+            
+            # Obtener embedding de la query (usar cache)
+            query_embedding = self._get_query_embedding(query)
+            if query_embedding is None:
+                return 0.5
+            
+            # Convertir a numpy arrays
+            query_vec = np.array(query_embedding, dtype=np.float32)
+            product_vec = np.array(product.embedding, dtype=np.float32)
+            
+            # Verificar dimensiones
+            if len(query_vec) != len(product_vec):
+                logger.warning(f"Dimension mismatch: query={len(query_vec)}, product={len(product_vec)}")
+                return 0.5
+            
+            # Normalizar vectores
+            query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
+            product_norm = product_vec / (np.linalg.norm(product_vec) + 1e-10)
+            
+            # Calcular similitud coseno
+            similarity = np.dot(query_norm, product_norm)
+            
+            # Asegurar que esté en rango [0, 1]
+            similarity = max(0.0, min(1.0, float(similarity)))
+            
+            logger.debug(f"[ML Scoring] Similarity for product {getattr(product, 'id', 'unknown')}: {similarity:.3f}")
+            return similarity
+            
+        except Exception as e:
+            logger.error(f"[ML Scoring] Error calculating similarity: {e}")
+            return 0.5
+    
+    def _get_query_embedding(self, query: str) -> Optional[List[float]]:
+        """Obtiene embedding de la query usando el retriever o cache"""
+        try:
+            # Usar cache si está disponible
+            if query in self.cache:
+                return self.cache[query]
+            
+            # Si hay retriever, usar su embedder
+            if self.retriever and hasattr(self.retriever, 'embedder'):
+                embedding = self.retriever.embedder.embed_query(query)
+                self.cache[query] = embedding
+                return embedding
+            
+            # Fallback: usar embedding simple basado en palabras
+            return self._simple_query_embedding(query)
+            
+        except Exception as e:
+            logger.error(f"[ML Scoring] Error getting query embedding: {e}")
+            return None
+    
+    def _simple_query_embedding(self, query: str) -> List[float]:
+        """Embedding simple para fallback (no usar en producción)"""
+        # Solo para demostración - en producción usar modelo real
+        return [float(hash(word) % 100) / 100.0 for word in query.split()][:384]
+
+# ===============================
+# Main Agent - VERSIÓN FINAL CON ML
 # ===============================
 class WorkingAdvancedRAGAgent:
     def __init__(self, config: Optional[RAGConfig] = None):
@@ -265,6 +346,8 @@ class WorkingAdvancedRAGAgent:
             print(f"⚠️ Error inicializando CollaborativeFilter: {e}")
             self.collaborative_filter = None
 
+        # 🔥 NUEVO: Inicializar ML Embedding Scorer
+        self.ml_scorer = MLEmbeddingScorer(retriever=self.retriever)
         
         # Componentes optimizados
         self.evaluator = AdvancedEvaluator()
@@ -281,16 +364,21 @@ class WorkingAdvancedRAGAgent:
         self.last_retrain_time = 0
         self.rlhf_monitor = RLHFMonitor()
         
-        # 🔥 NUEVO: Configuración sistema híbrido
+        # 🔥 NUEVO: Configuración sistema híbrido con ML
         self.hybrid_weights = {
-            'collaborative': 0.6,  # Peso para feedback usuarios similares
-            'rag': 0.4            # Peso para RAG tradicional
+            'collaborative': 0.4,  # Peso para feedback usuarios similares
+            'rag': 0.3,            # Peso para RAG tradicional
+            'ml_embeddings': getattr(config, 'ml_embedding_weight', 0.3)  # Peso para ML
         }
+        
         self.min_similarity_threshold = 0.6  # Similitud mínima entre usuarios
         
         self._check_and_retrain()
         
-        logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido Activado")
+        logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido ML Activado")
+        logger.info(f"📊 Pesos híbridos: RAG={self.hybrid_weights['rag']}, "
+                   f"Collaborative={self.hybrid_weights['collaborative']}, "
+                   f"ML={self.hybrid_weights['ml_embeddings']}")
         
     def _generate_with_llm(self, context: str, query: str, products: List[Product]) -> str:
         prompt = f"""
@@ -356,8 +444,20 @@ class WorkingAdvancedRAGAgent:
 
             # 🔥 CAMBIO: Conversión a ProductReference durante la recuperación
             try:
-                raw_candidates = self.retriever.retrieve(enriched_query, k=self.config.max_retrieved)
+                # Configurar si usar embeddings ML en el retriever
+                use_ml_in_retriever = getattr(self.config, "use_ml_embeddings", True)
+                
+                raw_candidates = self.retriever.retrieve(
+                    enriched_query, 
+                    k=self.config.max_retrieved,
+                    use_ml_embeddings=use_ml_in_retriever  # 🔥 Pasar configuración ML
+                )
+                
                 logger.info(f"🔍 Candidatos recuperados: {len(raw_candidates)} - Tipo: {type(raw_candidates[0]) if raw_candidates else 'None'}")
+                
+                # 🔥 NUEVO: Contar productos con embeddings ML
+                ml_products_count = sum(1 for p in raw_candidates if hasattr(p, 'embedding') and p.embedding)
+                logger.info(f"📊 {ml_products_count}/{len(raw_candidates)} productos tienen embeddings ML")
                 
                 # 🔥 CONVERTIR A ProductReference
                 candidates = []
@@ -393,13 +493,17 @@ class WorkingAdvancedRAGAgent:
                 logger.error(f"❌ Error en filtrado: {e}")
                 relevant_candidates = product_objects
 
+            # 🔥 NUEVO: Contar embeddings después del filtrado
+            ml_filtered_count = sum(1 for p in relevant_candidates if hasattr(p, 'embedding') and p.embedding)
+
             # Reranking con manejo de errores
             try:
-                ranked = self._rerank_with_rlhf(relevant_candidates, query_text, profile)
-                logger.info(f"🔍 Productos rerankeados: {len(ranked)}")
+                ranked, ml_used = self._rerank_with_rlhf_and_ml(relevant_candidates, query_text, profile)
+                logger.info(f"🔍 Productos rerankeados: {len(ranked)} - ML usado: {ml_used}")
             except Exception as e:
                 logger.error(f"❌ Error en reranking: {e}")
                 ranked = relevant_candidates
+                ml_used = False
 
             final_products = ranked[:self.config.max_final]
             
@@ -420,7 +524,10 @@ class WorkingAdvancedRAGAgent:
                 products=final_products,  # 🔥 CORRECCIÓN: Devolver productos completos, no solo IDs
                 quality_score=quality_score,
                 retrieved_count=len(ranked),
-                used_llm=False
+                used_llm=False,
+                # 🔥 NUEVO: Información ML
+                ml_embeddings_used=ml_filtered_count,
+                ml_scoring_method="embedding_similarity" if ml_used else "none"
             )
             
         except Exception as e:
@@ -430,7 +537,9 @@ class WorkingAdvancedRAGAgent:
                 answer=self._error_response(str(query), e),
                 products=[],
                 quality_score=0.0,
-                retrieved_count=0
+                retrieved_count=0,
+                ml_embeddings_used=0,
+                ml_scoring_method="error"
             )
             
     def process_query_with_limit(self, query: str, limit: int = 5) -> List[Dict]:
@@ -507,8 +616,6 @@ class WorkingAdvancedRAGAgent:
         except Exception:
             return []
 
-
-
     def _filter_gaming_products(self, products: List, query: str) -> List:
         """Filtrado inteligente para productos de gaming - VERSIÓN CORREGIDA"""
         if not products:
@@ -562,24 +669,38 @@ class WorkingAdvancedRAGAgent:
         
         return filtered_products
 
-    def _rerank_with_rlhf(self, products: List, query: str, profile: Dict) -> List:
-        """Reranking híbrido con soporte RLHF y fallback seguro"""
+    def _rerank_with_rlhf_and_ml(self, products: List, query: str, profile: Dict) -> Tuple[List, bool]:
+        """🔥 NUEVO: Reranking híbrido con ML embeddings - Versión corregida"""
         if not products:
-            return products
+            return products, False
 
         # 🔥 Si el reranking está deshabilitado por configuración, devolver tal cual
         if not getattr(self.config, "enable_reranking", True):
             logger.debug("Reranking deshabilitado por configuración")
-            return products
+            return products, False
 
         try:
             # Asegurar que todos los productos son objetos Product
             scorable_products = []
+            ml_embeddings_available = 0
+            
             for product in products:
                 if isinstance(product, str):
+                    # Es un ID, crear producto mínimo
                     scorable_products.append(Product(id=product, title=f"Producto {product}"))
                 else:
                     scorable_products.append(product)
+                    # Contar productos con embeddings ML
+                    if hasattr(product, 'embedding') and product.embedding:
+                        ml_embeddings_available += 1
+
+            # 🔥 Determinar si usar embeddings ML
+            use_ml_embeddings = (
+                getattr(self.config, "use_ml_embeddings", True) and 
+                ml_embeddings_available > 0
+            )
+            
+            logger.info(f"📊 Reranking ML: {use_ml_embeddings} ({ml_embeddings_available}/{len(scorable_products)} productos tienen embeddings)")
 
             # Obtener perfil completo del usuario
             user_profile = self._get_or_create_user_profile_demographic(profile.get('user_id'))
@@ -606,29 +727,72 @@ class WorkingAdvancedRAGAgent:
                     logger.warning(f"Error en filtro colaborativo: {e}")
                     collaborative_scores = {}
 
-            # 3️⃣ Combinación híbrida con pesos configurables
+            # 3️⃣ 🔥 NUEVO: Score ML Embeddings
+            ml_scores = {}
+            if use_ml_embeddings:
+                for product in scorable_products:
+                    pid = getattr(product, 'id', 'unknown')
+                    if hasattr(product, 'embedding') and product.embedding:
+                        ml_score = self.ml_scorer.calculate_similarity(query, product)
+                        # Filtrar scores muy bajos
+                        if ml_score >= getattr(self.config, "min_ml_similarity", 0.2):
+                            ml_scores[pid] = ml_score
+                        else:
+                            ml_scores[pid] = 0.0
+                    else:
+                        ml_scores[pid] = 0.5  # Score neutro si no tiene embedding
+            
+            # 4️⃣ 🔥 NUEVO: Combinación híbrida con pesos dinámicos
             hybrid_scores = {}
             for product in scorable_products:
                 pid = getattr(product, 'id', 'unknown')
                 rag_score = rag_scores.get(pid, 0)
                 collab_score = collaborative_scores.get(pid, 0)
+                
+                # Calcular peso para ML dinámicamente
+                ml_weight = self.hybrid_weights['ml_embeddings'] if use_ml_embeddings else 0.0
+                
+                if use_ml_embeddings:
+                    ml_score = ml_scores.get(pid, 0.5)
+                else:
+                    ml_score = 0.0
+                    ml_weight = 0.0
+                
+                # 🔥 Ajustar pesos si no hay score colaborativo
+                if collab_score == 0 and self.collaborative_filter is None:
+                    # Redistribuir peso del colaborativo
+                    rag_weight = self.hybrid_weights['rag'] + self.hybrid_weights['collaborative'] * 0.5
+                    ml_weight = ml_weight + self.hybrid_weights['collaborative'] * 0.5
+                else:
+                    rag_weight = self.hybrid_weights['rag']
+                
+                # Calcular score híbrido
                 hybrid_score = (
-                    self.hybrid_weights.get('collaborative', 0.4) * collab_score +
-                    self.hybrid_weights.get('rag', 0.6) * rag_score
+                    rag_weight * rag_score +
+                    self.hybrid_weights['collaborative'] * collab_score +
+                    ml_weight * ml_score
                 )
+                
                 hybrid_scores[pid] = hybrid_score
 
-            # 4️⃣ Ordenar y retornar productos por score híbrido
+            # 5️⃣ Ordenar y retornar productos por score híbrido
             scored_products = [(hybrid_scores.get(getattr(p, 'id', 'unknown'), 0), p) for p in scorable_products]
             scored_products.sort(key=lambda x: x[0], reverse=True)
 
-            logger.info(f"🎯 Reranking híbrido: {len([s for s, _ in scored_products if s > 0])} productos con score positivo")
-            return [p for _, p in scored_products]
+            logger.info(f"🎯 Reranking híbrido con ML: {len([s for s, _ in scored_products if s > 0])} productos con score positivo")
+            
+            return [p for _, p in scored_products], use_ml_embeddings
 
         except Exception as e:
-            logger.warning(f"Reranking híbrido falló, usando RAG tradicional: {e}")
-            return self._rerank_fallback(products, query, profile)
-            
+            logger.warning(f"Reranking híbrido falló, usando fallback: {e}")
+            return self._rerank_fallback(products, query, profile), False
+
+    # 🔥 MANTENER método original para compatibilidad
+    def _rerank_with_rlhf(self, products: List, query: str, profile: Dict) -> List:
+        """Método legacy - usar la nueva versión con ML"""
+        ranked_products, _ = self._rerank_with_rlhf_and_ml(products, query, profile)
+        return ranked_products
+
     def _log_rlhf_data(self, query: str, response: List[Dict], score: float, user_id: str = None):
         """Genera datos de entrenamiento para RLHF - VERSIÓN SIMPLIFICADA"""
         try:

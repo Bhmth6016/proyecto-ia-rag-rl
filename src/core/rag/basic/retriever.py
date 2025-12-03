@@ -1,8 +1,8 @@
-from __future__ import annotations
 # src/core/rag/basic/retriever.py
 
+from __future__ import annotations
 import json
-import numpy as np
+import numpy as np  # ✅ Asegurar que numpy está importado
 import uuid
 import time
 import logging
@@ -77,9 +77,12 @@ class Retriever:
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
         embedding_model: str = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
         device: str = getattr(settings, "DEVICE", "cpu"),
+        # 🔥 NUEVO: Configuración ML
+        use_product_embeddings: bool = False  # Usar embeddings propios de Product
     ):
         logger.info(f"Initializing Retriever (store exists: {Path(index_path).exists()})")
         logger.info(f"Using Chroma version: {'NEW' if CHROMA_NEW else 'OLD'}")
+        logger.info(f"ML Embeddings: {'Enabled' if use_product_embeddings else 'Disabled'}")
 
         self.index_path = Path(index_path).resolve()
         logger.info(f"Initializing Retriever with index path: {self.index_path}")
@@ -88,6 +91,9 @@ class Retriever:
 
         self.embedder_name = embedding_model
         self.device = device
+        
+        # 🔥 NUEVO: Configuración ML
+        self.use_product_embeddings = use_product_embeddings
 
         self.embedder = HuggingFaceEmbeddings(
             model_name=self.embedder_name,
@@ -101,6 +107,41 @@ class Retriever:
         self.store = None
         self._ensure_store_loaded()
         self.feedback_weights = self._load_feedback_weights()
+
+    # ------------------------------------------------------------
+    # 🔥 NUEVO MÉTODO: Similaridad con embeddings propios
+    # ------------------------------------------------------------
+    def _calculate_similarity_with_embeddings(self, query: str, product: Product) -> float:
+        """Calcula similitud usando embeddings propios si están disponibles"""
+        try:
+            # Verificar si el producto tiene embedding y si está configurado para usarlo
+            if self.use_product_embeddings and hasattr(product, 'embedding') and product.embedding:
+                logger.debug(f"[Embedding Similarity] Product {product.id} tiene embedding propio")
+                
+                # Asegurar que el embedding sea un array numpy
+                product_embedding = np.array(product.embedding, dtype=np.float32)
+                
+                # Generar embedding para la query
+                query_embedding = np.array(self.embedder.embed_query(query), dtype=np.float32)
+                
+                # Normalizar vectores
+                query_norm = query_embedding / np.linalg.norm(query_embedding)
+                product_norm = product_embedding / np.linalg.norm(product_embedding)
+                
+                # Calcular similitud coseno
+                similarity = np.dot(query_norm, product_norm)
+                
+                # Asegurar que esté en rango [0, 1]
+                similarity = max(0.0, min(1.0, float(similarity)))
+                
+                logger.debug(f"[Embedding Similarity] Similitud: {similarity:.3f}")
+                return similarity
+                
+        except Exception as e:
+            logger.debug(f"[Embedding Similarity] Error usando embeddings propios: {e}")
+        
+        # Fallback al método original
+        return self._score(query, product)
 
     # ------------------------------------------------------------
     # Ensure store loaded
@@ -121,11 +162,36 @@ class Retriever:
                         )
 
                     logger.info("✅ Chroma store loaded successfully")
+                    
+                    # 🔥 NUEVO: Verificar si el índice tiene metadata ML
+                    self._check_ml_capabilities()
+                    
                 else:
                     logger.warning("⚠️  No index found, need to build first")
             except Exception as e:
                 logger.error(f"❌ Error loading Chroma store: {e}")
                 self.store = None
+
+    def _check_ml_capabilities(self):
+        """Verifica si el índice Chroma tiene capacidades ML"""
+        try:
+            if hasattr(self.store, '_collection'):
+                collection = self.store._collection
+                metadata = collection.metadata or {}
+                
+                if metadata.get("ml_enhanced") == "true":
+                    logger.info("✅ Índice Chroma tiene capacidades ML habilitadas")
+                    self.use_product_embeddings = True
+                    
+                    # Contar documentos con embeddings ML
+                    sample = collection.get(limit=100)
+                    if sample and sample.get('metadatas'):
+                        ml_count = sum(1 for m in sample['metadatas'] 
+                                     if m.get('has_embedding', False))
+                        logger.info(f"📊 {ml_count}/{len(sample['metadatas'])} documentos tienen embeddings ML")
+                
+        except Exception as e:
+            logger.debug(f"No se pudo verificar capacidades ML: {e}")
 
     # Compatible con LangChain retriever
     def as_retriever(self, search_kwargs=None):
@@ -191,12 +257,17 @@ class Retriever:
         filters: Optional[Dict] = None,
         min_similarity: float = 0.3,
         top_k: Optional[int] = None,
+        # 🔥 NUEVO: Parámetro para usar embeddings ML
+        use_ml_embeddings: Optional[bool] = None
     ):
         """Compatibilidad con deepeval: aceptar top_k además de k."""
         try:
             # --- compatibilidad ---
             if top_k is not None:
                 k = top_k
+            
+            # 🔥 NUEVO: Determinar si usar embeddings ML
+            use_ml = use_ml_embeddings if use_ml_embeddings is not None else self.use_product_embeddings
 
             self._ensure_store_loaded()
 
@@ -224,7 +295,11 @@ class Retriever:
 
             scored = []
             for p in products:
-                base_score = self._score(query, p)
+                # 🔥 NUEVO: Usar embeddings ML si está habilitado
+                if use_ml:
+                    base_score = self._calculate_similarity_with_embeddings(query, p)
+                else:
+                    base_score = self._score(query, p)
 
                 if base_score < min_similarity:
                     continue
@@ -240,8 +315,11 @@ class Retriever:
             if scored:
                 first_product = scored[0][1]
                 product_type = type(first_product).__name__
-                logger.info(f"[Retriever] Returning {min(k, len(scored))} objects of type: {product_type}")
-
+                
+                # 🔥 NUEVO: Información sobre método usado
+                method = "ML Embeddings" if use_ml else "Text Similarity"
+                logger.info(f"[Retriever] Returning {min(k, len(scored))} objects using {method}")
+                
                 # Debug: verificar los primeros 3 resultados
                 for i, (score, p) in enumerate(scored[:3]):
                     if hasattr(p, "id") and hasattr(p, "title"):
@@ -261,7 +339,6 @@ class Retriever:
             else:
                 logger.warning("[Retriever] No scored products to return")
                 return []
-
 
         except Exception as e:
             logger.error(f"❌ Retrieval error: {e}")
@@ -343,6 +420,7 @@ class Retriever:
                 except:
                     return default
 
+            # 🔥 NUEVO: Extraer información ML de metadata
             product_data = {
                 "id": doc.metadata.get("id", str(uuid.uuid4())),
                 "title": doc.metadata.get("title", "Untitled Product"),
@@ -356,10 +434,38 @@ class Retriever:
                 }
             }
 
+            # 🔥 NUEVO: Recuperar embeddings ML si existen
+            if doc.metadata.get("has_embedding"):
+                product_data["ml_processed"] = True
+                
+                # Intentar recuperar embedding serializado
+                if doc.metadata.get("product_embedding"):
+                    try:
+                        import base64
+                        import pickle
+                        embedding_str = doc.metadata.get("product_embedding")
+                        serialized = base64.b64decode(embedding_str.encode('utf-8'))
+                        embedding = pickle.loads(serialized)
+                        product_data["embedding"] = embedding.tolist()
+                        product_data["embedding_model"] = doc.metadata.get("embedding_model", "unknown")
+                    except Exception as e:
+                        logger.debug(f"No se pudo recuperar embedding ML: {e}")
+            
+            # 🔥 NUEVO: Recuperar otras informaciones ML
+            if doc.metadata.get("predicted_category"):
+                product_data["predicted_category"] = doc.metadata.get("predicted_category")
+            
+            if doc.metadata.get("extracted_entities"):
+                try:
+                    entities = safe_json_load(doc.metadata.get("extracted_entities"), {})
+                    product_data["extracted_entities"] = entities
+                except:
+                    pass
+
             # 🔥 AÑADE ESTA LÍNEA DE LOGGING PARA DEBUG:
             logger.debug(f"[_doc_to_product] Creando Product con id: {product_data['id']}")
             
-            return Product.from_dict(product_data)
+            return Product.from_dict(product_data, ml_enrich=False)  # Ya tiene ML procesado
 
         except Exception as e:
             logger.error(f"❌ Failed to convert doc -> product: {e}")
@@ -508,7 +614,7 @@ class Retriever:
             logger.info(f"📝 Creating {len(documents)} documents")
 
             if CHROMA_NEW:
-    # Versión nueva: NO usa embedding_function aquí
+                # Versión nueva: NO usa embedding_function aquí
                 self.store = Chroma.from_documents(
                     documents=documents,
                     persist_directory=str(self.index_path),
@@ -600,6 +706,7 @@ class Retriever:
                 
         except Exception as e:
             logger.error(f"Error guardando pesos de feedback: {e}")
+
     def _update_feedback_weights(self, doc_ids: List[str], positive: bool = True):
         """Actualiza pesos de feedback de forma segura y con clipping"""
         try:
