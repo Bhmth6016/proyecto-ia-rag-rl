@@ -1,0 +1,110 @@
+{
+  "timestamp": 1764767078.9734857,
+  "config": {
+    "mode": "all",
+    "ml_enabled": false,
+    "k_values": "5,10"
+  },
+  "results": {
+    "rag_without_ml": {
+      "time_seconds": 0.001585245132446289,
+      "latency_per_query_ms": 0.19815564155578613,
+      "queries_count": 8,
+      "precision@5": 0.425,
+      "recall@5": 0.359375,
+      "f1@5": 0.3894422310756972,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.5,
+      "avg_retrieved": 10.0,
+      "hit_rate@5": 0.5,
+      "hit_rate@10": 0.5,
+      "map@5": 0.359375,
+      "map@10": 0.5,
+      "coverage": 0.8421052631578947,
+      "serendipity@5": 0.425,
+      "novelty@5": 0.625,
+      "exploration_rate": 1.0,
+      "exploitation_rate": 0.0,
+      "config": {
+        "mode": "rag",
+        "ml_enabled": false
+      }
+    },
+    "rag_with_ml": {
+      "time_seconds": 0.002042055130004883,
+      "latency_per_query_ms": 0.25525689125061035,
+      "queries_count": 8,
+      "precision@5": 0.425,
+      "recall@5": 0.359375,
+      "f1@5": 0.3894422310756972,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.5,
+      "avg_retrieved": 10.0,
+      "hit_rate@5": 0.5,
+      "hit_rate@10": 0.5,
+      "map@5": 0.359375,
+      "map@10": 0.5,
+      "coverage": 0.8421052631578947,
+      "serendipity@5": 0.425,
+      "novelty@5": 0.625,
+      "exploration_rate": 1.0,
+      "exploitation_rate": 0.0,
+      "config": {
+        "mode": "rag",
+        "ml_enabled": true
+      }
+    },
+    "hybrid_without_ml": {
+      "time_seconds": 0.002858400344848633,
+      "latency_per_query_ms": 0.3573000431060791,
+      "queries_count": 8,
+      "precision@5": 0.425,
+      "recall@5": 0.359375,
+      "f1@5": 0.3894422310756972,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.41296948484938284,
+      "avg_retrieved": 5.0,
+      "hit_rate@5": 0.5,
+      "hit_rate@10": 0.5,
+      "map@5": 0.359375,
+      "map@10": 0.359375,
+      "coverage": 0.47368421052631576,
+      "serendipity@5": 0.425,
+      "novelty@5": 0.625,
+      "exploration_rate": 1.0,
+      "exploitation_rate": 0.0,
+      "config": {
+        "mode": "hybrid",
+        "ml_enabled": false,
+        "rag_weight": 0.7,
+        "collab_weight": 0.3
+      }
+    },
+    "hybrid_with_ml": {
+      "time_seconds": 0.003077268600463867,
+      "latency_per_query_ms": 0.3846585750579834,
+      "queries_count": 8,
+      "precision@5": 0.425,
+      "recall@5": 0.359375,
+      "f1@5": 0.3894422310756972,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.41296948484938284,
+      "avg_retrieved": 5.0,
+      "hit_rate@5": 0.5,
+      "hit_rate@10": 0.5,
+      "map@5": 0.359375,
+      "map@10": 0.359375,
+      "coverage": 0.47368421052631576,
+      "serendipity@5": 0.425,
+      "novelty@5": 0.625,
+      "exploration_rate": 1.0,
+      "exploitation_rate": 0.0,
+      "config": {
+        "mode": "hybrid",
+        "ml_enabled": true,
+        "rag_weight": 0.6,
+        "collab_weight": 0.4
+      }
+    }
+  }
+}
