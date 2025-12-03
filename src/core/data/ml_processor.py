@@ -4,14 +4,21 @@ Módulo separado para el preprocesador ML.
 Puede instalarse opcionalmente: pip install transformers sentence-transformers scikit-learn
 """
 
-from transformers import pipeline
-from sentence_transformers import SentenceTransformer
-from sklearn.feature_extraction.text import TfidfVectorizer
-import numpy as np
-from typing import List, Dict, Any, Optional
 import logging
+from typing import List, Dict, Any, Optional
+import numpy as np
+
+# 🔥 NUEVO: Importaciones seguras para evitar errores circulares
+try:
+    from src.core.data.product import Product  # ✅ OK
+    PRODUCT_AVAILABLE = True
+except ImportError:
+    # Fallback: Product no disponible, usar tipos básicos
+    Product = Dict[str, Any]  # Type hint alternativo
+    PRODUCT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
 
 class ProductDataPreprocessor:
     """
@@ -24,7 +31,8 @@ class ProductDataPreprocessor:
         categories: List[str] = None,
         use_gpu: bool = False,
         tfidf_max_features: int = 50,
-        embedding_model: str = 'sentence-transformers/all-mpnet-base-v2'
+        embedding_model: str = 'sentence-transformers/all-mpnet-base-v2',
+        verbose: bool = False
     ):
         """
         Inicializa el preprocesador con modelos ML.
@@ -34,6 +42,7 @@ class ProductDataPreprocessor:
             use_gpu: Si es True, intenta usar GPU para inferencia
             tfidf_max_features: Número máximo de features para TF-IDF
             embedding_model: Modelo de Sentence Transformers a usar
+            verbose: Si es True, muestra logs detallados de inicialización
         """
         self.categories = categories or [
             "Electronics", "Home & Kitchen", "Clothing & Accessories", 
@@ -42,23 +51,65 @@ class ProductDataPreprocessor:
         ]
         
         self.device = 0 if use_gpu else -1
+        self.verbose = verbose
+        
+        # 🔥 NUEVO: Importación condicional de librerías ML
+        self._import_ml_libraries()
         
         # Inicializar modelos (lazy loading en métodos)
         self._zero_shot_classifier = None
         self._ner_pipeline = None
         self._embedding_model = None
-        self.tfidf_vectorizer = TfidfVectorizer(
-            stop_words="english", 
-            max_features=tfidf_max_features,
-            ngram_range=(1, 2)
-        )
+        
+        # Inicializar vectorizador TF-IDF solo si sklearn está disponible
+        if self.sklearn_available:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            self.tfidf_vectorizer = TfidfVectorizer(
+                stop_words="english", 
+                max_features=tfidf_max_features,
+                ngram_range=(1, 2)
+            )
+        else:
+            self.tfidf_vectorizer = None
+            logger.warning("scikit-learn no disponible, TF-IDF deshabilitado")
         
         self.embedding_model_name = embedding_model
         
         # Cache para embeddings frecuentes
         self._embedding_cache = {}
         
-        logger.info(f"ProductDataPreprocessor inicializado con {len(self.categories)} categorías")
+        if verbose:
+            logger.info(f"ProductDataPreprocessor inicializado con {len(self.categories)} categorías")
+            logger.info(f"Transformers disponible: {self.transformers_available}")
+            logger.info(f"Sentence Transformers disponible: {self.sentence_transformers_available}")
+            logger.info(f"scikit-learn disponible: {self.sklearn_available}")
+
+    def _import_ml_libraries(self):
+        """Importa librerías ML de forma condicional."""
+        self.transformers_available = False
+        self.sentence_transformers_available = False
+        self.sklearn_available = False
+        
+        # 🔥 NUEVO: Intentar importar transformers
+        try:
+            from transformers import pipeline
+            self.transformers_available = True
+        except ImportError:
+            logger.warning("transformers no disponible. Zero-shot y NER deshabilitados.")
+        
+        # 🔥 NUEVO: Intentar importar sentence-transformers
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.sentence_transformers_available = True
+        except ImportError:
+            logger.warning("sentence-transformers no disponible. Embeddings deshabilitados.")
+        
+        # 🔥 NUEVO: Intentar importar scikit-learn
+        try:
+            import sklearn
+            self.sklearn_available = True
+        except ImportError:
+            logger.warning("scikit-learn no disponible. TF-IDF deshabilitado.")
     
     # --------------------------------------------------
     # Propiedades para lazy loading de modelos
@@ -67,14 +118,16 @@ class ProductDataPreprocessor:
     @property
     def zero_shot_classifier(self):
         """Obtiene el clasificador zero-shot (lazy loading)"""
-        if self._zero_shot_classifier is None:
+        if self._zero_shot_classifier is None and self.transformers_available:
             try:
+                from transformers import pipeline
                 self._zero_shot_classifier = pipeline(
                     "zero-shot-classification", 
                     model="facebook/bart-large-mnli",
                     device=self.device
                 )
-                logger.info("Zero-shot classifier cargado")
+                if self.verbose:
+                    logger.info("Zero-shot classifier cargado")
             except Exception as e:
                 logger.error(f"Error cargando zero-shot classifier: {e}")
                 self._zero_shot_classifier = None
@@ -83,15 +136,17 @@ class ProductDataPreprocessor:
     @property
     def ner_pipeline(self):
         """Obtiene el pipeline NER (lazy loading)"""
-        if self._ner_pipeline is None:
+        if self._ner_pipeline is None and self.transformers_available:
             try:
+                from transformers import pipeline
                 self._ner_pipeline = pipeline(
                     "ner", 
                     model="dslim/bert-base-NER",
                     aggregation_strategy="simple",
                     device=self.device
                 )
-                logger.info("NER pipeline cargado")
+                if self.verbose:
+                    logger.info("NER pipeline cargado")
             except Exception as e:
                 logger.error(f"Error cargando NER pipeline: {e}")
                 self._ner_pipeline = None
@@ -100,12 +155,14 @@ class ProductDataPreprocessor:
     @property
     def embedding_model(self):
         """Obtiene el modelo de embeddings (lazy loading)"""
-        if self._embedding_model is None:
+        if self._embedding_model is None and self.sentence_transformers_available:
             try:
+                from sentence_transformers import SentenceTransformer
                 self._embedding_model = SentenceTransformer(self.embedding_model_name)
                 if self.device == 0:
                     self._embedding_model = self._embedding_model.to('cuda')
-                logger.info(f"Embedding model cargado: {self.embedding_model_name}")
+                if self.verbose:
+                    logger.info(f"Embedding model cargado: {self.embedding_model_name}")
             except Exception as e:
                 logger.error(f"Error cargando embedding model: {e}")
                 self._embedding_model = None
@@ -132,40 +189,47 @@ class ProductDataPreprocessor:
             full_text = f"{title}. {description}".strip()
             
             if not full_text:
-                logger.warning("Producto sin texto para procesamiento ML")
+                if self.verbose:
+                    logger.warning("Producto sin texto para procesamiento ML")
                 return product_data
             
             enriched_data = product_data.copy()
             
             # 1. Clasificación Zero-Shot para categorías
-            predicted_category = self._predict_category_zero_shot(full_text)
-            if predicted_category:
-                enriched_data['predicted_category'] = predicted_category
-                if 'categories' not in enriched_data or not enriched_data['categories']:
-                    enriched_data['categories'] = [predicted_category]
-                elif predicted_category not in enriched_data['categories']:
-                    enriched_data['categories'].append(predicted_category)
+            if self.transformers_available:
+                predicted_category = self._predict_category_zero_shot(full_text)
+                if predicted_category:
+                    enriched_data['predicted_category'] = predicted_category
+                    if 'categories' not in enriched_data or not enriched_data['categories']:
+                        enriched_data['categories'] = [predicted_category]
+                    elif predicted_category not in enriched_data['categories']:
+                        enriched_data['categories'].append(predicted_category)
             
             # 2. Extracción de entidades con NER
-            entities = self._extract_entities_ner(full_text)
-            if entities:
-                enriched_data['extracted_entities'] = entities
-                if 'ORG' in entities and entities['ORG']:
-                    enriched_data['brand'] = entities['ORG'][0]
-                if 'PRODUCT' in entities and entities['PRODUCT']:
-                    enriched_data['model'] = entities['PRODUCT'][0]
+            if self.transformers_available:
+                entities = self._extract_entities_ner(full_text)
+                if entities:
+                    enriched_data['extracted_entities'] = entities
+                    if 'ORG' in entities and entities['ORG']:
+                        enriched_data['brand'] = entities['ORG'][0]
+                    if 'PRODUCT' in entities and entities['PRODUCT']:
+                        enriched_data['model'] = entities['PRODUCT'][0]
             
             # 3. Generación de tags con TF-IDF
-            if hasattr(self, '_tfidf_fitted') and self._tfidf_fitted:
+            if self.sklearn_available and hasattr(self, '_tfidf_fitted') and self._tfidf_fitted:
                 tags = self._generate_tags_tfidf(full_text)
                 if tags:
-                    enriched_data.setdefault('tags', []).extend(tags[:5])
+                    existing_tags = enriched_data.setdefault('tags', [])
+                    for tag in tags[:5]:
+                        if tag not in existing_tags:
+                            existing_tags.append(tag)
             
             # 4. Generación de embedding semántico
-            embedding = self._generate_embedding(full_text)
-            if embedding is not None:
-                enriched_data['embedding'] = embedding
-                enriched_data['embedding_model'] = self.embedding_model_name
+            if self.sentence_transformers_available:
+                embedding = self._generate_embedding(full_text)
+                if embedding is not None:
+                    enriched_data['embedding'] = embedding
+                    enriched_data['embedding_model'] = self.embedding_model_name
             
             return enriched_data
             
@@ -233,6 +297,10 @@ class ProductDataPreprocessor:
     
     def fit_tfidf(self, descriptions: List[str]) -> None:
         """Entrena el vectorizador TF-IDF con descripciones de productos."""
+        if not self.sklearn_available or self.tfidf_vectorizer is None:
+            logger.warning("TF-IDF no disponible (scikit-learn no instalado)")
+            return
+        
         try:
             valid_descriptions = [desc for desc in descriptions if desc and isinstance(desc, str)]
             
@@ -243,7 +311,8 @@ class ProductDataPreprocessor:
             self.tfidf_vectorizer.fit(valid_descriptions)
             self._tfidf_fitted = True
             
-            logger.info(f"TF-IDF entrenado con {len(valid_descriptions)} descripciones")
+            if self.verbose:
+                logger.info(f"TF-IDF entrenado con {len(valid_descriptions)} descripciones")
             
         except Exception as e:
             logger.error(f"Error entrenando TF-IDF: {e}")
@@ -251,7 +320,10 @@ class ProductDataPreprocessor:
     
     def _generate_tags_tfidf(self, text: str) -> List[str]:
         """Genera tags usando TF-IDF."""
-        if not hasattr(self, '_tfidf_fitted') or not self._tfidf_fitted:
+        if (not self.sklearn_available or 
+            self.tfidf_vectorizer is None or 
+            not hasattr(self, '_tfidf_fitted') or 
+            not self._tfidf_fitted):
             return []
         
         try:
@@ -278,6 +350,8 @@ class ProductDataPreprocessor:
         
         cache_key = hash(text)
         if cache_key in self._embedding_cache:
+            if self.verbose:
+                logger.debug(f"Embedding encontrado en cache para texto de {len(text)} chars")
             return self._embedding_cache[cache_key]
         
         try:
@@ -299,22 +373,29 @@ class ProductDataPreprocessor:
     def preprocess_batch(self, products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Procesa un lote de productos de manera eficiente."""
         try:
-            descriptions = []
-            for product in products:
-                title = product.get('title', '')
-                desc = product.get('description', '')
-                full_text = f"{title}. {desc}".strip()
-                if full_text:
-                    descriptions.append(full_text)
+            # Preparar descripciones para TF-IDF
+            if self.sklearn_available:
+                descriptions = []
+                for product in products:
+                    title = product.get('title', '')
+                    desc = product.get('description', '')
+                    full_text = f"{title}. {desc}".strip()
+                    if full_text:
+                        descriptions.append(full_text)
+                
+                if descriptions:
+                    self.fit_tfidf(descriptions)
             
-            if descriptions:
-                self.fit_tfidf(descriptions)
-            
+            # Procesar productos individualmente
             processed_products = []
             for i, product in enumerate(products):
                 try:
                     processed = self.preprocess_product(product)
                     processed_products.append(processed)
+                    
+                    if self.verbose and (i + 1) % 100 == 0:
+                        logger.info(f"Procesados {i + 1}/{len(products)} productos")
+                        
                 except Exception as e:
                     logger.error(f"Error procesando producto {i}: {e}")
                     processed_products.append(product)
@@ -328,13 +409,17 @@ class ProductDataPreprocessor:
     def get_model_info(self) -> Dict[str, Any]:
         """Obtiene información sobre los modelos cargados."""
         info = {
+            'transformers_available': self.transformers_available,
+            'sentence_transformers_available': self.sentence_transformers_available,
+            'sklearn_available': self.sklearn_available,
             'zero_shot_classifier_loaded': self._zero_shot_classifier is not None,
             'ner_pipeline_loaded': self._ner_pipeline is not None,
             'embedding_model_loaded': self._embedding_model is not None,
             'tfidf_fitted': getattr(self, '_tfidf_fitted', False),
             'embedding_model_name': self.embedding_model_name,
             'categories_count': len(self.categories),
-            'embedding_cache_size': len(self._embedding_cache)
+            'embedding_cache_size': len(self._embedding_cache),
+            'verbose_mode': self.verbose
         }
         
         return info
@@ -343,3 +428,58 @@ class ProductDataPreprocessor:
         """Limpia la cache de embeddings."""
         self._embedding_cache.clear()
         logger.info("Cache de embeddings limpiado")
+
+    # 🔥 NUEVO: Método para verificar dependencias
+    def check_dependencies(self) -> Dict[str, bool]:
+        """
+        Verifica si todas las dependencias ML están instaladas.
+        
+        Returns:
+            Dict con estado de cada dependencia
+        """
+        import importlib.util
+        
+        dependencies = {
+            'transformers': self.transformers_available,
+            'sentence_transformers': self.sentence_transformers_available,
+            'scikit_learn': self.sklearn_available,
+            'numpy': True  # Ya importado al inicio
+        }
+        
+        return dependencies
+
+    # 🔥 NUEVO: Método de utilidad para procesar objetos Product
+    def process_product_object(self, product: Any) -> Optional[Dict[str, Any]]:
+        """
+        Procesa un objeto Product y devuelve diccionario enriquecido.
+        
+        Args:
+            product: Objeto Product o diccionario con datos de producto
+            
+        Returns:
+            Diccionario enriquecido o None si hay error
+        """
+        try:
+            if PRODUCT_AVAILABLE and isinstance(product, Product):
+                # Convertir objeto Product a diccionario
+                product_dict = {
+                    'id': product.id,
+                    'title': getattr(product, 'title', ''),
+                    'description': getattr(product, 'description', ''),
+                    'price': getattr(product, 'price', 0.0),
+                    'brand': getattr(product, 'brand', ''),
+                    'categories': getattr(product, 'categories', []),
+                    'tags': getattr(product, 'tags', []),
+                    'features': getattr(product, 'features', {})
+                }
+            elif isinstance(product, dict):
+                product_dict = product
+            else:
+                logger.error(f"Tipo de producto no soportado: {type(product)}")
+                return None
+            
+            return self.preprocess_product(product_dict)
+            
+        except Exception as e:
+            logger.error(f"Error procesando objeto producto: {e}")
+            return None

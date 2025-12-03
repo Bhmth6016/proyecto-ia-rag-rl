@@ -23,6 +23,7 @@ class FeedbackProcessor:
     - Generar failed_queries.log solo con feedback < 4
     - Generar success_queries.log solo con feedback >= 4
     - Trabaja directamente con 'query' y 'response'
+    - 🔥 NUEVO: Tracking de métricas ML para análisis de rendimiento
     """
 
     def __init__(
@@ -31,9 +32,15 @@ class FeedbackProcessor:
         max_workers: int = 4,
         batch_size: int = 10,
         flush_interval: float = 5.0,
+        track_ml_metrics: bool = True,  # 🔥 NUEVO: Habilitar tracking ML
     ):
         self.feedback_dir = Path(feedback_dir)
         self.feedback_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 🔥 NUEVO: Configuración de tracking ML
+        self.track_ml_metrics = track_ml_metrics
+        self.ml_metrics_log = Path("data/feedback/ml_metrics.log")
+        self.ml_metrics_log.parent.mkdir(parents=True, exist_ok=True)
 
         # Concurrencia
         self.lock = threading.Lock()
@@ -61,7 +68,7 @@ class FeedbackProcessor:
         self._flush_thread = threading.Thread(target=self._periodic_flush, daemon=True)
         self._flush_thread.start()
 
-        logger.info("FeedbackProcessor inicializado correctamente (sin traducción).")
+        logger.info(f"FeedbackProcessor inicializado correctamente (sin traducción). Track ML: {track_ml_metrics}")
 
     # ----------------------------------------------------------
     # CARGA DEL HISTORIAL
@@ -163,7 +170,7 @@ class FeedbackProcessor:
     # CREACIÓN DE REGISTROS
     # ----------------------------------------------------------
     def _create_failure_record(self, conv: Dict, source_file: str) -> Dict:
-        return {
+        record = {
             "timestamp": conv.get("timestamp"),
             "session_id": conv.get("session_id"),
             "query": conv["query"],
@@ -173,9 +180,15 @@ class FeedbackProcessor:
             "source_file": source_file,
             "processed": False
         }
+        
+        # 🔥 NUEVO: Añadir métricas ML si están presentes en la conversación
+        if "ml_metrics" in conv:
+            record["ml_metrics"] = conv["ml_metrics"]
+            
+        return record
 
     def _create_success_record(self, conv: Dict, source_file: str) -> Dict:
-        return {
+        record = {
             "timestamp": conv.get("timestamp"),
             "session_id": conv.get("session_id"),
             "query": conv["query"],
@@ -185,6 +198,12 @@ class FeedbackProcessor:
             "source_file": source_file,
             "processed": False
         }
+        
+        # 🔥 NUEVO: Añadir métricas ML si están presentes en la conversación
+        if "ml_metrics" in conv:
+            record["ml_metrics"] = conv["ml_metrics"]
+            
+        return record
 
     # ----------------------------------------------------------
     # EXTRAER PRODUCT ID
@@ -244,6 +263,9 @@ class FeedbackProcessor:
         try:
             rating = int(rating)
 
+            # 🔥 NUEVO: Extraer y procesar métricas ML del answer
+            ml_metrics = self._extract_ml_metrics(answer)
+            
             record = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "query": query,
@@ -251,9 +273,18 @@ class FeedbackProcessor:
                 "feedback": rating,
                 "processed": False
             }
+            
+            # 🔥 NUEVO: Añadir métricas ML al registro si están disponibles
+            if ml_metrics:
+                record["ml_metrics"] = ml_metrics
 
+            # Combinar con metadata adicional
+            extra_meta = extra_meta or {}
             if extra_meta:
                 record.update(extra_meta)
+                
+            # 🔥 NUEVO: Verificar si la respuesta usó ML
+            self._add_ml_tracking_info(answer, record)
 
             if rating < 4:
                 record["failure_reason"] = self._diagnose_failure(record)
@@ -262,6 +293,10 @@ class FeedbackProcessor:
                 record["selected_product_id"] = self._extract_product_id(answer)
                 self._write_feedback(record, is_success=True)
 
+            # 🔥 NUEVO: Registrar métricas ML separadamente para análisis
+            if self.track_ml_metrics and ml_metrics:
+                self._log_ml_metrics(record, ml_metrics)
+
             with self.lock:
                 self.feedback_buffer.append(record)
                 if len(self.feedback_buffer) >= self.batch_size:
@@ -269,6 +304,98 @@ class FeedbackProcessor:
 
         except Exception as e:
             logger.error(f"Error registrando feedback: {e}", exc_info=True)
+
+    def _add_ml_tracking_info(self, answer: Any, record: Dict):
+        """
+        Añade información de tracking ML basada en atributos del answer
+        """
+        if not self.track_ml_metrics:
+            return
+            
+        try:
+            # Verificar si la respuesta usó ML
+            if hasattr(answer, 'ml_scoring_method'):
+                record['ml_method'] = answer.ml_scoring_method
+                
+            if hasattr(answer, 'ml_embeddings_used'):
+                record['ml_embeddings_count'] = answer.ml_embeddings_used
+                
+            if hasattr(answer, 'ml_confidence_score'):
+                record['ml_confidence'] = answer.ml_confidence_score
+                
+            if hasattr(answer, 'collaborative_filter_weight'):
+                record['collab_filter_weight'] = answer.collaborative_filter_weight
+                
+            if hasattr(answer, 'rag_weight'):
+                record['rag_weight'] = answer.rag_weight
+                
+        except Exception as e:
+            logger.debug(f"No se pudieron extraer atributos ML del answer: {e}")
+
+    def _extract_ml_metrics(self, answer: Any) -> Optional[Dict[str, Any]]:
+        """
+        Extrae métricas ML del answer (puede ser string o objeto)
+        """
+        if not self.track_ml_metrics:
+            return None
+            
+        try:
+            ml_metrics = {}
+            
+            # Si el answer es un string, buscar patrones ML
+            if isinstance(answer, str):
+                patterns = {
+                    "ml_method": r"ML Method[:\s]*([\w_]+)",
+                    "embeddings_used": r"Embeddings[:\s]*(\d+)",
+                    "ml_score": r"ML Score[:\s]*([\d\.]+)",
+                    "hybrid_weights": r"Weights[:\s]*RAG=([\d\.]+), Collab=([\d\.]+)",
+                }
+                
+                for key, pattern in patterns.items():
+                    match = re.search(pattern, answer, re.IGNORECASE)
+                    if match:
+                        if key == "hybrid_weights" and len(match.groups()) == 2:
+                            ml_metrics["rag_weight"] = float(match.group(1))
+                            ml_metrics["collab_weight"] = float(match.group(2))
+                        else:
+                            ml_metrics[key] = match.group(1)
+            
+            # Si el answer tiene atributos, extraerlos
+            elif hasattr(answer, '__dict__'):
+                attrs = ['ml_scoring_method', 'ml_embeddings_used', 'ml_confidence_score',
+                        'collaborative_filter_weight', 'rag_weight']
+                for attr in attrs:
+                    if hasattr(answer, attr):
+                        value = getattr(answer, attr)
+                        if value is not None:
+                            ml_metrics[attr] = value
+            
+            return ml_metrics if ml_metrics else None
+            
+        except Exception as e:
+            logger.debug(f"Error extrayendo métricas ML: {e}")
+            return None
+
+    def _log_ml_metrics(self, record: Dict, ml_metrics: Dict):
+        """
+        Registra métricas ML en archivo separado para análisis
+        """
+        try:
+            ml_entry = {
+                "timestamp": record.get("timestamp"),
+                "session_id": record.get("session_id"),
+                "query": record.get("query", "")[:100],  # Primeros 100 chars
+                "feedback": record.get("feedback"),
+                "ml_metrics": ml_metrics,
+                "failure_reason": record.get("failure_reason"),
+                "selected_product_id": record.get("selected_product_id")
+            }
+            
+            with self.ml_metrics_log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(ml_entry, ensure_ascii=False) + "\n")
+                
+        except Exception as e:
+            logger.error(f"Error registrando métricas ML: {e}", exc_info=True)
 
     def _write_feedback(self, record: Dict, is_success: bool):
         log_file = self.success_queries_log if is_success else self.failed_queries_log
@@ -329,6 +456,65 @@ class FeedbackProcessor:
 
     def _today_file(self) -> Path:
         return self.feedback_dir / f"feedback_{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
+
+    # ----------------------------------------------------------
+    # ANÁLISIS ML (NUEVOS MÉTODOS)
+    # ----------------------------------------------------------
+    def get_ml_performance_report(self) -> Dict[str, Any]:
+        """
+        Genera un reporte de performance ML basado en métricas recolectadas
+        """
+        if not self.ml_metrics_log.exists():
+            return {"error": "No hay datos ML disponibles"}
+            
+        try:
+            ml_entries = []
+            with self.ml_metrics_log.open("r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        ml_entries.append(entry)
+                    except:
+                        continue
+            
+            if not ml_entries:
+                return {"total_ml_entries": 0}
+            
+            # Calcular métricas
+            total = len(ml_entries)
+            success_count = sum(1 for e in ml_entries if e.get("feedback", 0) >= 4)
+            failure_count = total - success_count
+            
+            # Métricas por método ML
+            methods = {}
+            for entry in ml_entries:
+                ml_metrics = entry.get("ml_metrics", {})
+                method = ml_metrics.get("ml_method", "unknown")
+                
+                if method not in methods:
+                    methods[method] = {"total": 0, "success": 0}
+                
+                methods[method]["total"] += 1
+                if entry.get("feedback", 0) >= 4:
+                    methods[method]["success"] += 1
+            
+            # Calcular éxito por método
+            for method, data in methods.items():
+                data["success_rate"] = data["success"] / data["total"] if data["total"] > 0 else 0
+            
+            return {
+                "total_ml_entries": total,
+                "success_rate": success_count / total if total > 0 else 0,
+                "methods_performance": methods,
+                "time_range": {
+                    "first": ml_entries[0].get("timestamp") if ml_entries else None,
+                    "last": ml_entries[-1].get("timestamp") if ml_entries else None
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generando reporte ML: {e}")
+            return {"error": str(e)}
 
     # ----------------------------------------------------------
     # CIERRE

@@ -1,12 +1,14 @@
 from __future__ import annotations
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
 import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 import hashlib
 import time
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
 from src.core.data.user_models import UserProfile
 from src.core.data.product import Product
 
@@ -17,9 +19,10 @@ class CollaborativeFilter:
     Filtro colaborativo para recomendaciones cruzadas entre usuarios similares
     """
     
-    def __init__(self, user_manager, min_similarity: float = 0.6):
+    def __init__(self, user_manager, min_similarity: float = 0.6, use_ml_features: bool = False):
         self.user_manager = user_manager
         self.min_similarity = min_similarity
+        self.use_ml_features = use_ml_features
         
         # Cache
         self.positive_feedback_cache: Dict[str, Dict[str, float]] = {}
@@ -34,9 +37,276 @@ class CollaborativeFilter:
         self.weight_history = []
         self.performance_history = []
         
-        print(f"[CollaborativeFilter] Pesos iniciales: {self.hybrid_weights}")
-
+        # 🔥 NUEVO: Modelo ML para embeddings (se inicializa cuando sea necesario)
+        self.ml_model: Optional[Any] = None
+        self.product_embeddings_cache: Dict[str, np.ndarray] = {}
         
+        print(f"[CollaborativeFilter] Pesos iniciales: {self.hybrid_weights}")
+        print(f"[CollaborativeFilter] ML Features habilitado: {use_ml_features}")
+
+    def _initialize_ml_model(self, embeddings: List[np.ndarray]) -> None:
+        """Inicializa el modelo ML para búsqueda de vecinos cercanos"""
+        if not self.use_ml_features or not embeddings:
+            return
+            
+        try:
+            # Usar NearestNeighbors para búsqueda de productos similares basados en embeddings
+            self.ml_model = NearestNeighbors(
+                n_neighbors=min(50, len(embeddings)),
+                metric='cosine',
+                algorithm='auto'
+            )
+            
+            # Ajustar el modelo con los embeddings disponibles
+            embeddings_array = np.array(embeddings)
+            self.ml_model.fit(embeddings_array)
+            logger.info("✅ Modelo ML inicializado para Collaborative Filter")
+            
+        except Exception as e:
+            logger.error(f"❌ Error inicializando modelo ML: {e}")
+            self.ml_model = None
+
+    def _calculate_ml_collaborative_score(self, product: Product, similar_users: List[UserProfile]) -> float:
+        """
+        Calcula score colaborativo usando embeddings y features ML
+        """
+        if not self.use_ml_features or not similar_users:
+            return 0.0
+            
+        try:
+            ml_score = 0.0
+            total_weight = 0.0
+            
+            # Verificar si el producto tiene embedding
+            if not hasattr(product, 'embedding') or not product.embedding:
+                return 0.0
+                
+            product_embedding = np.array(product.embedding)
+            
+            for user in similar_users:
+                # Obtener embeddings de productos que el usuario ha preferido
+                user_preferred_embeddings = self._get_user_preferred_embeddings(user)
+                
+                if user_preferred_embeddings:
+                    # Calcular similitud promedio con productos preferidos por el usuario
+                    similarities = []
+                    for user_embedding in user_preferred_embeddings:
+                        similarity = self._cosine_similarity(product_embedding, user_embedding)
+                        similarities.append(similarity)
+                    
+                    avg_similarity = np.mean(similarities) if similarities else 0.0
+                    
+                    # Ponderar por similitud del usuario con el usuario objetivo
+                    user_weight = 0.5  # Peso base, se podría ajustar según similitud de perfiles
+                    ml_score += avg_similarity * user_weight
+                    total_weight += user_weight
+            
+            # Normalizar el score
+            final_score = ml_score / total_weight if total_weight > 0 else 0.0
+            
+            # Aplicar transformación sigmoide para suavizar el score
+            return self._sigmoid(final_score * 3)  # Escalar y aplicar sigmoide
+            
+        except Exception as e:
+            logger.debug(f"Error calculando score ML para producto {getattr(product, 'id', 'unknown')}: {e}")
+            return 0.0
+
+    def _get_user_preferred_embeddings(self, user: UserProfile) -> List[np.ndarray]:
+        """
+        Obtiene embeddings de productos que el usuario ha preferido (feedback positivo)
+        """
+        embeddings = []
+        
+        try:
+            # Buscar productos con feedback positivo del usuario
+            for feedback in user.feedback_history:
+                if feedback.rating >= 4:  # Feedback positivo
+                    # Intentar obtener el producto y su embedding
+                    product_id = feedback.selected_product
+                    
+                    # Usar cache de embeddings para evitar múltiples consultas
+                    if product_id in self.product_embeddings_cache:
+                        embeddings.append(self.product_embeddings_cache[product_id])
+                    else:
+                        # Aquí necesitarías una forma de obtener el producto por ID
+                        # Esto dependerá de tu arquitectura
+                        # Por ahora, devolvemos lista vacía si no hay cache
+                        pass
+                        
+        except Exception as e:
+            logger.debug(f"Error obteniendo embeddings preferidos del usuario {user.user_id}: {e}")
+        
+        return embeddings
+
+    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """Calcula similitud coseno entre dos vectores"""
+        try:
+            dot_product = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+            
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+                
+            return dot_product / (norm1 * norm2)
+        except:
+            return 0.0
+
+    def _sigmoid(self, x: float) -> float:
+        """Función sigmoide para normalizar scores"""
+        return 1 / (1 + np.exp(-x))
+
+    def get_collaborative_scores(
+            self,
+            user_or_profile,
+            query_or_candidates,
+            target_user: Optional[UserProfile] = None,
+            query: Optional[str] = None,
+            candidate_products: Optional[List[Product]] = None,
+            max_similar_users: int = 8):
+        
+        # 🔥 CORRECCIÓN: Manejar caso cuando user_or_profile es None
+        if user_or_profile is None:
+            return {}
+            
+        # ---- CASO 1: llamado externo (DeepEval) ----
+        if isinstance(user_or_profile, str) and isinstance(query_or_candidates, list):
+            user_id = user_or_profile
+            product_ids = query_or_candidates
+
+            try:
+                # 🔥 CORRECCIÓN: Manejar caso cuando user_manager no está disponible
+                if self.user_manager is None:
+                    return {}
+                    
+                user = self.user_manager.get_user_profile(user_id)
+            except Exception as e:
+                logger.debug(f"No se pudo obtener perfil de usuario {user_id}: {e}")
+                return {}
+
+            if user is None:
+                return {}
+
+        # ---- CASO 2: llamado interno ----
+        else:
+            user = user_or_profile
+            target_user = user_or_profile
+            query = query_or_candidates
+
+        # ahora sigue tu lógica normal...
+        try:
+            similar_users = self.user_manager.find_similar_users(
+                target_user, self.min_similarity
+            )[:max_similar_users]
+
+            collaborative_scores = {}
+
+            if similar_users:
+                collaborative_scores = self._get_collaborative_from_similar_users(
+                    target_user, similar_users, query, candidate_products
+                )
+
+            if not collaborative_scores:
+                collaborative_scores = self._get_category_fallback_scores(
+                    target_user, query, candidate_products
+                )
+            
+            # 🔥 NUEVO: Aplicar scoring ML si está habilitado
+            if self.use_ml_features and candidate_products and similar_users:
+                collaborative_scores = self._apply_ml_scoring(
+                    collaborative_scores, candidate_products, similar_users
+                )
+
+            return collaborative_scores
+
+        except Exception as e:
+            logger.error(f"Error en filtro colaborativo: {e}")
+            return {}
+
+    def _apply_ml_scoring(self, collaborative_scores: Dict[str, float], 
+                         candidate_products: List[Product], 
+                         similar_users: List[UserProfile]) -> Dict[str, float]:
+        """
+        Aplica scoring ML a los scores colaborativos existentes
+        """
+        enhanced_scores = collaborative_scores.copy()
+        
+        for product in candidate_products:
+            product_id = getattr(product, 'id', None)
+            if not product_id:
+                continue
+                
+            # Calcular score ML
+            ml_score = self._calculate_ml_collaborative_score(product, similar_users)
+            
+            # Mezclar con score colaborativo existente
+            if product_id in enhanced_scores:
+                # Combinación ponderada: 70% colaborativo tradicional, 30% ML
+                enhanced_scores[product_id] = enhanced_scores[product_id] * 0.7 + ml_score * 0.3
+            else:
+                # Si no hay score colaborativo tradicional, usar solo ML (con peso reducido)
+                enhanced_scores[product_id] = ml_score * 0.3
+        
+        return enhanced_scores
+
+    def _get_collaborative_from_similar_users(self, target_user, similar_users, query, candidate_products):
+        """Lógica colaborativa con usuarios similares"""
+        collaborative_scores = defaultdict(float)
+        similarity_weights = defaultdict(float)
+        
+        for similar_user in similar_users:
+            similarity = target_user.calculate_similarity(similar_user)
+            
+            positive_feedback = self._get_positive_feedback_scores(similar_user, query)
+            
+            for product_id, feedback_score in positive_feedback.items():
+                collaborative_scores[product_id] += feedback_score * similarity
+                similarity_weights[product_id] += similarity
+        
+        return self._normalize_with_quality_filter(collaborative_scores, similarity_weights)
+
+    def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
+        """
+        Fallback: da scores basados en categorías preferidas del usuario
+        """
+        fallback_scores = {}
+        
+        try:
+            user_categories = set(user.preferred_categories)
+            
+            for product in products:
+                score = 0.0
+                
+                # Verificar categoría del producto
+                product_category = getattr(product, 'main_category', '').lower()
+                product_title = getattr(product, 'title', '').lower()
+                
+                # Score por categoría preferida
+                if any(cat in product_category for cat in user_categories):
+                    score += 0.3
+                
+                # Score por términos en título
+                query_terms = set(query.lower().split())
+                title_terms = set(product_title.split())
+                common_terms = query_terms & title_terms
+                
+                if common_terms:
+                    score += len(common_terms) * 0.1
+                
+                # Score por rating alto
+                rating = getattr(product, 'average_rating', 0)
+                if rating and rating >= 4.0:
+                    score += 0.2
+                
+                if score > 0:
+                    fallback_scores[product.id] = min(score, 1.0)
+            
+            logger.debug(f"🔄 Fallback categórico: {len(fallback_scores)} productos con score")
+            return fallback_scores
+            
+        except Exception as e:
+            logger.debug(f"Error en fallback categórico: {e}")
+            return {}
         
     def adjust_weights_dynamically(
             self,
@@ -228,125 +498,11 @@ class CollaborativeFilter:
         
         return feedback_scores
 
-    def get_collaborative_scores(
-            self,
-            user_or_profile,
-            query_or_candidates,
-            target_user: Optional[UserProfile] = None,
-            query: Optional[str] = None,
-            candidate_products: Optional[List[Product]] = None,
-            max_similar_users: int = 8):
-        
-        # 🔥 CORRECCIÓN: Manejar caso cuando user_or_profile es None
-        if user_or_profile is None:
-            return {}
-            
-        # ---- CASO 1: llamado externo (DeepEval) ----
-        if isinstance(user_or_profile, str) and isinstance(query_or_candidates, list):
-            user_id = user_or_profile
-            product_ids = query_or_candidates
+    
 
-            try:
-                # 🔥 CORRECCIÓN: Manejar caso cuando user_manager no está disponible
-                if self.user_manager is None:
-                    return {}
-                    
-                user = self.user_manager.get_user_profile(user_id)
-            except Exception as e:
-                logger.debug(f"No se pudo obtener perfil de usuario {user_id}: {e}")
-                return {}
+    
 
-            if user is None:
-                return {}
-
-        # ---- CASO 2: llamado interno ----
-        else:
-            user = user_or_profile
-            target_user = user_or_profile
-            query = query_or_candidates
-
-        # ahora sigue tu lógica normal...
-        try:
-            similar_users = self.user_manager.find_similar_users(
-                target_user, self.min_similarity
-            )[:max_similar_users]
-
-            collaborative_scores = {}
-
-            if similar_users:
-                collaborative_scores = self._get_collaborative_from_similar_users(
-                    target_user, similar_users, query, candidate_products
-                )
-
-            if not collaborative_scores:
-                collaborative_scores = self._get_category_fallback_scores(
-                    target_user, query, candidate_products
-                )
-
-            return collaborative_scores
-
-        except Exception as e:
-            logger.error(f"Error en filtro colaborativo: {e}")
-            return {}
-
-    def _get_collaborative_from_similar_users(self, target_user, similar_users, query, candidate_products):
-        """Lógica colaborativa con usuarios similares"""
-        collaborative_scores = defaultdict(float)
-        similarity_weights = defaultdict(float)
-        
-        for similar_user in similar_users:
-            similarity = target_user.calculate_similarity(similar_user)
-            
-            positive_feedback = self._get_positive_feedback_scores(similar_user, query)
-            
-            for product_id, feedback_score in positive_feedback.items():
-                collaborative_scores[product_id] += feedback_score * similarity
-                similarity_weights[product_id] += similarity
-        
-        return self._normalize_with_quality_filter(collaborative_scores, similarity_weights)
-
-    def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
-        """
-        Fallback: da scores basados en categorías preferidas del usuario
-        """
-        fallback_scores = {}
-        
-        try:
-            user_categories = set(user.preferred_categories)
-            
-            for product in products:
-                score = 0.0
-                
-                # Verificar categoría del producto
-                product_category = getattr(product, 'main_category', '').lower()
-                product_title = getattr(product, 'title', '').lower()
-                
-                # Score por categoría preferida
-                if any(cat in product_category for cat in user_categories):
-                    score += 0.3
-                
-                # Score por términos en título
-                query_terms = set(query.lower().split())
-                title_terms = set(product_title.split())
-                common_terms = query_terms & title_terms
-                
-                if common_terms:
-                    score += len(common_terms) * 0.1
-                
-                # Score por rating alto
-                rating = getattr(product, 'average_rating', 0)
-                if rating and rating >= 4.0:
-                    score += 0.2
-                
-                if score > 0:
-                    fallback_scores[product.id] = min(score, 1.0)
-            
-            logger.debug(f"🔄 Fallback categórico: {len(fallback_scores)} productos con score")
-            return fallback_scores
-            
-        except Exception as e:
-            logger.debug(f"Error en fallback categórico: {e}")
-            return {}
+    
     
     def _get_user_feedback_scores(self, user: UserProfile, query: str) -> Dict[str, float]:
         """
