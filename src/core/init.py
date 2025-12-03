@@ -29,10 +29,22 @@ class SystemInitializer:
             self._initialized = True
             self.llm_model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # 🔥 NUEVO: Configuración ML
-            self.ml_enabled = getattr(settings, "ML_ENABLED", False)
-            self.ml_features = getattr(settings, "ML_FEATURES", ["category", "entities"])
+            # 🔥 CORREGIDO: Solo una vez la configuración ML
+            from src.core.config import settings
+            self.ml_enabled = settings.ML_ENABLED
+            self.ml_features = settings.ML_FEATURES
             self.ml_models = {}
+            
+            print(f"[SystemInitializer] ML Enabled from settings: {self.ml_enabled}")
+            
+            # 🔥 NUEVO: Configuración específica para CollaborativeFilter
+            self.collaborative_ml_config = {
+                'use_ml_features': getattr(settings, "COLLABORATIVE_ML_ENABLED", True),
+                'ml_weight': getattr(settings, "ML_WEIGHT", 0.3),
+                'min_similar_users': getattr(settings, "MIN_SIMILAR_USERS", 3),
+                'ml_embedding_dim': getattr(settings, "ML_EMBEDDING_DIM", 768)
+            }
+            print(f"[SystemInitializer] ML Enabled from settings: {self.ml_enabled}")
             
             # 🔥 NUEVO: Configuración específica para CollaborativeFilter
             self.collaborative_ml_config = {

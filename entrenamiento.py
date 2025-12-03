@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 import sys
 from tqdm import tqdm
-import requests
+import json
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,6 +34,56 @@ class RLHFTrainingMonitor:
         per_example_time = 2  # 2 segundos por ejemplo
         return base_time + (dataset_size * per_example_time)
 
+def load_logs_as_dataset(success_log_path, failed_log_path):
+    """Carga los logs y crea un dataset en formato correcto"""
+    import pandas as pd
+    from datasets import Dataset
+    
+    success_data = []
+    failed_data = []
+    
+    # Cargar success logs
+    with open(success_log_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                try:
+                    data = json.loads(line)
+                    success_data.append({
+                        'query': data.get('query', ''),
+                        'response': data.get('response', ''),
+                        'labels': 1,  # Etiqueta positiva
+                        'score': 1.0
+                    })
+                except json.JSONDecodeError:
+                    continue
+    
+    # Cargar failed logs  
+    with open(failed_log_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                try:
+                    data = json.loads(line)
+                    failed_data.append({
+                        'query': data.get('query', ''),
+                        'response': data.get('response', ''),
+                        'labels': 0,  # Etiqueta negativa
+                        'score': 0.0
+                    })
+                except json.JSONDecodeError:
+                    continue
+    
+    # Combinar datos
+    all_data = success_data + failed_data
+    
+    if not all_data:
+        return None
+    
+    # Convertir a Dataset
+    df = pd.DataFrame(all_data)
+    dataset = Dataset.from_pandas(df)
+    
+    return dataset
+
 def optimized_rlhf_training():
     """Entrenamiento RLHF optimizado con monitoreo"""
     monitor = RLHFTrainingMonitor()
@@ -58,9 +108,10 @@ def optimized_rlhf_training():
             success_count = sum(1 for _ in f)
         with open(failed_log, 'r', encoding='utf-8') as f:
             failed_count = sum(1 for _ in f)
+        
         print("\n🔍 DIAGNÓSTICO DETALLADO DE DATOS:")
-    
-    # Verificar contenido real de los archivos
+        
+        # Verificar contenido real de los archivos
         with open(success_log, 'r', encoding='utf-8') as f:
             first_success = f.readline().strip()
             print(f"Primera línea success: {first_success[:100]}...")
@@ -90,17 +141,24 @@ def optimized_rlhf_training():
         logger.info("✅ Módulos importados correctamente")
         monitor.end_phase("Importación de módulos")
         
-        # FASE 3: Preparación del dataset (MODERADO: 10-30s)
+                # FASE 3: Preparación del dataset (MODERADO: 10-30s)
         monitor.start_phase("Preparación del dataset")
         
         trainer = RLHFTrainer(device="cpu")  # CPU para estabilidad
-        
-        # Preparar dataset con barra de progreso
-        logger.info("📚 Preparando dataset...")
+        logger.info("📚 Preparando dataset usando RLHFTrainer...")
+
+        # 🟢 CAMBIO IMPORTANTE AQUÍ
         dataset = trainer.prepare_rlhf_dataset_from_logs(failed_log, success_log)
-        
-        logger.info(f"📦 Dataset creado: {len(dataset)} ejemplos")
+
+        if dataset is None or len(dataset) == 0:
+            logger.error("❌ No se pudo crear el dataset desde los logs")
+            return False
+
+        logger.info(f"📦 Dataset creado correctamente: {len(dataset)} ejemplos")
+        logger.info(f"📊 Columnas del dataset: {dataset.column_names}")
+
         monitor.end_phase("Preparación del dataset")
+
         
         # FASE 4: ENTRENAMIENTO (LARGO: 5-15 minutos)
         if len(dataset) >= 3:
@@ -117,19 +175,22 @@ def optimized_rlhf_training():
             print("💡 Esto puede tomar varios minutos")
             print("📊 El progreso real se mostrará automáticamente...")
             
-            # ✅ ELIMINAR la simulación de épocas que causaba duplicación
-            # Entrenamiento REAL directamente
-            trainer.train(dataset, save_dir=models_dir)
-            
-            monitor.end_phase("Entrenamiento RLHF")
-            
-            # Entrenar con barra de progreso simulada
-            # (El entrenamiento real no muestra progreso fácilmente)
-            for epoch in range(3):
-                logger.info(f"📈 Época {epoch+1}/3 en progreso...")
-                time.sleep(2)  # Simular tiempo entre épocas
-            
             # Entrenamiento REAL
+            print(f"🎯 Iniciando entrenamiento con {len(dataset)} ejemplos...")
+            print("🔧 Tokenizando dataset...")
+            
+            # Asegurar que el dataset tiene las columnas correctas
+            logger.info(f"📋 Verificando dataset: {len(dataset)} ejemplos")
+            logger.info(f"📊 Columnas disponibles: {dataset.column_names}")
+            
+            # Verificar que tenemos columnas necesarias
+            required_columns = ['query', 'response', 'labels']
+            for col in required_columns:
+                if col not in dataset.column_names:
+                    logger.error(f"❌ Columna faltante: {col}")
+                    return False
+            
+            # Entrenar
             trainer.train(dataset, save_dir=models_dir)
             
             monitor.end_phase("Entrenamiento RLHF")
