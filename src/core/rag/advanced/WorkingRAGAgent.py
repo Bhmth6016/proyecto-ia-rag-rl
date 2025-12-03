@@ -12,6 +12,8 @@ import json
 from collections import deque
 import google.generativeai as genai
 # Local imports
+# EN LA SECCIÓN DE IMPORTS, AÑADE:
+from src.core.data.product_reference import ProductReference
 from src.core.data.user_manager import UserManager
 from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
 from src.core.data.user_models import UserProfile, Gender
@@ -221,12 +223,48 @@ class WorkingAdvancedRAGAgent:
         # 🔥 CAMBIO 1: Inicialización condicional de UserManager y CollaborativeFilter
         self.enable_user_features = bool(self.config and getattr(self.config, "use_advanced_features", False))
 
+        # Clase DummyUserManager para fallback garantizado
+        class DummyUserManager:
+            def get_user_preferences(self, user_id):
+                return {"default": True, "fallback": True}
+            
+            def track_interaction(self, user_id, product_id, rating):
+                print(f"[DummyUserManager] Tracked: user={user_id}, product={product_id}, rating={rating}")
+            
+            def get_similar_users(self, user_id, k=5):
+                return []
+            
+            def get_recommendations(self, user_id, k=10):
+                return []
+
+        # ======================================================
+        # 🔥 SIEMPRE tener un user_manager (real o dummy)
+        # ======================================================
         if self.enable_user_features:
-            self.user_manager = UserManager()
-            self.collaborative_filter = CollaborativeFilter(self.user_manager)
+            try:
+                from src.core.user_manager import UserManager
+                self.user_manager = UserManager()
+                print("✅ UserManager real inicializado")
+            except ImportError as e:
+                print(f"⚠️ No se pudo importar UserManager real: {e}")
+                self.user_manager = DummyUserManager()
+                print("⚠️ Usando DummyUserManager como fallback")
         else:
-            self.user_manager = None
+            self.user_manager = DummyUserManager()
+            print("✅ UserManager dummy inicializado (use_advanced_features = False)")
+
+        # ======================================================
+        # 🔥 CollaborativeFilter: solo se activa si user_manager es real
+        # ======================================================
+        try:
+            if isinstance(self.user_manager, DummyUserManager):
+                self.collaborative_filter = None
+            else:
+                self.collaborative_filter = CollaborativeFilter(self.user_manager)
+        except Exception as e:
+            print(f"⚠️ Error inicializando CollaborativeFilter: {e}")
             self.collaborative_filter = None
+
         
         # Componentes optimizados
         self.evaluator = AdvancedEvaluator()
@@ -253,6 +291,7 @@ class WorkingAdvancedRAGAgent:
         self._check_and_retrain()
         
         logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido Activado")
+        
     def _generate_with_llm(self, context: str, query: str, products: List[Product]) -> str:
         prompt = f"""
         Eres un experto en recomendaciones de videojuegos.
@@ -315,10 +354,21 @@ class WorkingAdvancedRAGAgent:
                 logger.error(f"❌ Error en enriquecimiento: {e}")
                 enriched_query = query_text
 
-            # Recuperación con manejo de errores
+            # 🔥 CAMBIO: Conversión a ProductReference durante la recuperación
             try:
-                candidates = self.retriever.retrieve(enriched_query, k=self.config.max_retrieved)
-                logger.info(f"🔍 Candidatos recuperados: {len(candidates)} - Tipo: {type(candidates[0]) if candidates else 'None'}")
+                raw_candidates = self.retriever.retrieve(enriched_query, k=self.config.max_retrieved)
+                logger.info(f"🔍 Candidatos recuperados: {len(raw_candidates)} - Tipo: {type(raw_candidates[0]) if raw_candidates else 'None'}")
+                
+                # 🔥 CONVERTIR A ProductReference
+                candidates = []
+                for product in raw_candidates:
+                    if hasattr(product, 'id'):
+                        # Calcular score si está disponible (ajusta según tu lógica)
+                        score = getattr(product, 'score', 0.5)
+                        pref = ProductReference.from_product(product, score=score, source="rag")
+                        candidates.append(pref)
+                    else:
+                        candidates.append(product)
             except Exception as e:
                 logger.error(f"❌ Error en recuperación: {e}")
                 candidates = []
@@ -329,6 +379,9 @@ class WorkingAdvancedRAGAgent:
                 if isinstance(candidate, str):
                     # Es un ID, crear un producto mínimo
                     product_objects.append(Product(id=candidate, title=f"Producto {candidate}"))
+                elif isinstance(candidate, ProductReference):
+                    # Convertir ProductReference a Product si es necesario
+                    product_objects.append(candidate.to_product())
                 else:
                     product_objects.append(candidate)
 
@@ -379,6 +432,7 @@ class WorkingAdvancedRAGAgent:
                 quality_score=0.0,
                 retrieved_count=0
             )
+            
     def process_query_with_limit(self, query: str, limit: int = 5) -> List[Dict]:
         """Versión de process_query que acepta limit parameter"""
         results = self.process_query(query)
@@ -574,6 +628,7 @@ class WorkingAdvancedRAGAgent:
         except Exception as e:
             logger.warning(f"Reranking híbrido falló, usando RAG tradicional: {e}")
             return self._rerank_fallback(products, query, profile)
+            
     def _log_rlhf_data(self, query: str, response: List[Dict], score: float, user_id: str = None):
         """Genera datos de entrenamiento para RLHF - VERSIÓN SIMPLIFICADA"""
         try:
@@ -829,38 +884,153 @@ class WorkingAdvancedRAGAgent:
         }
 
     def _infer_selected_product(self, answer: str, rating: int, user_query: str = "") -> Optional[str]:
-        """Infere producto seleccionado de forma inteligente"""
-        product_ids = self._extract_products_from_response(answer)
-        
-        if not product_ids:
-            return None
-        
-        # ✅ ESTRATEGIAS MEJORADAS DE INFERENCIA
-        strategies = []
-        
-        # 1. Por rating positivo + posición
-        if rating >= 4:
-            # Asumir que el primer producto fue el más relevante
-            strategies.append((product_ids[0], 0.8))
-        
-        # 2. Por similitud con query del usuario
-        if user_query:
-            best_match = self._find_best_query_match(user_query, product_ids, answer)
-            if best_match:
-                strategies.append((best_match, 0.9))
-        
-        # 3. Por mención explícita en la respuesta
-        explicit_mention = self._find_explicit_mention(answer, product_ids)
-        if explicit_mention:
-            strategies.append((explicit_mention, 1.0))
-        
-        # Seleccionar la estrategia con mayor confianza
-        if strategies:
-            strategies.sort(key=lambda x: x[1], reverse=True)
-            return strategies[0][0]
-        
-        # Fallback: primer producto para rating positivo
-        return product_ids[0] if rating >= 4 else None
+        """
+        Infiere qué producto seleccionó el usuario basado en su respuesta.
+        Versión mejorada con múltiples estrategias.
+        """
+        import re
+        import json
+
+        # ==========================================================
+        # ESTRATEGIA 1: Buscar ID explícito en formato especial
+        # ==========================================================
+        explicit_patterns = [
+            r'\[PRODUCT:([A-Za-z0-9_\-]+)\]',      # [PRODUCT:ABC123]
+            r'\[ID:([A-Za-z0-9_\-]+)\]',           # [ID:ABC123]
+            r'Product ID:\s*([A-Za-z0-9_\-]+)',    # Product ID: ABC123
+            r'ID\s*:\s*([A-Za-z0-9_\-]+)',         # ID: ABC123
+            r'producto\s+([A-Z][A-Z0-9]{4,})',     # producto ABC123
+            r'ref[:\s]*([A-Z][A-Z0-9]{4,})',       # ref: ABC123
+        ]
+
+        for pattern in explicit_patterns:
+            matches = re.findall(pattern, answer, re.IGNORECASE)
+            if matches:
+                selected_id = matches[0]
+                print(f"[Feedback] Found explicit product ID via pattern '{pattern}': {selected_id}")
+                return selected_id
+
+        # ==========================================================
+        # ESTRATEGIA 2: Buscar JSON embebido
+        # ==========================================================
+        if '{' in answer and '}' in answer:
+            try:
+                json_start = answer.find('{')
+                json_end = answer.rfind('}') + 1
+                json_str = answer[json_start:json_end]
+
+                metadata = json.loads(json_str)
+
+                if 'selected_product_id' in metadata:
+                    print(f"[Feedback] Found ID in JSON metadata: {metadata['selected_product_id']}")
+                    return metadata['selected_product_id']
+
+                if 'product_id' in metadata:
+                    print(f"[Feedback] Found ID as 'product_id' in JSON: {metadata['product_id']}")
+                    return metadata['product_id']
+
+            except json.JSONDecodeError:
+                pass
+            except KeyError:
+                pass
+
+        # ==========================================================
+        # ESTRATEGIA 3: Buscar IDs conocidos en los productos actuales
+        # ==========================================================
+        if hasattr(self, "current_products") and self.current_products:
+            products = self.current_products
+        elif hasattr(self, "products") and self.products:
+            products = self.products
+        else:
+            products = []
+
+        if products:
+            # Diccionario título → id
+            title_to_id = {}
+            for product in products:
+                if hasattr(product, "title") and hasattr(product, "id"):
+                    clean = product.title.lower().strip()
+                    if len(clean) > 3:
+                        title_to_id[clean] = product.id
+
+            answer_lower = answer.lower()
+
+            # Coincidencia por título completo
+            for title, product_id in title_to_id.items():
+                if title in answer_lower and len(title) > 5:
+                    print(f"[Feedback] Found product by title match '{title[:30]}...': {product_id}")
+                    return product_id
+
+            # Coincidencia parcial por palabras clave
+            for product in products:
+                if hasattr(product, "title") and hasattr(product, "id"):
+                    title_words = set(product.title.lower().split())
+                    answer_words = set(answer_lower.split())
+
+                    common = title_words.intersection(answer_words)
+                    common_filtered = [w for w in common if len(w) > 3]
+
+                    if len(common_filtered) >= 2:
+                        print(f"[Feedback] Found product by keyword match: {common_filtered} → {product.id}")
+                        return product.id
+
+        # ==========================================================
+        # ESTRATEGIA 4: Buscar patrones comunes de posibles IDs
+        # ==========================================================
+        id_patterns = [
+            r'\b([A-Z][A-Z0-9]{3,})\b',
+            r'\b([0-9]{4,}[A-Z]?)\b',
+            r'\b([A-Z]{2,}-[0-9]{3,})\b',
+        ]
+
+        for pattern in id_patterns:
+            matches = re.findall(pattern, answer.upper())
+            if matches:
+                if products:
+                    existing = [getattr(p, "id", "") for p in products]
+                    for match in matches:
+                        if match in existing:
+                            print(f"[Feedback] Found ID pattern match '{pattern}': {match}")
+                            return match
+                else:
+                    print(f"[Feedback] Found ID pattern (no verification): {matches[0]}")
+                    return matches[0]
+
+        # ==========================================================
+        # ESTRATEGIA 5: Si el rating es alto, asumir el primer producto
+        # ==========================================================
+        if rating >= 4 and products:
+            first_id = getattr(products[0], "id", "unknown")
+            print(f"[Feedback] Using first product due to high rating ({rating}): {first_id}")
+            return first_id
+
+        # ==========================================================
+        # ESTRATEGIA 6: Fallback al método padre
+        # ==========================================================
+        try:
+            import inspect
+            if hasattr(super(), "_infer_selected_product"):
+                result = super()._infer_selected_product(answer, rating, user_query)
+                print(f"[Feedback] Using parent class method: {result}")
+                return result
+        except:
+            pass
+
+        # ==========================================================
+        # ÚLTIMO RECURSO
+        # ==========================================================
+        print(f"[Feedback] WARNING: Could not infer product ID from answer")
+        print(f"  Answer preview: {answer[:200]}...")
+        print(f"  Query: {user_query}")
+        print(f"  Rating: {rating}")
+
+        if products:
+            default_id = getattr(products[0], "id", "unknown")
+            print(f"[Feedback] Using default (first) product ID: {default_id}")
+            return default_id
+
+        return "unknown_product_id"
+
 
     def _find_best_query_match(self, user_query: str, product_ids: List[str], answer: str) -> Optional[str]:
         """Encuentra el producto que mejor coincide con la query del usuario"""

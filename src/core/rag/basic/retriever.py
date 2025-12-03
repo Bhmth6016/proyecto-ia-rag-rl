@@ -184,9 +184,6 @@ class Retriever:
         
         return weights
 
-    # ------------------------------------------------------------
-    # Retrieval principal
-    # ------------------------------------------------------------
     def retrieve(
         self,
         query: str,
@@ -237,11 +234,39 @@ class Retriever:
                 scored.append((final_score, p))
 
             scored.sort(key=lambda x: x[0], reverse=True)
-            return [p.id for _, p in scored[:k]]
+
+            # 🔥 ESTE ES EL CAMBIO QUE TE PIDIERON
+            # 🔥 NUEVO BLOQUE DETALLADO
+            if scored:
+                first_product = scored[0][1]
+                product_type = type(first_product).__name__
+                logger.info(f"[Retriever] Returning {min(k, len(scored))} objects of type: {product_type}")
+
+                # Debug: verificar los primeros 3 resultados
+                for i, (score, p) in enumerate(scored[:3]):
+                    if hasattr(p, "id") and hasattr(p, "title"):
+                        logger.debug(
+                            f"  Product {i+1}: id={p.id}, "
+                            f"title={p.title[:50]}..., "
+                            f"score={score:.3f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"  Object {i+1} lacks Product attributes "
+                            f"(type: {type(p).__name__})"
+                        )
+
+                return [p for _, p in scored[:k]]
+
+            else:
+                logger.warning("[Retriever] No scored products to return")
+                return []
+
 
         except Exception as e:
             logger.error(f"❌ Retrieval error: {e}")
             return []
+
     # ------------------------------------------------------------
     # Raw chroma retrieve
     # ------------------------------------------------------------
@@ -331,6 +356,9 @@ class Retriever:
                 }
             }
 
+            # 🔥 AÑADE ESTA LÍNEA DE LOGGING PARA DEBUG:
+            logger.debug(f"[_doc_to_product] Creando Product con id: {product_data['id']}")
+            
             return Product.from_dict(product_data)
 
         except Exception as e:
@@ -339,18 +367,29 @@ class Retriever:
 
     def _score(self, query: str, product: Product) -> float:
         try:
-            if hasattr(product, "title") and product.title:
-                text_sim = SequenceMatcher(None, query.lower(), product.title.lower()).ratio()
-            else:
-                text_sim = 0.3
-
+            # VERIFICA que product tenga los atributos necesarios
+            if not hasattr(product, 'title') or not product.title:
+                logger.debug(f"[_score] Product {getattr(product, 'id', 'unknown')} no tiene título")
+                return 0.1
+            
+            # Verificar que realmente sea un Product
+            product_type = type(product).__name__
+            if product_type != 'Product':
+                logger.warning(f"[_score] Object is not Product but {product_type}")
+            
+            text_sim = SequenceMatcher(None, query.lower(), product.title.lower()).ratio()
+            
             rating_boost = 1.0
             if hasattr(product, "average_rating") and product.average_rating:
                 rating_boost += product.average_rating / 10.0
 
-            return float(text_sim * rating_boost)
+            final_score = float(text_sim * rating_boost)
+            logger.debug(f"[_score] Score for '{product.id}': {final_score:.3f} (text_sim: {text_sim:.3f})")
+            
+            return final_score
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"[_score] Error scoring product: {e}")
             return 0.1
 
     def _text_similarity(self, q, t):

@@ -20,11 +20,171 @@ class CollaborativeFilter:
     def __init__(self, user_manager, min_similarity: float = 0.6):
         self.user_manager = user_manager
         self.min_similarity = min_similarity
+        
+        # Cache
         self.positive_feedback_cache: Dict[str, Dict[str, float]] = {}
         self.cache_ttl = 3600
         self.last_cache_update: Dict[str, float] = {}
-        self.hybrid_weights = {'collaborative': 0.6, 'rag': 0.4}
         
+        # Pesos base e híbridos
+        self.base_weights = {'collaborative': 0.6, 'rag': 0.4}
+        self.hybrid_weights = self.base_weights.copy()
+        
+        # 🔥 NUEVO: historial para ajustes dinámicos
+        self.weight_history = []
+        self.performance_history = []
+        
+        print(f"[CollaborativeFilter] Pesos iniciales: {self.hybrid_weights}")
+
+        
+        
+    def adjust_weights_dynamically(
+            self,
+            user_id: str = None,
+            query: str = None,
+            rag_results: list = None,
+            collab_results: list = None
+        ) -> Dict[str, float]:
+
+        # Valores base
+        rag_confidence = 0.5
+        collab_confidence = 0.5
+
+        # 1) Calidad de la consulta → RAG
+        if query:
+            rag_confidence = self._estimate_query_suitability_for_rag(query)
+
+        # 2) Adecuación del usuario → colaborativo
+        if user_id and self.user_manager:
+            collab_confidence = self._estimate_user_suitability_for_collab(user_id)
+
+        # 3) Calidad de resultados
+        if rag_results is not None:
+            rag_confidence *= self._evaluate_results_quality(rag_results, query)
+
+        if collab_results is not None:
+            collab_confidence *= self._evaluate_results_quality(collab_results, query)
+
+        # 4) Historial de performance
+        if self.performance_history:
+            recent = self.performance_history[-10:]
+
+            rag_success_rate = sum(1 for p in recent if p.get("rag_effective")) / len(recent)
+            collab_success_rate = sum(1 for p in recent if p.get("collab_effective")) / len(recent)
+
+            rag_confidence = rag_confidence * 0.7 + rag_success_rate * 0.3
+            collab_confidence = collab_confidence * 0.7 + collab_success_rate * 0.3
+
+        # 5) Suavizado
+        smoothing = 0.4
+        new_rag_weight = rag_confidence * smoothing + self.hybrid_weights["rag"] * (1 - smoothing)
+        new_collab_weight = collab_confidence * smoothing + self.hybrid_weights["collaborative"] * (1 - smoothing)
+
+        # Normalizar entre 0.1 y 0.9
+        total = new_rag_weight + new_collab_weight
+        if total > 0:
+            self.hybrid_weights = {
+                "rag": max(0.1, min(0.9, new_rag_weight / total)),
+                "collaborative": max(0.1, min(0.9, new_collab_weight / total)),
+            }
+        else:
+            self.hybrid_weights = self.base_weights.copy()
+
+        # Guardar en historial
+        from datetime import datetime
+        self.weight_history.append({
+            "timestamp": datetime.now().isoformat(),
+            "weights": self.hybrid_weights.copy(),
+            "rag_confidence": rag_confidence,
+            "collab_confidence": collab_confidence,
+            "user_id": user_id,
+            "query_preview": query[:50] if query else None
+        })
+
+        if len(self.weight_history) > 100:
+            self.weight_history = self.weight_history[-100:]
+
+        print(f"[CollaborativeFilter] Pesos ajustados: "
+            f"RAG={self.hybrid_weights['rag']:.2f}, "
+            f"Collaborative={self.hybrid_weights['collaborative']:.2f}")
+
+        return self.hybrid_weights
+
+    def _evaluate_results_quality(self, results: list, query: str) -> float:
+        """
+        Evalúa si los resultados parecen relevantes.
+        Retorna un valor 0.1 a 1.0
+        """
+        if not results:
+            return 0.2  # mala calidad
+
+        score = 0.5  # base
+
+        # Si la mayoría tiene query en el título (si existe)
+        if query:
+            q = query.lower().split()
+            matches = 0
+            total = 0
+
+            for r in results:
+                title = getattr(r, "title", "").lower()
+                if title:
+                    total += 1
+                    if any(word in title for word in q):
+                        matches += 1
+
+            if total > 0:
+                score += (matches / total) * 0.4
+
+        return max(0.1, min(1.0, score))
+
+    
+    def _estimate_rag_confidence(self, query: str) -> float:
+        """Estima confianza del componente RAG basado en la consulta."""
+        if not query:
+            return 0.5
+        
+        # Factores que aumentan confianza en RAG:
+        confidence = 0.5  # Base
+        
+        # Consultas largas y específicas son mejores para RAG
+        if len(query.split()) > 3:
+            confidence += 0.2
+        
+        # Consultas con términos técnicos o específicos
+        technical_terms = ['características', 'especificaciones', 'comparar', 'mejor', 
+                          'recomendar', 'qué es', 'cómo funciona']
+        if any(term in query.lower() for term in technical_terms):
+            confidence += 0.15
+        
+        # Limitar entre 0.1 y 0.9
+        return max(0.1, min(0.9, confidence))
+    
+    def _estimate_collab_confidence(self, user_id: str) -> float:
+        """Estima confianza del filtro colaborativo basado en el usuario."""
+        if not user_id or not self.user_manager:
+            return 0.3
+        
+        try:
+            # Obtener usuarios similares
+            similar_users = self.user_manager.get_similar_users(user_id, k=5)
+            
+            # Más usuarios similares = mayor confianza
+            if len(similar_users) >= 3:
+                return 0.8
+            elif len(similar_users) >= 1:
+                return 0.6
+            else:
+                return 0.4
+        except:
+            return 0.3
+    
+    def get_weights(self, user_id: str = None, query: str = None) -> Dict[str, float]:
+        """Obtiene pesos (ajustados dinámicamente si se proporciona contexto)."""
+        if user_id or query:
+            return self.adjust_weights_dynamically(user_id, query)
+        return self.hybrid_weights
+      
     def _get_positive_feedback_scores(self, user: UserProfile, query: str) -> Dict[str, float]:
         """Obtiene SOLO feedback positivo con cache robusto"""
         # ✅ CACHE KEY ROBUSTO
