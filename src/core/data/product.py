@@ -2,7 +2,7 @@ from __future__ import annotations
 # src/core/data/product.py
 import hashlib
 import re
-from typing import Optional, Dict, List, Any, ClassVar, Union
+from typing import Optional, Dict, List, Any, ClassVar, Union, TYPE_CHECKING
 from pydantic import BaseModel, Field, model_validator
 import uuid
 import logging
@@ -10,15 +10,6 @@ from functools import lru_cache
 import json
 from urllib.parse import urlparse, urlunparse
 import numpy as np
-
-# Importamos el preprocesador ML como dependencia opcional
-try:
-    from .ml_processor import ProductDataPreprocessor
-    ML_AVAILABLE = True
-except ImportError:
-    ML_AVAILABLE = False
-    ProductDataPreprocessor = None
-    logging.warning("ML dependencies not available. ML features disabled.")
 
 logger = logging.getLogger(__name__)
 
@@ -35,218 +26,14 @@ class AutoProductConfig:
     DEFAULT_PRICE = 0.0
     CACHE_SIZE = 1000
     
-    # Configuraciones ML (opcionales)
-    ML_ENABLED = ML_AVAILABLE
+    # Configuraciones ML - se configurarán dinámicamente
+    ML_ENABLED = False  # Se configura después
     DEFAULT_EMBEDDING_MODEL = 'sentence-transformers/all-mpnet-base-v2'
     DEFAULT_CATEGORIES = [
         "Electronics", "Home & Kitchen", "Clothing & Accessories", 
         "Sports & Outdoors", "Books", "Health & Beauty", 
         "Toys & Games", "Automotive", "Office Supplies", "Food & Beverages"
     ]
-
-# ------------------------------------------------------------------
-# ML Processor wrapper (compatible con sistema existente)
-# ------------------------------------------------------------------
-class MLProductEnricher:
-    """Wrapper para enriquecimiento ML que se integra con el sistema Product existente"""
-    
-    _instance = None
-    _preprocessor = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    @classmethod
-    def get_preprocessor(cls, config: Dict[str, Any] = None) -> Optional[Any]:
-        """Obtiene el preprocesador ML (singleton con lazy loading)"""
-        if not AutoProductConfig.ML_ENABLED:
-            logger.warning("ML features are disabled. Install transformers and sentence-transformers to enable.")
-            return None
-        
-        if cls._preprocessor is None and ML_AVAILABLE:
-            try:
-                config = config or {}
-                cls._preprocessor = ProductDataPreprocessor(
-                    categories=config.get('categories', AutoProductConfig.DEFAULT_CATEGORIES),
-                    use_gpu=config.get('use_gpu', False),
-                    embedding_model=config.get('embedding_model', AutoProductConfig.DEFAULT_EMBEDDING_MODEL)
-                )
-                logger.info("ML ProductEnricher inicializado exitosamente")
-            except Exception as e:
-                logger.error(f"Error inicializando ML preprocessor: {e}")
-                cls._preprocessor = None
-        
-        return cls._preprocessor
-    
-    @classmethod
-    def enrich_product(
-        cls, 
-        product_data: Dict[str, Any],
-        enable_features: List[str] = None,
-        config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Enriquece datos de producto con capacidades ML.
-        
-        Args:
-            product_data: Datos del producto
-            enable_features: Lista de features ML a habilitar
-            config: Configuración para el preprocesador
-            
-        Returns:
-            Datos enriquecidos
-        """
-        if not AutoProductConfig.ML_ENABLED:
-            return product_data
-        
-        preprocessor = cls.get_preprocessor(config)
-        if not preprocessor:
-            return product_data
-        
-        try:
-            # Configurar features a habilitar
-            if enable_features is None:
-                enable_features = ['category', 'entities', 'tags', 'embedding']
-            
-            # Extraer texto para procesamiento
-            title = product_data.get('title', '')
-            description = product_data.get('description', '')
-            
-            # Si no hay texto suficiente, saltar procesamiento ML
-            if not title and not description:
-                return product_data
-            
-            enriched_data = product_data.copy()
-            
-            # Preparar texto completo
-            full_text = f"{title}. {description}".strip()
-            
-            # 1. Clasificación de categoría (Zero-Shot)
-            if 'category' in enable_features and title:
-                predicted_category = preprocessor._predict_category_zero_shot(full_text)
-                if predicted_category:
-                    enriched_data['predicted_category'] = predicted_category
-                    
-                    # Si no hay categoría principal, usar la predicha
-                    if 'main_category' not in enriched_data or not enriched_data['main_category']:
-                        enriched_data['main_category'] = predicted_category
-            
-            # 2. Extracción de entidades (NER)
-            if 'entities' in enable_features:
-                entities = preprocessor._extract_entities_ner(full_text)
-                if entities:
-                    enriched_data['extracted_entities'] = entities
-                    
-                    # Extraer marca y modelo si están disponibles
-                    if 'ORG' in entities and entities['ORG']:
-                        enriched_data.setdefault('attributes', {})['brand'] = entities['ORG'][0]
-                    if 'PRODUCT' in entities and entities['PRODUCT']:
-                        enriched_data.setdefault('attributes', {})['model'] = entities['PRODUCT'][0]
-            
-            # 3. Generación de tags (TF-IDF)
-            if 'tags' in enable_features:
-                # Nota: TF-IDF requiere entrenamiento previo con fit_tfidf()
-                if hasattr(preprocessor, '_tfidf_fitted') and preprocessor._tfidf_fitted:
-                    tags = preprocessor._generate_tags_tfidf(full_text)
-                    if tags:
-                        # Separar tags ML de tags manuales
-                        enriched_data['ml_tags'] = tags
-                        
-                        # Combinar con tags existentes
-                        existing_tags = set(enriched_data.get('tags', []))
-                        new_tags = [tag for tag in tags if tag not in existing_tags]
-                        if new_tags:
-                            enriched_data.setdefault('tags', []).extend(new_tags[:5])
-            
-            # 4. Embeddings semánticos
-            if 'embedding' in enable_features:
-                embedding = preprocessor._generate_embedding(full_text)
-                if embedding is not None:
-                    enriched_data['embedding'] = embedding
-                    enriched_data['embedding_model'] = preprocessor.embedding_model_name
-            
-            return enriched_data
-            
-        except Exception as e:
-            logger.error(f"Error en enriquecimiento ML: {e}")
-            # En caso de error, devolver datos originales
-            return product_data
-    
-    @classmethod
-    def enrich_batch(
-        cls,
-        products_data: List[Dict[str, Any]],
-        enable_features: List[str] = None,
-        config: Dict[str, Any] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Enriquece un lote de productos de manera eficiente.
-        
-        Args:
-            products_data: Lista de datos de productos
-            enable_features: Features ML a habilitar
-            config: Configuración del preprocesador
-            
-        Returns:
-            Lista de productos enriquecidos
-        """
-        if not AutoProductConfig.ML_ENABLED or not products_data:
-            return products_data
-        
-        preprocessor = cls.get_preprocessor(config)
-        if not preprocessor:
-            return products_data
-        
-        try:
-            # Usar el método de batch processing del preprocesador
-            enriched_batch = preprocessor.preprocess_batch(products_data)
-            return enriched_batch
-            
-        except Exception as e:
-            logger.error(f"Error en batch ML enrichment: {e}")
-            return products_data
-    
-    @classmethod
-    def fit_tfidf(cls, descriptions: List[str]) -> bool:
-        """Entrena el modelo TF-IDF con descripciones."""
-        if not AutoProductConfig.ML_ENABLED:
-            return False
-        
-        preprocessor = cls.get_preprocessor()
-        if not preprocessor:
-            return False
-        
-        try:
-            preprocessor.fit_tfidf(descriptions)
-            return True
-        except Exception as e:
-            logger.error(f"Error entrenando TF-IDF: {e}")
-            return False
-    
-    @classmethod
-    def get_metrics(cls) -> Dict[str, Any]:
-        """Obtiene métricas del sistema ML."""
-        if not AutoProductConfig.ML_ENABLED:
-            return {"ml_enabled": False}
-        
-        preprocessor = cls.get_preprocessor()
-        if not preprocessor:
-            return {"ml_enabled": False, "preprocessor_loaded": False}
-        
-        try:
-            metrics = {
-                "ml_enabled": True,
-                "preprocessor_loaded": True,
-                "models_loaded": preprocessor.get_model_info(),
-                "embedding_cache_size": len(getattr(preprocessor, '_embedding_cache', {})),
-                "tfidf_fitted": getattr(preprocessor, '_tfidf_fitted', False)
-            }
-            return metrics
-        except Exception as e:
-            logger.error(f"Error obteniendo métricas ML: {e}")
-            return {"ml_enabled": True, "error": str(e)}
 
 # ------------------------------------------------------------------
 # Nested models simplificados
@@ -415,6 +202,231 @@ class ProductDetails(BaseModel):
 
 
 # ------------------------------------------------------------------
+# ML Processor wrapper (compatible con sistema existente)
+# ------------------------------------------------------------------
+class MLProductEnricher:
+    """Wrapper para enriquecimiento ML que se integra con el sistema Product existente"""
+    
+    _instance = None
+    _preprocessor = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    @classmethod
+    def _load_ml_processor(cls, config: Dict[str, Any] = None) -> Optional[Any]:
+        """Carga el preprocesador ML dinámicamente para evitar importación circular"""
+        if not AutoProductConfig.ML_ENABLED:
+            return None
+        
+        try:
+            # Importación dinámica para evitar dependencia circular
+            from .ml_processor import ProductDataPreprocessor
+            config = config or {}
+            
+            processor = ProductDataPreprocessor(
+                categories=config.get('categories', AutoProductConfig.DEFAULT_CATEGORIES),
+                use_gpu=config.get('use_gpu', False),
+                embedding_model=config.get('embedding_model', AutoProductConfig.DEFAULT_EMBEDDING_MODEL)
+            )
+            logger.info("ML ProductEnricher inicializado exitosamente")
+            return processor
+            
+        except ImportError as e:
+            logger.warning(f"ML dependencies not available: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error inicializando ML preprocessor: {e}")
+            return None
+    
+    @classmethod
+    def get_preprocessor(cls, config: Dict[str, Any] = None) -> Optional[Any]:
+        """Obtiene el preprocesador ML (singleton con lazy loading)"""
+        if not AutoProductConfig.ML_ENABLED:
+            return None
+        
+        if cls._preprocessor is None:
+            cls._preprocessor = cls._load_ml_processor(config)
+        
+        return cls._preprocessor
+    
+    @classmethod
+    def enrich_product(
+        cls, 
+        product_data: Dict[str, Any],
+        enable_features: List[str] = None,
+        config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Enriquece datos de producto con capacidades ML.
+        
+        Args:
+            product_data: Datos del producto
+            enable_features: Lista de features ML a habilitar
+            config: Configuración para el preprocesador
+            
+        Returns:
+            Datos enriquecidos
+        """
+        if not AutoProductConfig.ML_ENABLED:
+            return product_data
+        
+        preprocessor = cls.get_preprocessor(config)
+        if not preprocessor:
+            return product_data
+        
+        try:
+            # Configurar features a habilitar
+            if enable_features is None:
+                enable_features = ['category', 'entities', 'tags', 'embedding']
+            
+            # Extraer texto para procesamiento
+            title = product_data.get('title', '')
+            description = product_data.get('description', '')
+            
+            # Si no hay texto suficiente, saltar procesamiento ML
+            if not title and not description:
+                return product_data
+            
+            enriched_data = product_data.copy()
+            
+            # Preparar texto completo
+            full_text = f"{title}. {description}".strip()
+            
+            # Usar métodos del preprocesador
+            # 1. Clasificación de categoría
+            if 'category' in enable_features and title:
+                predicted_category = preprocessor._predict_category_zero_shot(full_text)
+                if predicted_category:
+                    enriched_data['predicted_category'] = predicted_category
+                    
+                    # Si no hay categoría principal, usar la predicha
+                    if 'main_category' not in enriched_data or not enriched_data['main_category']:
+                        enriched_data['main_category'] = predicted_category
+            
+            # 2. Extracción de entidades (NER)
+            if 'entities' in enable_features:
+                entities = preprocessor._extract_entities_ner(full_text)
+                if entities:
+                    enriched_data['extracted_entities'] = entities
+                    
+                    # Extraer marca y modelo si están disponibles
+                    if 'ORG' in entities and entities['ORG']:
+                        enriched_data.setdefault('attributes', {})['brand'] = entities['ORG'][0]
+                    if 'PRODUCT' in entities and entities['PRODUCT']:
+                        enriched_data.setdefault('attributes', {})['model'] = entities['PRODUCT'][0]
+            
+            # 3. Generación de tags (TF-IDF)
+            if 'tags' in enable_features:
+                # Nota: TF-IDF requiere entrenamiento previo con fit_tfidf()
+                if hasattr(preprocessor, '_tfidf_fitted') and preprocessor._tfidf_fitted:
+                    tags = preprocessor._generate_tags_tfidf(full_text)
+                    if tags:
+                        # Separar tags ML de tags manuales
+                        enriched_data['ml_tags'] = tags
+                        
+                        # Combinar con tags existentes
+                        existing_tags = set(enriched_data.get('tags', []))
+                        new_tags = [tag for tag in tags if tag not in existing_tags]
+                        if new_tags:
+                            enriched_data.setdefault('tags', []).extend(new_tags[:5])
+            
+            # 4. Embeddings semánticos
+            if 'embedding' in enable_features:
+                embedding = preprocessor._generate_embedding(full_text)
+                if embedding is not None:
+                    enriched_data['embedding'] = embedding
+                    enriched_data['embedding_model'] = preprocessor.embedding_model_name
+            
+            return enriched_data
+            
+        except Exception as e:
+            logger.error(f"Error en enriquecimiento ML: {e}")
+            # En caso de error, devolver datos originales
+            return product_data
+    
+    @classmethod
+    def enrich_batch(
+        cls,
+        products_data: List[Dict[str, Any]],
+        enable_features: List[str] = None,
+        config: Dict[str, Any] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Enriquece un lote de productos de manera eficiente.
+        
+        Args:
+            products_data: Lista de datos de productos
+            enable_features: Features ML a habilitar
+            config: Configuración del preprocesador
+            
+        Returns:
+            Lista de productos enriquecidos
+        """
+        if not AutoProductConfig.ML_ENABLED or not products_data:
+            return products_data
+        
+        preprocessor = cls.get_preprocessor(config)
+        if not preprocessor:
+            return products_data
+        
+        try:
+            # Usar el método de batch processing del preprocesador
+            enriched_batch = preprocessor.preprocess_batch(products_data)
+            return enriched_batch
+            
+        except Exception as e:
+            logger.error(f"Error en batch ML enrichment: {e}")
+            return products_data
+    
+    @classmethod
+    def fit_tfidf(cls, descriptions: List[str]) -> bool:
+        """Entrena el modelo TF-IDF con descripciones."""
+        if not AutoProductConfig.ML_ENABLED:
+            return False
+        
+        preprocessor = cls.get_preprocessor()
+        if not preprocessor:
+            return False
+        
+        try:
+            preprocessor.fit_tfidf(descriptions)
+            return True
+        except Exception as e:
+            logger.error(f"Error entrenando TF-IDF: {e}")
+            return False
+    
+    @classmethod
+    def get_metrics(cls) -> Dict[str, Any]:
+        """Obtiene métricas del sistema ML."""
+        if not AutoProductConfig.ML_ENABLED:
+            return {"ml_enabled": False}
+        
+        preprocessor = cls.get_preprocessor()
+        if not preprocessor:
+            return {"ml_enabled": False, "preprocessor_loaded": False}
+        
+        try:
+            metrics = {
+                "ml_enabled": True,
+                "preprocessor_loaded": True,
+                "embedding_cache_size": len(getattr(preprocessor, '_embedding_cache', {})),
+                "tfidf_fitted": getattr(preprocessor, '_tfidf_fitted', False)
+            }
+            
+            # Obtener información de modelos si está disponible
+            if hasattr(preprocessor, 'get_model_info'):
+                metrics.update(preprocessor.get_model_info())
+                
+            return metrics
+        except Exception as e:
+            logger.error(f"Error obteniendo métricas ML: {e}")
+            return {"ml_enabled": True, "error": str(e)}
+
+
+# ------------------------------------------------------------------
 # Main product entity simplificada
 # ------------------------------------------------------------------
 class Product(BaseModel):
@@ -454,6 +466,9 @@ class Product(BaseModel):
         'features': ['category', 'entities', 'tags', 'embedding'],
         'categories': AutoProductConfig.DEFAULT_CATEGORIES
     }
+    
+    # Flag para evitar reconfiguración múltiple
+    _ml_configured: ClassVar[bool] = False
     
     # --------------------------------------------------
     # Validators simplificados
@@ -586,10 +601,13 @@ class Product(BaseModel):
         if hasattr(cls, '_ml_configured') and cls._ml_configured:
             return
         
+        # Actualizar configuración global
+        AutoProductConfig.ML_ENABLED = enabled
+        
         cls._ml_config = {
             'enabled': enabled,
             'features': features or ["category", "entities"],
-            'categories': categories or cls.DEFAULT_CATEGORIES
+            'categories': categories or AutoProductConfig.DEFAULT_CATEGORIES
         }
         
         # Marcar como configurado

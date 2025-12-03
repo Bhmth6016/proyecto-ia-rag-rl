@@ -5,17 +5,8 @@ Puede instalarse opcionalmente: pip install transformers sentence-transformers s
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import numpy as np
-
-# 🔥 NUEVO: Importaciones seguras para evitar errores circulares
-try:
-    from src.core.data.product import Product  # ✅ OK
-    PRODUCT_AVAILABLE = True
-except ImportError:
-    # Fallback: Product no disponible, usar tipos básicos
-    Product = Dict[str, Any]  # Type hint alternativo
-    PRODUCT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +15,9 @@ class ProductDataPreprocessor:
     """
     Preprocesador de datos de productos con capacidades ML avanzadas.
     Enriquece productos con categorías, entidades, tags y embeddings.
+    
+    NOTA: Este módulo NO importa Product para evitar dependencias circulares.
+    Usa tipos genéricos (Dict[str, Any]) en su lugar.
     """
     
     def __init__(
@@ -53,7 +47,7 @@ class ProductDataPreprocessor:
         self.device = 0 if use_gpu else -1
         self.verbose = verbose
         
-        # 🔥 NUEVO: Importación condicional de librerías ML
+        # 🔥 CORRECCIÓN: Importación condicional de librerías ML
         self._import_ml_libraries()
         
         # Inicializar modelos (lazy loading en métodos)
@@ -63,20 +57,26 @@ class ProductDataPreprocessor:
         
         # Inicializar vectorizador TF-IDF solo si sklearn está disponible
         if self.sklearn_available:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            self.tfidf_vectorizer = TfidfVectorizer(
-                stop_words="english", 
-                max_features=tfidf_max_features,
-                ngram_range=(1, 2)
-            )
+            try:
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                self.tfidf_vectorizer = TfidfVectorizer(
+                    stop_words="english", 
+                    max_features=tfidf_max_features,
+                    ngram_range=(1, 2)
+                )
+            except ImportError:
+                self.tfidf_vectorizer = None
+                logger.warning("scikit-learn import falló, TF-IDF deshabilitado")
         else:
             self.tfidf_vectorizer = None
-            logger.warning("scikit-learn no disponible, TF-IDF deshabilitado")
         
         self.embedding_model_name = embedding_model
         
         # Cache para embeddings frecuentes
         self._embedding_cache = {}
+        
+        # Flag para TF-IDF entrenado
+        self._tfidf_fitted = False
         
         if verbose:
             logger.info(f"ProductDataPreprocessor inicializado con {len(self.categories)} categorías")
@@ -90,21 +90,21 @@ class ProductDataPreprocessor:
         self.sentence_transformers_available = False
         self.sklearn_available = False
         
-        # 🔥 NUEVO: Intentar importar transformers
+        # Intentar importar transformers
         try:
-            from transformers import pipeline
+            import transformers
             self.transformers_available = True
         except ImportError:
             logger.warning("transformers no disponible. Zero-shot y NER deshabilitados.")
         
-        # 🔥 NUEVO: Intentar importar sentence-transformers
+        # Intentar importar sentence-transformers
         try:
-            from sentence_transformers import SentenceTransformer
+            import sentence_transformers
             self.sentence_transformers_available = True
         except ImportError:
             logger.warning("sentence-transformers no disponible. Embeddings deshabilitados.")
         
-        # 🔥 NUEVO: Intentar importar scikit-learn
+        # Intentar importar scikit-learn
         try:
             import sklearn
             self.sklearn_available = True
@@ -216,7 +216,7 @@ class ProductDataPreprocessor:
                         enriched_data['model'] = entities['PRODUCT'][0]
             
             # 3. Generación de tags con TF-IDF
-            if self.sklearn_available and hasattr(self, '_tfidf_fitted') and self._tfidf_fitted:
+            if self.sklearn_available and self._tfidf_fitted and self.tfidf_vectorizer is not None:
                 tags = self._generate_tags_tfidf(full_text)
                 if tags:
                     existing_tags = enriched_data.setdefault('tags', [])
@@ -322,7 +322,6 @@ class ProductDataPreprocessor:
         """Genera tags usando TF-IDF."""
         if (not self.sklearn_available or 
             self.tfidf_vectorizer is None or 
-            not hasattr(self, '_tfidf_fitted') or 
             not self._tfidf_fitted):
             return []
         
@@ -415,7 +414,7 @@ class ProductDataPreprocessor:
             'zero_shot_classifier_loaded': self._zero_shot_classifier is not None,
             'ner_pipeline_loaded': self._ner_pipeline is not None,
             'embedding_model_loaded': self._embedding_model is not None,
-            'tfidf_fitted': getattr(self, '_tfidf_fitted', False),
+            'tfidf_fitted': self._tfidf_fitted,
             'embedding_model_name': self.embedding_model_name,
             'categories_count': len(self.categories),
             'embedding_cache_size': len(self._embedding_cache),
@@ -429,7 +428,6 @@ class ProductDataPreprocessor:
         self._embedding_cache.clear()
         logger.info("Cache de embeddings limpiado")
 
-    # 🔥 NUEVO: Método para verificar dependencias
     def check_dependencies(self) -> Dict[str, bool]:
         """
         Verifica si todas las dependencias ML están instaladas.
@@ -437,8 +435,6 @@ class ProductDataPreprocessor:
         Returns:
             Dict con estado de cada dependencia
         """
-        import importlib.util
-        
         dependencies = {
             'transformers': self.transformers_available,
             'sentence_transformers': self.sentence_transformers_available,
@@ -448,32 +444,25 @@ class ProductDataPreprocessor:
         
         return dependencies
 
-    # 🔥 NUEVO: Método de utilidad para procesar objetos Product
     def process_product_object(self, product: Any) -> Optional[Dict[str, Any]]:
         """
-        Procesa un objeto Product y devuelve diccionario enriquecido.
+        Procesa un objeto genérico y devuelve diccionario enriquecido.
         
         Args:
-            product: Objeto Product o diccionario con datos de producto
+            product: Objeto o diccionario con datos de producto
             
         Returns:
             Diccionario enriquecido o None si hay error
         """
         try:
-            if PRODUCT_AVAILABLE and isinstance(product, Product):
-                # Convertir objeto Product a diccionario
-                product_dict = {
-                    'id': product.id,
-                    'title': getattr(product, 'title', ''),
-                    'description': getattr(product, 'description', ''),
-                    'price': getattr(product, 'price', 0.0),
-                    'brand': getattr(product, 'brand', ''),
-                    'categories': getattr(product, 'categories', []),
-                    'tags': getattr(product, 'tags', []),
-                    'features': getattr(product, 'features', {})
-                }
-            elif isinstance(product, dict):
+            if isinstance(product, dict):
                 product_dict = product
+            elif hasattr(product, '__dict__'):
+                # Convertir objeto a diccionario
+                product_dict = product.__dict__
+            elif hasattr(product, 'model_dump'):
+                # Si es Pydantic model
+                product_dict = product.model_dump()
             else:
                 logger.error(f"Tipo de producto no soportado: {type(product)}")
                 return None
