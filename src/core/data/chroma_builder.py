@@ -44,7 +44,7 @@ class ChromaBuilderConfig:
     EMBEDDING_DEVICE = "cpu"
     
     # Límites de memoria
-    MAX_DOCUMENTS_PER_BATCH = 5000
+    MAX_DOCUMENTS_PER_BATCH = 500
     MEMORY_CHECK_INTERVAL = 10000
     
     # 🔥 NUEVO: Configuración ML unificada
@@ -848,7 +848,7 @@ class OptimizedChromaBuilder:
     def build_index_optimized(self) -> Chroma:
         return self.build_index(persist=True)
 
-    def build_index_batch_optimized(self, batch_size: int = 5000) -> Chroma:
+    def build_index_batch_optimized(self, batch_size: int = 500) -> Chroma:
         return self.build_index(persist=True)
 
 

@@ -122,7 +122,7 @@ class FastDataLoader:
         raw_dir: Optional[Union[str, Path]] = None,
         processed_dir: Optional[Union[str, Path]] = None,
         cache_enabled: bool = False,
-        max_products_per_file: int = 5000,
+        max_products_per_file: int = 500,
         auto_categories: bool = True,
         auto_tags: bool = False,
         use_progress_bar: bool = True,
@@ -818,7 +818,7 @@ if __name__ == "__main__":
         processed_dir=settings.PROC_DIR,
         auto_categories=True,
         auto_tags=False,
-        max_products_per_file=5000,
+        max_products_per_file=500,
         cache_enabled=False,
         use_progress_bar=True,
         # 🔥 NUEVO: Configuración ML

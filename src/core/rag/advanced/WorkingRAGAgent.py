@@ -37,11 +37,13 @@ class RAGConfig:
     memory_window: int = 3
     domain: str = "videojuegos"
     use_advanced_features: bool = True
-    # 🔥 NUEVO: Configuración ML
+    # 🔥 NUEVO: Configuración ML completa
+    ml_enabled: bool = True  # Habilitar/deshabilitar ML
     use_ml_embeddings: bool = True  # Usar embeddings ML para scoring
     ml_embedding_weight: float = 0.3  # Peso para embeddings ML
     min_ml_similarity: float = 0.2  # Similitud mínima para considerar embeddings
-
+    # 🔥 NUEVO: Configuración para compatibilidad
+    use_product_embeddings: bool = True  # Alias para use_ml_embeddings
 @dataclass
 class RAGResponse:
     answer: str

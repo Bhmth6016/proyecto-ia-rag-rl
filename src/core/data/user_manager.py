@@ -23,12 +23,12 @@ class UserManager:
         return hashlib.md5(base_string.encode()).hexdigest()[:12]
     
     def create_user_profile(self, 
-                          age: int,
-                          gender: str,
-                          country: str,
-                          language: str = "es",
-                          preferred_categories: List[str] = None,
-                          preferred_brands: List[str] = None) -> UserProfile:
+                            age: int,
+                            gender: str,
+                            country: str,
+                            language: str = "es",
+                            preferred_categories: List[str] = None,
+                            preferred_brands: List[str] = None) -> UserProfile:
         """Crea nuevo perfil de usuario"""
         try:
             user_id = self.generate_user_id(age, gender, country)
@@ -55,6 +55,7 @@ class UserManager:
         except Exception as e:
             logger.error(f"Error creando perfil de usuario: {e}")
             raise
+
     
     def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
         """Obtiene perfil de usuario, cargando de disco si es necesario"""

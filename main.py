@@ -369,20 +369,45 @@ def _calculate_ml_statistics(products: List[Product]) -> Dict[str, Any]:
     return stats
 
 
-def _create_rag_config_with_ml(args, use_product_embeddings: bool) -> RAGConfig:
-    """Crea configuración RAG con parámetros ML."""
-    # 🔥 CORREGIDO: Usar settings global para ML
-    ml_features = list(settings.ML_FEATURES) if settings.ML_ENABLED else []
+def _create_rag_config_with_ml(args, use_product_embeddings: bool = None) -> Any:
+    """Create RAG configuration with ML settings"""
+    from src.core.rag.advanced.WorkingRAGAgent import RAGConfig
     
+    # Obtener configuración ML desde settings
+    ml_config = {
+        'enabled': settings.ML_ENABLED,
+        'weight': settings.ML_WEIGHT,
+        'min_similarity': settings.ML_MIN_SIMILARITY
+    }
+    
+    # 🔥 CORRECCIÓN: Manejar args None o faltantes
+    if args is None:
+        # Usar valores por defecto
+        enable_rlhf = True
+        top_k = 5
+        memory_window = 3
+        domain = "general"
+    else:
+        enable_rlhf = getattr(args, 'enable_rlhf', True)
+        top_k = getattr(args, 'top_k', 5)
+        memory_window = getattr(args, 'memory_window', 3)
+        domain = getattr(args, 'domain', 'general')
+    
+    # Crear configuración compatible
     return RAGConfig(
         enable_reranking=True,
-        enable_rlhf=True,
-        max_retrieved=50,
-        max_final=5,
-        domain="amazon",
+        enable_rlhf=enable_rlhf,
+        max_retrieved=top_k * 3,
+        max_final=top_k,
+        memory_window=memory_window,
+        domain=domain,
         use_advanced_features=True,
-        ml_enabled=settings.ML_ENABLED,  # 🔥 Incluir configuración ML
-        ml_features=ml_features,  # 🔥 Incluir features ML
+        # 🔥 CORREGIDO: Usar parámetros correctos
+        ml_enabled=ml_config['enabled'],
+        use_ml_embeddings=use_product_embeddings,
+        ml_embedding_weight=ml_config['weight'],
+        min_ml_similarity=ml_config['min_similarity'],
+        # 🔥 Añadido para compatibilidad
         use_product_embeddings=use_product_embeddings
     )
 
@@ -472,11 +497,22 @@ def parse_arguments():
     sp.add_argument("--user-country", type=str, 
                    default='Spain', 
                    help="User country for personalization")
+    sp.add_argument("--user-language", type=str,  # 🔥 NUEVO: añadir este argumento
+                   default='es',
+                   help="User language (default: es)")
     sp.add_argument("--user-id", type=str,
                    help="Specific user ID (overrides auto-generated)")
     sp.add_argument("--show-ml-info", action="store_true",
                    help="Show ML information in responses")
-
+    sp.add_argument("--enable-rlhf", action="store_true",  # 🔥 NUEVO: añadir este argumento
+                   default=True,
+                   help="Enable RLHF training")
+    sp.add_argument("--memory-window", type=int,  # 🔥 NUEVO: añadir este argumento
+                   default=3,
+                   help="Memory window for conversation context")
+    sp.add_argument("--domain", type=str,  # 🔥 NUEVO: añadir este argumento
+                   default="general",
+                   help="Domain (e.g., gaming, electronics)")
     # 🔥 CORREGIDO: Comando ML específico
     sp = sub.add_parser("ml", parents=[common], 
                        help="ML operations and diagnostics")
@@ -550,80 +586,96 @@ def parse_arguments():
 def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = None):
     """Manejo actualizado del modo RAG con sistema híbrido y ML avanzado."""
     
-    # 🔥 CORREGIDO: Header mejorado con información ML desde settings
+    # 🔥 PARCHE TEMPORAL: Asegurar que args tiene todos los atributos necesarios
+    if not hasattr(args, 'enable_rlhf'):
+        args.enable_rlhf = True
+    if not hasattr(args, 'user_language'):
+        args.user_language = 'es'
+    if not hasattr(args, 'memory_window'):
+        args.memory_window = 3
+    if not hasattr(args, 'domain'):
+        args.domain = 'general'
+    
     print("\n" + "="*60)
     print("🎯 AMAZON HYBRID RECOMMENDATION SYSTEM")
     print("="*60)
     
-    ml_enabled = settings.ML_ENABLED  # 🔥 Usar configuración global
+    ml_enabled = settings.ML_ENABLED
     
     if ml_enabled:
         ml_stats = ml_config.get('ml_stats', {}) if ml_config else {}
-        print(f"🤖 ML MODE: ENABLED")
+        print("🤖 ML MODE: ENABLED")
         print(f"📊 Features: {', '.join(settings.ML_FEATURES)}")
-        print(f"⚖️  ML Weight: {settings.ML_WEIGHT}")
+        print(f"⚖️ ML Weight: {settings.ML_WEIGHT}")
         if ml_stats:
             print(f"📈 Products with ML: {ml_stats.get('ml_processed', 0)}/{ml_stats.get('total_products', 0)}")
             print(f"🔤 Embeddings: {ml_stats.get('with_embeddings', 0)} products")
     else:
-        print(f"🤖 ML MODE: DISABLED (Basic RAG + Collaborative)")
+        print("🤖 ML MODE: DISABLED (Basic RAG + Collaborative)")
     
     use_embeddings = ml_config.get('use_product_embeddings', False) if ml_config else False
     if use_embeddings:
-        print(f"🔤 Using product embeddings: YES")
+        print("🔤 Using product embeddings: YES")
     
-    print(f"👤 Personalization: Age, Gender, Country")
-    print(f"🔄 Auto-retraining: ENABLED")
+    print("👤 Personalization: Age, Gender, Country")
+    print("🔄 Auto-retraining: ENABLED")
     print("="*60 + "\n")
     
-    # Crear o cargar perfil de usuario
-    user_id = args.user_id or f"cli_user_{args.user_age}_{args.user_gender}_{args.user_country}"
-    
+    # -----------------------------------------------------
+    # 🔥 NUEVA IMPLEMENTACIÓN DE CREACIÓN DE PERFIL
+    # -----------------------------------------------------
     try:
-        user_profile = user_manager.get_user_profile(user_id)
-        if not user_profile:
-            user_profile = user_manager.create_user_profile(
-                user_id=user_id,
-                age=args.user_age,
-                gender=args.user_gender,
-                country=args.user_country,
-                language="es"
-            )
-            ml_logger.info(f"👤 Created new user profile: {user_id}")
-            log_ml_event("user_profile_created", {
-                "user_id": user_id,
-                "age": args.user_age,
-                "gender": args.user_gender,
-                "country": args.user_country,
-                "ml_enabled": ml_enabled
-            })
-        else:
-            ml_logger.info(f"👤 Loaded existing user: {user_id}")
-            
-        print(f"👤 User: {user_id} (Age: {user_profile.age}, Gender: {user_profile.gender.value}, Country: {user_profile.country})")
+        # 🔥 CORRECCIÓN: Usar valores por defecto si args no los tiene
+        user_language = getattr(args, 'user_language', 'es') or 'es'
         
+        user_profile = user_manager.create_user_profile(
+            age=args.user_age,
+            gender=args.user_gender,
+            country=args.user_country,
+            language=user_language
+        )
+
+        user_id = user_profile.user_id  # 🔥 user_id obtenido del perfil creado
+        logger.info(f"👤 User profile created: {user_id}")
+
     except Exception as e:
         logger.error(f"Error creating user profile: {e}")
+        logger.warning("⚠️ Using default user profile")
+        
+        # 🔥 CORRECCIÓN: Crear un user_profile dummy
+        from src.core.data.user_models import UserProfile, Gender
         user_id = "default"
-        print("⚠️ Using default user profile")
+        user_language = getattr(args, 'user_language', 'es') or 'es'
+        user_profile = UserProfile(
+            user_id=user_id,
+            session_id=f"{user_id}_{int(datetime.now().timestamp())}",
+            age=args.user_age,
+            gender=Gender(args.user_gender),
+            country=args.user_country,
+            language=user_language
+        )
+    
+    # -----------------------------------------------------
 
-    # RAG agent con configuración ML
+    print(f"👤 User: {user_id} (Age: {user_profile.age if user_profile else '-'}, "
+          f"Gender: {getattr(user_profile.gender,'value','-')}, "
+          f"Country: {user_profile.country if user_profile else '-'})")
+    
+    # RAG + ML CONFIG
     config = _create_rag_config_with_ml(args, use_embeddings)
     agent = WorkingAdvancedRAGAgent(config=config)
     
-    # Inicializar feedback processor si está disponible
     feedback_processor = ml_config.get('feedback_processor') if ml_config else None
 
-    print(f"\n💡 Type 'exit' to quit | 'stats' for ML stats | 'help' for commands\n")
-    
+    print("\n💡 Type 'exit' to quit | 'stats' for ML stats | 'help' for commands\n")
+
     session_queries = 0
     session_start = datetime.now()
     
     while True:
         try:
             query = input("🧑 You: ").strip()
-            
-            # Comandos especiales
+
             if query.lower() in {"exit", "quit", "q"}:
                 break
             elif query.lower() == "stats":
@@ -637,10 +689,9 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
                 continue
             elif not query:
                 continue
-
-            session_queries += 1
             
-            # Registrar evento de query
+            session_queries += 1
+
             log_ml_event("user_query", {
                 "user_id": user_id,
                 "query": query,
@@ -651,40 +702,31 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
 
             print(f"\n{'🚀' if ml_enabled else '🤖'} Processing with {'ML-enhanced ' if ml_enabled else ''}HYBRID system...")
             
-            # Procesar query con timing
             start_time = datetime.now()
             response = agent.process_query(query, user_id)
             processing_time = (datetime.now() - start_time).total_seconds()
             
-            # Loggear métrica de procesamiento
             log_ml_metric(
-                "query_processing_time",
-                processing_time,
+                "query_processing_time", processing_time,
                 {
                     "query_length": len(query),
                     "user_id": user_id,
                     "ml_enabled": ml_enabled,
-                    "products_returned": len(response.products) if hasattr(response, 'products') else 0
+                    "products_returned": len(response.products) if hasattr(response,'products') else 0
                 }
             )
             
             print(f"\n🤖 {response.answer}\n")
-            
-            # Mostrar información ML mejorada
-            if args.show_ml_info and hasattr(response, 'products'):
+
+            if args.show_ml_info and hasattr(response,'products'):
                 _show_ml_response_info(response, ml_enabled)
-            
+
             print(f"📊 System Info: {len(response.products)} products | "
-                  f"Quality: {getattr(response, 'quality_score', 0):.2f} | "
+                  f"Quality: {getattr(response,'quality_score',0):.2f} | "
                   f"Time: {processing_time:.2f}s")
 
-            # Sistema de feedback con ML tracking
-            _handle_user_feedback(
-                query, response, user_id, agent, feedback_processor,
-                ml_enabled
-            )
-            
-            # Verificar reentrenamiento automático con logging ML
+            _handle_user_feedback(query, response, user_id, agent, feedback_processor, ml_enabled)
+
             try:
                 retrain_info = agent._check_and_retrain()
                 if retrain_info and retrain_info.get('retrained', False):
@@ -692,15 +734,13 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
                     log_ml_event("auto_retraining_completed", retrain_info)
             except Exception as e:
                 ml_logger.debug(f"Auto-retraining check: {e}")
-                
+
         except KeyboardInterrupt:
             print("\n🛑 Session ended")
             break
         except Exception as e:
             logger.error(f"Error in RAG interaction: {e}")
-            print("❌ Error processing your request. Please try again.")
-            
-            # Loggear error con contexto ML
+            print("❌ Error processing your request. Try again.")
             log_ml_event("rag_interaction_error", {
                 "error": str(e),
                 "user_id": user_id,
@@ -708,16 +748,14 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
                 "query": query if 'query' in locals() else "unknown"
             })
 
-    # Loggear estadísticas de sesión
     session_duration = (datetime.now() - session_start).total_seconds()
     log_ml_metric(
-        "session_summary",
-        session_duration,
+        "session_summary", session_duration,
         {
             "user_id": user_id,
             "queries_count": session_queries,
             "ml_enabled": ml_enabled,
-            "avg_time_per_query": session_duration / session_queries if session_queries > 0 else 0
+            "avg_time_per_query": session_duration/session_queries if session_queries>0 else 0
         }
     )
 
