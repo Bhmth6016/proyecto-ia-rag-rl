@@ -10,8 +10,11 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 
-from dotenv import load_dotenv
-import google.generativeai as genai
+# Eliminado: import google.generativeai as genai
+# Eliminado: from dotenv import load_dotenv
+
+# Importación nueva para LLM local
+from src.core.llm.local_llm import LocalLLMClient
 
 # 🔥 CORREGIDO: Importaciones ML desde nueva configuración
 from src.core.data.loader import DataLoader
@@ -25,11 +28,29 @@ from src.core.data.user_manager import UserManager
 from src.core.data.product_reference import ProductReference
 from src.core.rag.advanced.feedback_processor import FeedbackProcessor
 
-# Cargar variables de entorno
-load_dotenv()
-if settings.GEMINI_API_KEY:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    print("✅ Gemini API configurada")
+# Cargar variables de entorno (se mantiene para otras configuraciones)
+# load_dotenv()  # Eliminado - ya se carga en config.py
+
+# Verificar configuración de LLM local
+if settings.LOCAL_LLM_ENABLED:
+    print(f"✅ LLM local configurado: {settings.LOCAL_LLM_MODEL} en {settings.LOCAL_LLM_ENDPOINT}")
+    # Inicializar cliente LLM local
+    try:
+        local_llm_client = LocalLLMClient(
+            model=settings.LOCAL_LLM_MODEL,
+            endpoint=settings.LOCAL_LLM_ENDPOINT,
+            temperature=settings.LOCAL_LLM_TEMPERATURE,  # 🔥 AHORA SÍ ESTÁ SOPORTADO
+            timeout=settings.LOCAL_LLM_TIMEOUT          # 🔥 AHORA SÍ ESTÁ SOPORTADO
+        )
+        print("✅ Cliente LLM local inicializado")
+    except Exception as e:
+        print(f"⚠️ No se pudo inicializar LLM local: {e}")
+        print("ℹ️  Ejecuta: docker run -d -p 11434:11434 ollama/ollama")
+        print("ℹ️  Luego: ollama pull llama-3.2-3b-instruct")
+        local_llm_client = None
+else:
+    print("⚠️ LLM local deshabilitado. Usando modo básico sin generación de texto.")
+    local_llm_client = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,10 +95,18 @@ def initialize_system(
         if use_product_embeddings and not settings.ML_ENABLED:
             settings.update_ml_settings(ml_enabled=True)
     
+    # 🔥 NUEVO: Verificar LLM local
+    if settings.LOCAL_LLM_ENABLED and local_llm_client:
+        logger.info(f"✅ LLM local disponible: {settings.LOCAL_LLM_MODEL}")
+    elif settings.LOCAL_LLM_ENABLED:
+        logger.warning("⚠️ LLM local habilitado pero cliente no disponible")
+    
     # 🔥 NUEVO: Loggear configuración actualizada
     logger.info(f"✅ Configuración del sistema:")
     logger.info(f"   - ML_ENABLED (global): {settings.ML_ENABLED}")
     logger.info(f"   - ML_FEATURES (global): {list(settings.ML_FEATURES)}")
+    logger.info(f"   - LOCAL_LLM_ENABLED: {settings.LOCAL_LLM_ENABLED}")
+    logger.info(f"   - LOCAL_LLM_MODEL: {settings.LOCAL_LLM_MODEL}")
     logger.info(f"   - use_product_embeddings (local): {use_product_embeddings}")
     
     # 🔥 NUEVO: Registrar evento ML de inicialización
@@ -86,6 +115,8 @@ def initialize_system(
         {
             "ml_enabled": settings.ML_ENABLED,
             "ml_features": list(settings.ML_FEATURES),
+            "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
+            "local_llm_model": settings.LOCAL_LLM_MODEL,
             "use_product_embeddings": use_product_embeddings,
             "embedding_model": settings.ML_EMBEDDING_MODEL,
             "timestamp": datetime.now().isoformat()
@@ -138,7 +169,11 @@ def initialize_system(
         log_ml_metric(
             "product_loading_start",
             max_products,
-            {"timestamp": datetime.now().isoformat(), "ml_enabled": settings.ML_ENABLED}
+            {
+                "timestamp": datetime.now().isoformat(), 
+                "ml_enabled": settings.ML_ENABLED,
+                "local_llm_enabled": settings.LOCAL_LLM_ENABLED
+            }
         )
         
         products = loader.load_data()[:max_products]
@@ -184,7 +219,8 @@ def initialize_system(
             {
                 "product_count": len(products), 
                 "ml_products": ml_stats.get('ml_processed', 0),
-                "ml_enabled": settings.ML_ENABLED
+                "ml_enabled": settings.ML_ENABLED,
+                "local_llm_enabled": settings.LOCAL_LLM_ENABLED
             }
         )
 
@@ -197,6 +233,8 @@ def initialize_system(
                 'ml_enabled': True,
                 'ml_features': list(settings.ML_FEATURES),
                 'ml_weight': settings.ML_WEIGHT,
+                'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
+                'local_llm_model': settings.LOCAL_LLM_MODEL,
                 'collaborative_ml_config': {
                     'use_ml_features': True,
                     'ml_weight': settings.ML_WEIGHT,
@@ -216,6 +254,11 @@ def initialize_system(
                 
                 rag_agent = WorkingAdvancedRAGAgent(config=config)
                 
+                # 🔥 CORREGIDO: Inyectar cliente LLM local si está disponible
+                if hasattr(rag_agent, '_llm_client') and local_llm_client:
+                    rag_agent._llm_client = local_llm_client
+                    ml_logger.info(f"✅ LLM local inyectado en RAG agent: {settings.LOCAL_LLM_MODEL}")
+                
                 # 🔥 CORREGIDO: Inyectar dependencias ML si está habilitado
                 if hasattr(rag_agent, '_collaborative_filter') and settings.ML_ENABLED:
                     from src.core.recommendation.collaborative_filter import CollaborativeFilter
@@ -227,7 +270,7 @@ def initialize_system(
                     )
                     ml_logger.info(f"✅ CollaborativeFilter with ML (weight={settings.ML_WEIGHT}) initialized")
                 
-                ml_logger.info(f"🧠 WorkingAdvancedRAGAgent initialized - ML: {settings.ML_ENABLED}")
+                ml_logger.info(f"🧠 WorkingAdvancedRAGAgent initialized - ML: {settings.ML_ENABLED}, LLM: {'local' if settings.LOCAL_LLM_ENABLED else 'none'}")
                 
                 # Registrar evento de inicialización exitosa
                 log_ml_event(
@@ -235,6 +278,8 @@ def initialize_system(
                     {
                         "ml_enabled": settings.ML_ENABLED,
                         "ml_features": list(settings.ML_FEATURES),
+                        "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
+                        "local_llm_model": settings.LOCAL_LLM_MODEL,
                         "use_product_embeddings": use_product_embeddings,
                         "ml_weight": settings.ML_WEIGHT,
                         "timestamp": datetime.now().isoformat()
@@ -253,6 +298,7 @@ def initialize_system(
                 "product_count": len(products),
                 "ml_enabled": settings.ML_ENABLED,
                 "ml_features": list(settings.ML_FEATURES),
+                "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
                 "use_product_embeddings": use_product_embeddings,
                 "rag_agent_initialized": rag_agent is not None,
                 "initialization_time": initialization_time
@@ -261,10 +307,13 @@ def initialize_system(
         
         ml_logger.info(f"🚀 System initialization completed in {initialization_time:.2f}s")
         ml_logger.info(f"🤖 ML Status: {'ENABLED' if settings.ML_ENABLED else 'DISABLED'}")
+        ml_logger.info(f"💬 LLM Status: {'LOCAL' if settings.LOCAL_LLM_ENABLED else 'NONE'}")
 
         return products, rag_agent, user_manager, {
             'ml_enabled': settings.ML_ENABLED,  # 🔥 Usar configuración global
             'ml_features': list(settings.ML_FEATURES),  # 🔥 Usar configuración global
+            'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
+            'local_llm_client': local_llm_client,
             'ml_stats': ml_stats,
             'use_product_embeddings': use_product_embeddings,
             'feedback_processor': feedback_processor,
@@ -288,6 +337,7 @@ def initialize_system(
                 "traceback": error_details,
                 "ml_enabled": settings.ML_ENABLED,
                 "ml_features": list(settings.ML_FEATURES),
+                "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
                 "timestamp": datetime.now().isoformat()
             }
         )
@@ -304,6 +354,8 @@ def _configure_ml_system(
     ml_config = {
         'ml_enabled': settings.ML_ENABLED,
         'ml_features': list(settings.ML_FEATURES),
+        'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
+        'local_llm_model': settings.LOCAL_LLM_MODEL,
         'ml_batch_size': ml_batch_size,
         'use_product_embeddings': use_product_embeddings,
         'track_ml_metrics': track_ml_metrics,
@@ -323,6 +375,7 @@ def _configure_ml_system(
         
         ml_logger.info(f"🤖 ML System configured from global settings")
         ml_logger.info(f"📊 ML Features: {list(settings.ML_FEATURES)}")
+        ml_logger.info(f"💬 LLM Local: {settings.LOCAL_LLM_MODEL if settings.LOCAL_LLM_ENABLED else 'Disabled'}")
         ml_logger.info(f"📦 ML Batch size: {ml_batch_size}")
         ml_logger.info(f"🔤 Use product embeddings: {use_product_embeddings}")
         ml_logger.info(f"⚖️  ML Weight: {settings.ML_WEIGHT}")
@@ -376,6 +429,8 @@ def _create_rag_config_with_ml(args, use_product_embeddings: bool = None) -> Any
     # Obtener configuración ML desde settings
     ml_config = {
         'enabled': settings.ML_ENABLED,
+        'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
+        'local_llm_model': settings.LOCAL_LLM_MODEL,
         'weight': settings.ML_WEIGHT,
         'min_similarity': settings.ML_MIN_SIMILARITY
     }
@@ -404,6 +459,8 @@ def _create_rag_config_with_ml(args, use_product_embeddings: bool = None) -> Any
         use_advanced_features=True,
         # 🔥 CORREGIDO: Usar parámetros correctos
         ml_enabled=ml_config['enabled'],
+        local_llm_enabled=ml_config['local_llm_enabled'],
+        local_llm_model=ml_config['local_llm_model'],
         use_ml_embeddings=use_product_embeddings,
         ml_embedding_weight=ml_config['weight'],
         min_ml_similarity=ml_config['min_similarity'],
@@ -417,7 +474,7 @@ def _create_rag_config_with_ml(args, use_product_embeddings: bool = None) -> Any
 # =====================================================
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="🔎 Amazon Product Recommendation System - SISTEMA HÍBRIDO CON ML AVANZADO",
+        description="🔎 Amazon Product Recommendation System - SISTEMA HÍBRIDO CON ML AVANZADO 100% LOCAL",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 🤖 ML FEATURES (configured in settings):
@@ -427,9 +484,15 @@ def parse_arguments():
   similarity   - Similarity matching with ML
   all          - Enable all ML features
 
+💬 LLM LOCAL (Ollama):
+  --local-llm-enabled    Enable local LLM for text generation
+  --local-llm-model      Model name (default: llama-3.2-3b-instruct)
+  --local-llm-endpoint   Ollama endpoint (default: http://localhost:11434)
+
 📊 EXAMPLES:
-  %(prog)s rag --ml-enabled --ml-features embedding similarity
-  %(prog)s rag --no-ml  # Force disable ML
+  %(prog)s rag --ml-enabled --local-llm-enabled
+  %(prog)s rag --ml-features embedding similarity
+  %(prog)s rag --no-ml --no-local-llm  # Force disable ML and LLM
   %(prog)s ml --stats --enrich-sample 50
         """
     )
@@ -466,6 +529,25 @@ def parse_arguments():
                          help="Disable ML metrics tracking")
     ml_group.add_argument("--ml-log-file", type=Path, default="logs/ml_system.log",
                          help="ML-specific log file")
+    
+    # 🔥 NUEVO: Argumentos para LLM local
+    llm_group = common.add_argument_group('Local LLM Configuration (Ollama)')
+    llm_group.add_argument("--local-llm-enabled", action="store_true", 
+                          help="Enable local LLM for text generation")
+    llm_group.add_argument("--no-local-llm", action="store_true", 
+                          help="Disable local LLM")
+    llm_group.add_argument("--local-llm-model", type=str, 
+                          default="llama-3.2-3b-instruct",
+                          help="Local LLM model name (default: llama-3.2-3b-instruct)")
+    llm_group.add_argument("--local-llm-endpoint", type=str, 
+                          default="http://localhost:11434",
+                          help="Ollama endpoint (default: http://localhost:11434)")
+    llm_group.add_argument("--local-llm-temperature", type=float, 
+                          default=0.1,
+                          help="Temperature for local LLM (default: 0.1)")
+    llm_group.add_argument("--local-llm-timeout", type=int, 
+                          default=60,
+                          help="Timeout for local LLM requests in seconds (default: 60)")
 
     sub = parser.add_subparsers(dest='command', required=True, 
                                title='Available commands',
@@ -513,6 +595,7 @@ def parse_arguments():
     sp.add_argument("--domain", type=str,  # 🔥 NUEVO: añadir este argumento
                    default="general",
                    help="Domain (e.g., gaming, electronics)")
+    
     # 🔥 CORREGIDO: Comando ML específico
     sp = sub.add_parser("ml", parents=[common], 
                        help="ML operations and diagnostics")
@@ -552,6 +635,14 @@ def parse_arguments():
                          help="Clear ML cache")
     ml_cache.add_argument("--stats", action="store_true",
                          help="Show cache statistics")
+    
+    # 🔥 NUEVO: Comando para probar LLM local
+    llm_test = ml_sub.add_parser("test-llm", help="Test local LLM connection")
+    llm_test.add_argument("--prompt", type=str, 
+                         default="Hola, ¿cómo estás?",
+                         help="Test prompt for LLM")
+    llm_test.add_argument("--stream", action="store_true",
+                         help="Stream response from LLM")
 
     # Comando para gestión de usuarios
     sp = sub.add_parser("users", parents=[common], 
@@ -597,10 +688,11 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
         args.domain = 'general'
     
     print("\n" + "="*60)
-    print("🎯 AMAZON HYBRID RECOMMENDATION SYSTEM")
+    print("🎯 AMAZON HYBRID RECOMMENDATION SYSTEM (100% LOCAL)")
     print("="*60)
     
     ml_enabled = settings.ML_ENABLED
+    local_llm_enabled = settings.LOCAL_LLM_ENABLED
     
     if ml_enabled:
         ml_stats = ml_config.get('ml_stats', {}) if ml_config else {}
@@ -610,8 +702,12 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
         if ml_stats:
             print(f"📈 Products with ML: {ml_stats.get('ml_processed', 0)}/{ml_stats.get('total_products', 0)}")
             print(f"🔤 Embeddings: {ml_stats.get('with_embeddings', 0)} products")
+    
+    if local_llm_enabled:
+        print(f"💬 LLM LOCAL: ENABLED ({settings.LOCAL_LLM_MODEL})")
+        print(f"🔗 Endpoint: {settings.LOCAL_LLM_ENDPOINT}")
     else:
-        print("🤖 ML MODE: DISABLED (Basic RAG + Collaborative)")
+        print("💬 LLM LOCAL: DISABLED (Using basic retrieval only)")
     
     use_embeddings = ml_config.get('use_product_embeddings', False) if ml_config else False
     if use_embeddings:
@@ -665,6 +761,11 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
     config = _create_rag_config_with_ml(args, use_embeddings)
     agent = WorkingAdvancedRAGAgent(config=config)
     
+    # 🔥 NUEVO: Inyectar cliente LLM local si está disponible
+    if hasattr(agent, '_llm_client') and local_llm_enabled and ml_config and ml_config.get('local_llm_client'):
+        agent._llm_client = ml_config['local_llm_client']
+        logger.info(f"✅ LLM local inyectado en agente RAG")
+    
     feedback_processor = ml_config.get('feedback_processor') if ml_config else None
 
     print("\n💡 Type 'exit' to quit | 'stats' for ML stats | 'help' for commands\n")
@@ -679,13 +780,13 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
             if query.lower() in {"exit", "quit", "q"}:
                 break
             elif query.lower() == "stats":
-                _show_session_stats(session_queries, session_start, agent, ml_config, ml_enabled)
+                _show_session_stats(session_queries, session_start, agent, ml_config, ml_enabled, local_llm_enabled)
                 continue
             elif query.lower() == "help":
                 _show_help_commands()
                 continue
             elif query.lower() == "mlinfo":
-                _show_ml_info(agent, ml_config, ml_enabled)
+                _show_ml_info(agent, ml_config, ml_enabled, local_llm_enabled)
                 continue
             elif not query:
                 continue
@@ -697,10 +798,13 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
                 "query": query,
                 "session_queries": session_queries,
                 "ml_enabled": ml_enabled,
+                "local_llm_enabled": local_llm_enabled,
                 "ml_features": list(settings.ML_FEATURES) if ml_enabled else []
             })
 
             print(f"\n{'🚀' if ml_enabled else '🤖'} Processing with {'ML-enhanced ' if ml_enabled else ''}HYBRID system...")
+            if local_llm_enabled:
+                print(f"💬 Using local LLM: {settings.LOCAL_LLM_MODEL}")
             
             start_time = datetime.now()
             response = agent.process_query(query, user_id)
@@ -712,6 +816,7 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
                     "query_length": len(query),
                     "user_id": user_id,
                     "ml_enabled": ml_enabled,
+                    "local_llm_enabled": local_llm_enabled,
                     "products_returned": len(response.products) if hasattr(response,'products') else 0
                 }
             )
@@ -745,6 +850,7 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
                 "error": str(e),
                 "user_id": user_id,
                 "ml_enabled": ml_enabled,
+                "local_llm_enabled": local_llm_enabled,
                 "query": query if 'query' in locals() else "unknown"
             })
 
@@ -755,12 +861,13 @@ def _handle_rag_mode(system, user_manager, args, ml_config: Dict[str, Any] = Non
             "user_id": user_id,
             "queries_count": session_queries,
             "ml_enabled": ml_enabled,
+            "local_llm_enabled": local_llm_enabled,
             "avg_time_per_query": session_duration/session_queries if session_queries>0 else 0
         }
     )
 
 
-def _show_session_stats(session_queries, session_start, agent, ml_config, ml_enabled):
+def _show_session_stats(session_queries, session_start, agent, ml_config, ml_enabled, local_llm_enabled):
     """Muestra estadísticas de la sesión actual."""
     session_duration = (datetime.now() - session_start).total_seconds()
     
@@ -778,6 +885,12 @@ def _show_session_stats(session_queries, session_start, agent, ml_config, ml_ena
             print(f"   ML Products: {stats.get('ml_processed', 0)}/{stats.get('total_products', 0)}")
             print(f"   ML Embeddings: {stats.get('with_embeddings', 0)}")
         print(f"   ML Weight: {settings.ML_WEIGHT}")
+    
+    if local_llm_enabled:
+        print(f"\n💬 LLM LOCAL STATISTICS:")
+        print(f"   Model: {settings.LOCAL_LLM_MODEL}")
+        print(f"   Endpoint: {settings.LOCAL_LLM_ENDPOINT}")
+        print(f"   Temperature: {settings.LOCAL_LLM_TEMPERATURE}")
     
     if hasattr(agent, '_collaborative_filter'):
         try:
@@ -800,7 +913,7 @@ def _show_help_commands():
     print("   'help' - Show this help")
 
 
-def _show_ml_info(agent, ml_config, ml_enabled):
+def _show_ml_info(agent, ml_config, ml_enabled, local_llm_enabled):
     """Muestra información detallada del sistema ML."""
     print("\n🤖 ML SYSTEM INFORMATION:")
     print("="*50)
@@ -810,6 +923,15 @@ def _show_ml_info(agent, ml_config, ml_enabled):
         print(f"📊 Features: {', '.join(settings.ML_FEATURES)}")
         print(f"⚖️  ML Weight: {settings.ML_WEIGHT}")
         print(f"🔤 Embedding Model: {settings.ML_EMBEDDING_MODEL}")
+        
+        if local_llm_enabled:
+            print(f"\n💬 LLM LOCAL:")
+            print(f"   Model: {settings.LOCAL_LLM_MODEL}")
+            print(f"   Endpoint: {settings.LOCAL_LLM_ENDPOINT}")
+            print(f"   Temperature: {settings.LOCAL_LLM_TEMPERATURE}")
+            print(f"   Timeout: {settings.LOCAL_LLM_TIMEOUT}s")
+        else:
+            print(f"\n💬 LLM LOCAL: DISABLED")
         
         if ml_config and 'ml_stats' in ml_config:
             stats = ml_config['ml_stats']
@@ -824,6 +946,11 @@ def _show_ml_info(agent, ml_config, ml_enabled):
     else:
         print("❌ ML Status: DISABLED")
         print("💡 Enable with: --ml-enabled")
+    
+    if local_llm_enabled and not ml_enabled:
+        print(f"\n💬 LLM LOCAL:")
+        print(f"   Model: {settings.LOCAL_LLM_MODEL}")
+        print(f"   (ML features disabled)")
 
 
 def _show_ml_response_info(response, ml_enabled):
@@ -861,6 +988,7 @@ def _handle_user_feedback(query, response, user_id, agent, feedback_processor, m
                 "rating": rating,
                 "query": query,
                 "ml_enabled": ml_enabled,
+                "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
                 "ml_features": list(settings.ML_FEATURES) if ml_enabled else [],
                 "products_returned": len(response.products) if hasattr(response, 'products') else 0
             })
@@ -878,6 +1006,7 @@ def _handle_user_feedback(query, response, user_id, agent, feedback_processor, m
                         extra_meta={
                             'user_id': user_id,
                             'ml_enabled': ml_enabled,
+                            'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
                             'ml_features': list(settings.ML_FEATURES) if ml_enabled else []
                         }
                     )
@@ -941,6 +1070,9 @@ def _handle_ml_mode(args):
         elif args.ml_command == "cache":
             _handle_ml_cache(args, system)
             
+        elif args.ml_command == "test-llm":
+            _handle_test_llm(args, system)
+            
     except Exception as e:
         print(f"❌ Error in ML operations: {e}")
         logger.error(f"ML mode error: {e}", exc_info=True)
@@ -956,6 +1088,14 @@ def _handle_ml_stats(args, system):
     print(f"📊 ML Features: {', '.join(settings.ML_FEATURES)}")
     print(f"⚖️  ML Weight: {settings.ML_WEIGHT}")
     print(f"🔤 Embedding Model: {settings.ML_EMBEDDING_MODEL}")
+    
+    # 🔥 NUEVO: Mostrar información LLM local
+    print(f"\n💬 LLM LOCAL:")
+    print(f"   Status: {'ENABLED' if settings.LOCAL_LLM_ENABLED else 'DISABLED'}")
+    if settings.LOCAL_LLM_ENABLED:
+        print(f"   Model: {settings.LOCAL_LLM_MODEL}")
+        print(f"   Endpoint: {settings.LOCAL_LLM_ENDPOINT}")
+        print(f"   Temperature: {settings.LOCAL_LLM_TEMPERATURE}")
     
     # 🔥 CORREGIDO: Verificar dependencias ML
     try:
@@ -976,7 +1116,12 @@ def _handle_ml_stats(args, system):
             'ML_USE_GPU': settings.ML_USE_GPU,
             'ML_CACHE_SIZE': settings.ML_CACHE_SIZE,
             'ML_CONFIDENCE_THRESHOLD': settings.ML_CONFIDENCE_THRESHOLD,
-            'ML_MIN_SIMILARITY': settings.ML_MIN_SIMILARITY
+            'ML_MIN_SIMILARITY': settings.ML_MIN_SIMILARITY,
+            'LOCAL_LLM_ENABLED': settings.LOCAL_LLM_ENABLED,
+            'LOCAL_LLM_MODEL': settings.LOCAL_LLM_MODEL,
+            'LOCAL_LLM_ENDPOINT': settings.LOCAL_LLM_ENDPOINT,
+            'LOCAL_LLM_TEMPERATURE': settings.LOCAL_LLM_TEMPERATURE,
+            'LOCAL_LLM_TIMEOUT': settings.LOCAL_LLM_TIMEOUT
         }
         print(json.dumps(ml_config, indent=2, default=str))
     
@@ -989,6 +1134,11 @@ def _handle_ml_stats(args, system):
                 'ML_FEATURES': list(settings.ML_FEATURES),
                 'ML_WEIGHT': settings.ML_WEIGHT,
                 'ML_EMBEDDING_MODEL': settings.ML_EMBEDDING_MODEL
+            },
+            'local_llm_config': {
+                'LOCAL_LLM_ENABLED': settings.LOCAL_LLM_ENABLED,
+                'LOCAL_LLM_MODEL': settings.LOCAL_LLM_MODEL,
+                'LOCAL_LLM_ENDPOINT': settings.LOCAL_LLM_ENDPOINT
             }
         }
         with open(args.export, 'w', encoding='utf-8') as f:
@@ -1097,6 +1247,7 @@ def _handle_ml_evaluate(args, system):
     evaluation_results = {
         'timestamp': datetime.now().isoformat(),
         'ml_enabled': settings.ML_ENABLED,
+        'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
         'ml_features': list(settings.ML_FEATURES),
         'test_size': args.test_size,
         'compare_methods': args.compare_methods,
@@ -1155,6 +1306,73 @@ def _handle_ml_cache(args, system):
                 print("⚠️ No ML preprocessor available")
         except Exception as e:
             print(f"⚠️ Could not get cache stats: {e}")
+
+
+def _handle_test_llm(args, system):
+    """Prueba la conexión con LLM local."""
+    print(f"\n🧪 TESTING LOCAL LLM CONNECTION")
+    print("-"*40)
+    
+    if not settings.LOCAL_LLM_ENABLED:
+        print("❌ LLM local no está habilitado")
+        print("💡 Usa: --local-llm-enabled")
+        return
+    
+    try:
+        # Crear cliente LLM local
+        llm_client = LocalLLMClient(
+            model=settings.LOCAL_LLM_MODEL,
+            endpoint=settings.LOCAL_LLM_ENDPOINT,
+            temperature=settings.LOCAL_LLM_TEMPERATURE,
+            timeout=settings.LOCAL_LLM_TIMEOUT
+        )
+        
+        print(f"🔗 Conectando a {settings.LOCAL_LLM_ENDPOINT}...")
+        
+        # Probar conexión
+        is_available = llm_client.check_availability()
+        if is_available:
+            print(f"✅ Conexión exitosa con Ollama")
+            print(f"📦 Modelo disponible: {settings.LOCAL_LLM_MODEL}")
+            
+            # Probar generación
+            prompt = args.prompt
+            print(f"\n📤 Enviando prompt: '{prompt}'")
+            
+            if args.stream:
+                print(f"📥 Respuesta (streaming):")
+                print("-"*40)
+                response_text = ""
+                for chunk in llm_client.generate_stream(prompt):
+                    print(chunk, end="", flush=True)
+                    response_text += chunk
+                print(f"\n" + "-"*40)
+            else:
+                print(f"⏳ Generando respuesta...")
+                response = llm_client.generate(prompt)
+                print(f"\n📥 Respuesta:")
+                print("-"*40)
+                print(response)
+                print("-"*40)
+            
+            print(f"\n✅ Prueba LLM completada exitosamente")
+        else:
+            print(f"❌ No se pudo conectar a Ollama en {settings.LOCAL_LLM_ENDPOINT}")
+            print(f"💡 Asegúrate de que Ollama esté ejecutándose:")
+            print(f"   1. docker run -d -p 11434:11434 ollama/ollama")
+            print(f"   2. ollama pull {settings.LOCAL_LLM_MODEL}")
+            
+    except Exception as e:
+        print(f"❌ Error probando LLM local: {e}")
+        print(f"🔧 Detalles del error: {type(e).__name__}")
+        
+        if "ConnectionError" in str(type(e).__name__):
+            print(f"🌐 Error de conexión: Verifica que Ollama esté corriendo en {settings.LOCAL_LLM_ENDPOINT}")
+        elif "Timeout" in str(type(e).__name__):
+            print(f"⏰ Timeout: Aumenta el timeout con --local-llm-timeout")
+        else:
+            import traceback
+            print(f"📋 Traceback completo:\n{traceback.format_exc()}")
 
 
 # =====================================================
@@ -1254,6 +1472,7 @@ def _handle_evaluate_mode(args):
     evaluation_results = {
         'timestamp': datetime.now().isoformat(),
         'ml_enabled': settings.ML_ENABLED,
+        'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
         'ml_features': list(settings.ML_FEATURES) if settings.ML_ENABLED else [],
         'ml_metrics_enabled': args.ml_metrics,
         'methods_to_compare': args.compare,
@@ -1292,6 +1511,7 @@ if __name__ == "__main__":
     print("║" + " "*58 + "║")
     print("╠" + "═"*58 + "╣")
     print("║ 🤖 ML Features: Categories, NER, Embeddings, Similarity  ║")
+    print("║ 💬 LLM Local: Ollama integration (100% offline)          ║")
     print("║ 🤝 Hybrid System: RAG + Collaborative + ML                ║")
     print("║ 👤 Personalization: Age, Gender, Country, Preferences     ║")
     print("║ 🔄 Auto-retraining with RLHF Feedback                    ║")
@@ -1303,6 +1523,7 @@ if __name__ == "__main__":
     args = parse_arguments()
 
     # 🔥 CORRECCIÓN CRÍTICA: Actualizar settings desde argumentos ANTES de inicializar
+    # Actualizar configuración ML
     if hasattr(args, 'ml_enabled') and args.ml_enabled:
         settings.update_ml_settings(
             ml_enabled=True,
@@ -1314,6 +1535,21 @@ if __name__ == "__main__":
     # Actualizar ML weight si se especifica
     if hasattr(args, 'ml_weight') and args.ml_weight is not None:
         settings.ML_WEIGHT = args.ml_weight
+    
+    # 🔥 NUEVO: Actualizar configuración LLM local desde argumentos
+    if hasattr(args, 'local_llm_enabled') and args.local_llm_enabled:
+        settings.LOCAL_LLM_ENABLED = True
+    elif hasattr(args, 'no_local_llm') and args.no_local_llm:
+        settings.LOCAL_LLM_ENABLED = False
+    
+    if hasattr(args, 'local_llm_model'):
+        settings.LOCAL_LLM_MODEL = args.local_llm_model
+    if hasattr(args, 'local_llm_endpoint'):
+        settings.LOCAL_LLM_ENDPOINT = args.local_llm_endpoint
+    if hasattr(args, 'local_llm_temperature'):
+        settings.LOCAL_LLM_TEMPERATURE = args.local_llm_temperature
+    if hasattr(args, 'local_llm_timeout'):
+        settings.LOCAL_LLM_TIMEOUT = args.local_llm_timeout
 
     # Logging mejorado
     log_level = "DEBUG" if getattr(args, "verbose", False) else args.log_level
@@ -1328,6 +1564,7 @@ if __name__ == "__main__":
     log_ml_event("system_start", {
         "command": args.command,
         "ml_enabled": settings.ML_ENABLED,
+        "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
         "ml_features": list(settings.ML_FEATURES),
         "ml_weight": settings.ML_WEIGHT,
         "timestamp": datetime.now().isoformat()
@@ -1351,6 +1588,8 @@ if __name__ == "__main__":
             print(f"✅ Index contains {len(products)} products")
             if settings.ML_ENABLED:
                 print(f"🤖 {ml_config.get('ml_stats', {}).get('ml_processed', 0)} products processed with ML")
+            if settings.LOCAL_LLM_ENABLED:
+                print(f"💬 LLM local: {settings.LOCAL_LLM_MODEL}")
 
         elif args.command == "rag":
             _handle_rag_mode(get_system(), user_manager, args, ml_config)
@@ -1372,6 +1611,7 @@ if __name__ == "__main__":
             "error": str(e),
             "command": args.command,
             "ml_enabled": settings.ML_ENABLED,
+            "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
             "timestamp": datetime.now().isoformat()
         })
         
@@ -1382,5 +1622,6 @@ if __name__ == "__main__":
         "command": args.command,
         "exit_status": "success",
         "ml_enabled": settings.ML_ENABLED,
+        "local_llm_enabled": settings.LOCAL_LLM_ENABLED,
         "timestamp": datetime.now().isoformat()
     })

@@ -1,5 +1,5 @@
 from __future__ import annotations
-# src/interfaces/cli.py - ACTUALIZADO
+# src/interfaces/cli.py
 import argparse
 import logging
 import sys

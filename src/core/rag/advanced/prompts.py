@@ -1,3 +1,4 @@
+# src/core/rag/advanced/prompts.py
 from langchain_core.prompts import ChatPromptTemplate
 
 # ============================================================================

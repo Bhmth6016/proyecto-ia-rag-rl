@@ -53,8 +53,6 @@ dist/
 # ======================
 # ARCHIVOS QUE QUIERES IGNORAR
 # ======================
-src/core/config.py
-src/core/config/settings.py
 README.md
 models/rl_models/checkpoint-40/config.json
 /models

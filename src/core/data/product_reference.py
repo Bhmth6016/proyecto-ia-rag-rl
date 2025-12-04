@@ -1,3 +1,4 @@
+# src/core/data/product_reference.py
 """
 ProductReference - Para estandarizar el manejo de productos en todo el sistema.
 Versión corregida con manejo consistente de ML.

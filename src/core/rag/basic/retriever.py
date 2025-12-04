@@ -1,6 +1,6 @@
+from __future__ import annotations
 # src/core/rag/basic/retriever.py
 
-from __future__ import annotations
 import json
 import numpy as np  # ✅ Asegurar que numpy está importado
 import uuid
@@ -22,7 +22,14 @@ except ImportError:
     from langchain_community.vectorstores import Chroma
     CHROMA_NEW = False
 
-from langchain_huggingface import HuggingFaceEmbeddings
+# 🔥 CAMBIO: Usar el embedder local más robusto
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+    HAS_LANGCHAIN_HF = True
+except ImportError:
+    # Fallback a sentence-transformers directamente
+    from sentence_transformers import SentenceTransformer
+    HAS_LANGCHAIN_HF = False
 
 from src.core.utils.logger import get_logger
 from src.core.data.product import Product
@@ -68,6 +75,70 @@ def _normalize(text: str) -> str:
     return text.lower().strip()
 
 # ----------------------------------------------------------------------
+# 🔥 NUEVO: Custom Embedder para embeddings 100% locales
+# ----------------------------------------------------------------------
+class LocalEmbedder:
+    """Embedder local que no requiere conexión a internet"""
+    
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cpu"):
+        self.model_name = model_name
+        self.device = device
+        self.model = None
+        self._initialize_model()
+    
+    def _initialize_model(self):
+        """Inicializa el modelo localmente"""
+        try:
+            logger.info(f"🔧 Inicializando embedder local: {self.model_name}")
+            
+            if HAS_LANGCHAIN_HF:
+                # Usar LangChain HuggingFaceEmbeddings
+                self.model = HuggingFaceEmbeddings(
+                    model_name=self.model_name,
+                    model_kwargs={"device": self.device},
+                    encode_kwargs={
+                        "normalize_embeddings": True,
+                        "batch_size": 32
+                    }
+                )
+            else:
+                # Fallback a SentenceTransformer directamente
+                self.model = SentenceTransformer(self.model_name, device=self.device)
+            
+            logger.info(f"✅ Embedder local inicializado: {self.model_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error inicializando embedder local {self.model_name}: {e}")
+            raise
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Genera embedding para una query"""
+        try:
+            if HAS_LANGCHAIN_HF:
+                return self.model.embed_query(text)
+            else:
+                # Usar SentenceTransformer directamente
+                embedding = self.model.encode(text, normalize_embeddings=True)
+                return embedding.tolist()
+        except Exception as e:
+            logger.error(f"❌ Error generando embedding: {e}")
+            # Fallback: embedding simple
+            return [0.0] * 384
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Genera embeddings para múltiples documentos"""
+        try:
+            if HAS_LANGCHAIN_HF:
+                return self.model.embed_documents(texts)
+            else:
+                embeddings = self.model.encode(texts, normalize_embeddings=True)
+                return embeddings.tolist()
+        except Exception as e:
+            logger.error(f"❌ Error generando embeddings de documentos: {e}")
+            # Fallback: embeddings simples
+            return [[0.0] * 384 for _ in texts]
+
+# ----------------------------------------------------------------------
 # Retriever
 # ----------------------------------------------------------------------
 
@@ -75,7 +146,7 @@ class Retriever:
     def __init__(
         self,
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
-        embedding_model: str = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
+        embedding_model: str = "all-MiniLM-L6-v2",  # 🔥 SIEMPRE LOCAL
         device: str = getattr(settings, "DEVICE", "cpu"),
         # 🔥 NUEVO: Configuración ML
         use_product_embeddings: bool = False  # Usar embeddings propios de Product
@@ -95,13 +166,10 @@ class Retriever:
         # 🔥 NUEVO: Configuración ML
         self.use_product_embeddings = use_product_embeddings
 
-        self.embedder = HuggingFaceEmbeddings(
+        # 🔥 CAMBIO: Usar embedder local
+        self.embedder = LocalEmbedder(
             model_name=self.embedder_name,
-            model_kwargs={"device": self.device},
-            encode_kwargs={
-                "normalize_embeddings": True,
-                "batch_size": 32
-            }
+            device=self.device
         )
 
         self.store = None
@@ -124,9 +192,14 @@ class Retriever:
                 # Generar embedding para la query
                 query_embedding = np.array(self.embedder.embed_query(query), dtype=np.float32)
                 
+                # Verificar dimensiones
+                if len(query_embedding) != len(product_embedding):
+                    logger.warning(f"[Embedding Similarity] Dimension mismatch: query={len(query_embedding)}, product={len(product_embedding)}")
+                    return 0.5
+                
                 # Normalizar vectores
-                query_norm = query_embedding / np.linalg.norm(query_embedding)
-                product_norm = product_embedding / np.linalg.norm(product_embedding)
+                query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-10)
+                product_norm = product_embedding / (np.linalg.norm(product_embedding) + 1e-10)
                 
                 # Calcular similitud coseno
                 similarity = np.dot(query_norm, product_norm)
@@ -156,9 +229,10 @@ class Retriever:
                             persist_directory=str(self.index_path)
                         )
                     else:
+                        # 🔥 CAMBIO: Usar custom embedding function para compatibilidad
                         self.store = Chroma(
                             persist_directory=str(self.index_path),
-                            embedding_function=self.embedder
+                            embedding_function=self._get_langchain_embedding_function()
                         )
 
                     logger.info("✅ Chroma store loaded successfully")
@@ -171,6 +245,20 @@ class Retriever:
             except Exception as e:
                 logger.error(f"❌ Error loading Chroma store: {e}")
                 self.store = None
+    
+    def _get_langchain_embedding_function(self):
+        """Crea una función de embedding compatible con LangChain"""
+        class CustomEmbeddingFunction:
+            def __init__(self, embedder):
+                self.embedder = embedder
+            
+            def embed_query(self, text: str) -> List[float]:
+                return self.embedder.embed_query(text)
+            
+            def embed_documents(self, texts: List[str]) -> List[List[float]]:
+                return self.embedder.embed_documents(texts)
+        
+        return CustomEmbeddingFunction(self.embedder)
 
     def _check_ml_capabilities(self):
         """Verifica si el índice Chroma tiene capacidades ML"""
@@ -618,15 +706,15 @@ class Retriever:
                 self.store = Chroma.from_documents(
                     documents=documents,
                     persist_directory=str(self.index_path),
-                    collection_metadata={"hnsw:space": "cosine"}
+                    collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
                 )
             else:
-                # Versión vieja: sí usa embedding_function
+                # Versión vieja: usar embedding function personalizada
                 self.store = Chroma.from_documents(
                     documents=documents,
-                    embedding_function=self.embedder,
+                    embedding_function=self._get_langchain_embedding_function(),
                     persist_directory=str(self.index_path),
-                    collection_metadata={"hnsw:space": "cosine"}
+                    collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
                 )
 
             logger.info("✅ Index built successfully")

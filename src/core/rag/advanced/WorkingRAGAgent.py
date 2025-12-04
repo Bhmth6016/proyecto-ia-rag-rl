@@ -11,7 +11,10 @@ from pathlib import Path
 from datetime import datetime
 import json
 from collections import deque
-import google.generativeai as genai
+
+# 🔥 REEMPLAZADO: Google Generative AI con LLM local
+# import google.generativeai as genai
+from src.core.llm.local_llm import LocalLLMClient
 
 # Local imports
 from src.core.data.product_reference import ProductReference
@@ -42,8 +45,12 @@ class RAGConfig:
     use_ml_embeddings: bool = True  # Usar embeddings ML para scoring
     ml_embedding_weight: float = 0.3  # Peso para embeddings ML
     min_ml_similarity: float = 0.2  # Similitud mínima para considerar embeddings
+    # 🔥 NUEVO: Configuración LLM local
+    local_llm_enabled: bool = True  # Habilitar LLM local
+    local_llm_model: str = "llama-3.2-3b-instruct"  # Modelo LLM local por defecto
     # 🔥 NUEVO: Configuración para compatibilidad
     use_product_embeddings: bool = True  # Alias para use_ml_embeddings
+
 @dataclass
 class RAGResponse:
     answer: str
@@ -54,6 +61,9 @@ class RAGResponse:
     # 🔥 NUEVO: Información ML
     ml_embeddings_used: int = 0
     ml_scoring_method: str = "none"
+    # 🔥 NUEVO: Información LLM
+    local_llm_used: bool = False
+    local_llm_model: str = ""
 
     @property
     def text(self):
@@ -295,14 +305,18 @@ class MLEmbeddingScorer:
         return [float(hash(word) % 100) / 100.0 for word in query.split()][:384]
 
 # ===============================
-# Main Agent - VERSIÓN FINAL CON ML
+# Main Agent - VERSIÓN FINAL CON ML Y LLM LOCAL
 # ===============================
 class WorkingAdvancedRAGAgent:
     def __init__(self, config: Optional[RAGConfig] = None):
         self.config = config or RAGConfig()
         self.system = get_system()
         self.retriever = getattr(self.system, "retriever", Retriever())
-        self.llm_model = genai.GenerativeModel('gemini-pro')  
+        
+        # 🔥 REEMPLAZADO: Gemini con LLM local
+        # self.llm_model = genai.GenerativeModel('gemini-pro')
+        self.llm_client = self._initialize_local_llm()
+        
         # 🔥 CAMBIO 1: Inicialización condicional de UserManager y CollaborativeFilter
         self.enable_user_features = bool(self.config and getattr(self.config, "use_advanced_features", False))
 
@@ -325,7 +339,7 @@ class WorkingAdvancedRAGAgent:
         # ======================================================
         if self.enable_user_features:
             try:
-                from src.core.user_manager import UserManager
+                from src.core.data.user_manager import UserManager
                 self.user_manager = UserManager()
                 print("✅ UserManager real inicializado")
             except ImportError as e:
@@ -378,33 +392,96 @@ class WorkingAdvancedRAGAgent:
         self._check_and_retrain()
         
         logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido ML Activado")
+        logger.info(f"💬 LLM Local: {'HABILITADO' if self.llm_client else 'DESHABILITADO'}")
         logger.info(f"📊 Pesos híbridos: RAG={self.hybrid_weights['rag']}, "
                    f"Collaborative={self.hybrid_weights['collaborative']}, "
                    f"ML={self.hybrid_weights['ml_embeddings']}")
+    
+    def _initialize_local_llm(self) -> Optional[LocalLLMClient]:
+        """Inicializa el cliente LLM local basado en configuración"""
+        try:
+            # Verificar si LLM local está habilitado en configuración
+            local_llm_enabled = getattr(self.config, 'local_llm_enabled', False)
+            
+            if not local_llm_enabled:
+                logger.info("💬 LLM local deshabilitado por configuración")
+                return None
+            
+            # Obtener configuración
+            llm_model = getattr(self.config, 'local_llm_model', 'llama-3.2-3b-instruct')
+            
+            # Crear cliente LLM local con parámetros correctos
+            llm_client = LocalLLMClient(
+                model=llm_model,
+                endpoint=settings.LOCAL_LLM_ENDPOINT,
+                temperature=settings.LOCAL_LLM_TEMPERATURE,  # 🔥 IMPORTANTE
+                timeout=settings.LOCAL_LLM_TIMEOUT          # 🔥 IMPORTANTE
+            )
+            
+            # Verificar disponibilidad
+            if llm_client.check_availability():
+                logger.info(f"✅ LLM local inicializado: {llm_model}")
+                return llm_client
+            else:
+                logger.warning(f"⚠️ LLM local no disponible: {llm_model}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error inicializando LLM local: {e}")
+            return None
         
     def _generate_with_llm(self, context: str, query: str, products: List[Product]) -> str:
-        prompt = f"""
-        Eres un experto en recomendaciones de videojuegos.
+        """Genera respuesta usando LLM local."""
         
-        CONTEXTO: {context}
-        PRODUCTOS: {[p.title for p in products]}
-        CONSULTA: {query}
+        system_prompt = """Eres un experto en recomendaciones de videojuegos y productos electrónicos.
+        Genera respuestas útiles, precisas y naturales en español.
+        Recomienda productos específicos cuando sea posible.
+        Usa un tono amigable pero profesional.
         
-        Genera una respuesta útil y atractiva recomendando estos productos.
-        Incluye:
-        - Títulos y plataformas
-        - Precios y ratings cuando estén disponibles  
-        - Explicación breve de por qué son relevantes
-        - Formato amigable con emojis
+        Formato sugerido:
+        1. Un saludo amigable
+        2. Explicación de los productos encontrados
+        3. Recomendaciones específicas con detalles
+        4. Sugerencias adicionales si es necesario
+        5. Despedida cordial"""
+        
+        user_prompt = f"""
+        CONTEXTO DE CONVERSACIÓN PREVIA: {context}
+        
+        PRODUCTOS ENCONTRADOS: {[p.title for p in products[:5]]}
+        
+        CONSULTA DEL USUARIO: {query}
+        
+        Por favor, genera una respuesta útil y atractiva recomendando estos productos.
+        
+        Incluye información relevante como:
+        - Nombres de productos (usa títulos completos)
+        - Características principales (plataforma, género, edición especial si aplica)
+        - Precios si están disponibles (formato: € o $)
+        - Ratings o calificaciones si están disponibles
+        - Por qué son relevantes para la consulta
+        
+        Si hay muchos productos, recomienda solo los 3-5 más relevantes.
+        
+        Mantén un tono amigable y profesional en español.
+        Usa emojis apropiados para hacer la respuesta más atractiva.
         """
         
         try:
-            response = self.llm_model.generate_content(prompt)
-            return response.text
+            if self.llm_client:
+                # 🔥 Usar LLM local
+                response = self.llm_client.generate(user_prompt, system_prompt)
+                logger.info(f"💬 Respuesta generada con LLM local: {self.config.local_llm_model}")
+                return response
+            else:
+                # Fallback a respuesta simple sin LLM
+                logger.warning("⚠️ LLM local no disponible, usando fallback")
+                return self._generate_advanced_gaming_response(query, products)
         except Exception as e:
-            logger.error(f"Error LLM: {e}")
-            return self._generate_advanced_gaming_response(query, products)  # Fallback
-        
+            logger.error(f"❌ Error LLM local: {e}")
+            # Fallback a respuesta simple
+            return self._generate_advanced_gaming_response(query, products)
+            
     def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
         """Procesa consultas de gaming de forma optimizada - VERSIÓN CORREGIDA"""
         try:
@@ -535,10 +612,13 @@ class WorkingAdvancedRAGAgent:
                 products=final_products,  # 🔥 CORRECCIÓN: Devolver productos completos, no solo IDs
                 quality_score=quality_score,
                 retrieved_count=len(ranked),
-                used_llm=False,
+                used_llm=bool(self.llm_client),  # 🔥 NUEVO: Indicar si se usó LLM
                 # 🔥 NUEVO: Información ML
                 ml_embeddings_used=ml_filtered_count,
-                ml_scoring_method="embedding_similarity" if ml_used else "none"
+                ml_scoring_method="embedding_similarity" if ml_used else "none",
+                # 🔥 NUEVO: Información LLM
+                local_llm_used=bool(self.llm_client),
+                local_llm_model=getattr(self.config, 'local_llm_model', 'none')
             )
             
         except Exception as e:
@@ -550,7 +630,9 @@ class WorkingAdvancedRAGAgent:
                 quality_score=0.0,
                 retrieved_count=0,
                 ml_embeddings_used=0,
-                ml_scoring_method="error"
+                ml_scoring_method="error",
+                local_llm_used=False,
+                local_llm_model="error"
             )
             
     def process_query_with_limit(self, query: str, limit: int = 5) -> List[Dict]:
@@ -908,10 +990,11 @@ class WorkingAdvancedRAGAgent:
         if not products:
             return self._no_gaming_results_response(original_query)
         
+        # 🔥 NUEVO: Usar LLM local si está disponible
         return self._generate_with_llm(context, original_query, products)
 
     def _generate_advanced_gaming_response(self, query: str, products: List[Product]) -> str:
-        """Respuesta avanzada para gaming con formato enriquecido"""
+        """Respuesta avanzada para gaming con formato enriquecido - Fallback cuando no hay LLM"""
         # Agrupar por plataforma de forma inteligente
         platforms = self._categorize_by_platform(products)
         

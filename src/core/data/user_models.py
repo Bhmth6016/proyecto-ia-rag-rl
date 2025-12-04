@@ -1,4 +1,5 @@
 from __future__ import annotations
+# src/core/data/user_models.py
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Optional, Any
