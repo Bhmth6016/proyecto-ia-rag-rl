@@ -1,11 +1,11 @@
 {
-  "timestamp": 1764927279.5557637,
+  "timestamp": 1764928638.059889,
   "test_queries": 8,
   "test_products": 7,
   "results": {
     "rag_sin_ml": {
-      "time_seconds": 0.03568387031555176,
-      "latency_ms": 4.46048378944397,
+      "time_seconds": 0.03516364097595215,
+      "latency_ms": 4.3954551219940186,
       "queries_count": 8,
       "precision@5": 0.7875,
       "recall@5": 0.7708333333333334,
@@ -18,8 +18,8 @@
       }
     },
     "rag_con_ml": {
-      "time_seconds": 0.17726898193359375,
-      "latency_ms": 22.15862274169922,
+      "time_seconds": 0.1727437973022461,
+      "latency_ms": 21.59297466278076,
       "queries_count": 8,
       "precision@5": 0.85,
       "recall@5": 0.8333333333333334,
