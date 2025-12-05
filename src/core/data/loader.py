@@ -1,4 +1,4 @@
-# src/core/data/loader.py
+# src/core/data/loader.py - VERSIÓN CORREGIDA
 
 import json
 import re
@@ -36,16 +36,19 @@ except ImportError:
     pass
 
 # ==============================================
-# IMPORTACIONES DEL SISTEMA
+# IMPORTACIONES DEL SISTEMA - VERSIÓN SIMPLIFICADA
 # ==============================================
 
 try:
-    from src.core.data.product import Product, AutoProductConfig, MLProductEnricher
+    # 🔥 IMPORTANTE: Importar SOLO lo esencial
+    from src.core.data.product import Product, AutoProductConfig
     from src.core.config import settings
     from src.core.utils.logger import get_logger
+    # 🔥 NO importar MLProductEnricher aquí - causa dependencia circular
 except ImportError as e:
-    # Fallback definitions para desarrollo
+    # Fallback definitions simplificado
     import logging
+    from pathlib import Path
     
     class Product:
         def __init__(self, **kwargs):
@@ -58,11 +61,21 @@ except ImportError as e:
         product_type: str | None = None
         code: str | None = None
         title: str | None = None
-       
+        
         @classmethod
         def from_dict(cls, data, ml_enrich=False, ml_features=None):
-            # Implementación simplificada
+            # Implementación simplificada sin ML
             return cls(**data)
+        
+        @classmethod
+        def batch_create(cls, product_dicts, ml_enrich=False, batch_size=16):
+            # Implementación simplificada
+            return [cls.from_dict(p) for p in product_dicts]
+        
+        @classmethod
+        def configure_ml(cls, enabled=False, features=None, categories=None):
+            # Método placeholder
+            pass
         
         def clean_image_urls(self):
             if hasattr(self, 'image_urls'):
@@ -80,21 +93,17 @@ except ImportError as e:
         ML_ENABLED = False
         DEFAULT_CATEGORIES = ["Electronics", "Books", "Home", "Clothing"]
     
-    class MLProductEnricher:
-        @classmethod
-        def get_metrics(cls):
-            return {"ml_enabled": False}
-    
     class settings:
         RAW_DIR = Path("./data/raw")
         PROC_DIR = Path("./data/processed")
         ML_ENABLED = False
         ML_FEATURES = ["category", "entities"]
+        ML_CATEGORIES = ["Electronics", "Books", "Home", "Clothing"]
     
     def get_logger(name):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         return logging.getLogger(name)
-
+    
 logger = get_logger(__name__)
 
 # ==============================================
@@ -129,7 +138,7 @@ class FastDataLoader:
         # 🔥 NUEVOS PARÁMETROS ML
         ml_enabled: Optional[bool] = None,
         ml_features: Optional[List[str]] = None,
-        ml_batch_size: int = 32
+        ml_batch_size: int = 64
     ):
         self.raw_dir = Path(raw_dir) if raw_dir else settings.RAW_DIR
         self.processed_dir = Path(processed_dir) if processed_dir else settings.PROC_DIR
@@ -174,14 +183,16 @@ class FastDataLoader:
         """Inicialización de modelos ML"""
         if self._models_initialized:
             return
-            
+        
         try:
             logger.info("Initializing ML models...")
             
-            # Solo inicializar si ML está habilitado
             if not self.ml_enabled:
                 logger.info("ML is disabled, skipping model initialization")
                 return
+            
+            # Configurar cache
+            os.environ['HF_HOME'] = str(Path.home() / ".cache" / "huggingface")
             
             # Configurar para rendimiento
             os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -202,10 +213,43 @@ class FastDataLoader:
             
             self._models_initialized = True
             logger.info("ML models initialized successfully")
+            if 'tags' in self.ml_features:
+                self._train_tfidf_with_existing_data()
+            
+            self._models_initialized = True
+            logger.info("ML models initialized successfully")
             
         except Exception as e:
             logger.error(f"Error initializing ML models: {e}")
             self._models_initialized = False
+            
+    def _train_tfidf_with_existing_data(self):
+        """Entrena TF-IDF con datos de productos existentes."""
+        try:
+            # Verificar si hay datos procesados
+            processed_file = self.processed_dir / "products.json"
+            if processed_file.exists():
+                with open(processed_file, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+                
+                if existing_data and isinstance(existing_data, list):
+                    # Extraer textos para entrenar TF-IDF
+                    texts = []
+                    for item in existing_data[:100]:  # Usar máximo 100
+                        title = item.get('title', '')
+                        desc = item.get('description', '')
+                        if title or desc:
+                            texts.append(f"{title} {desc}".strip())
+                    
+                    if len(texts) >= 3:  # Mínimo 3 textos
+                        logger.info(f"📊 Entrenando TF-IDF con {len(texts)} descripciones existentes")
+                        self._ml_models['tfidf'].fit(texts)
+                        self.tfidf_fitted = True
+                        logger.info(f"✅ TF-IDF entrenado con vocabulario de {len(self._ml_models['tfidf'].get_feature_names_out())} palabras")
+        
+        except Exception as e:
+            logger.warning(f"No se pudo entrenar TF-IDF con datos existentes: {e}")            
+    
 
     def _clean_item_fast(self, item: Dict[str, Any], filename: str) -> Dict[str, Any]:
         """Limpieza rápida de items con configuración ML"""
@@ -434,22 +478,55 @@ class FastDataLoader:
             return self._create_sample_data_fast(output_file)
 
         # 🔥 APLICAR PROCESAMIENTO ML POR LOTES SI ESTÁ HABILITADO
+        # 🔥 OPTIMIZACIÓN CRÍTICA: Procesar en lotes más pequeños
         if self.ml_enabled and len(all_products) > 1:
             logger.info(f"Applying ML batch processing to {len(all_products)} products...")
             try:
-                # Convertir productos a diccionarios para batch processing
-                product_dicts = [p.model_dump() for p in all_products]
+                # Procesar en lotes pequeños para no sobrecargar memoria
+                batch_size = min(self.ml_batch_size, 16)  # Máximo 16 por batch
+                processed_products = []
                 
-                # Usar batch_create de Product para procesamiento optimizado
-                all_products = Product.batch_create(
-                    product_dicts,
-                    ml_enrich=True,
-                    batch_size=self.ml_batch_size
-                )
-                logger.info("ML batch processing completed")
+                for i in range(0, len(all_products), batch_size):
+                    batch = all_products[i:i + batch_size]
+                    logger.debug(f"Processing ML batch {i//batch_size + 1}/{(len(all_products)+batch_size-1)//batch_size}")
+                    
+                    # Convertir solo este batch
+                    product_dicts = []
+                    for p in batch:
+                        try:
+                            # Usar to_dict() si existe, si no model_dump()
+                            if hasattr(p, 'to_dict'):
+                                product_dicts.append(p.to_dict())
+                            elif hasattr(p, 'model_dump'):
+                                product_dicts.append(p.model_dump())
+                            else:
+                                # Extraer campos manualmente
+                                product_dicts.append({
+                                    'id': getattr(p, 'id', ''),
+                                    'title': getattr(p, 'title', ''),
+                                    'description': getattr(p, 'description', ''),
+                                    'price': getattr(p, 'price', 0.0),
+                                    'category': getattr(p, 'category', '')
+                                })
+                        except Exception as e:
+                            logger.warning(f"Error converting product: {e}")
+                            continue
+                    
+                    if product_dicts:
+                        # Procesar este batch
+                        batch_processed = Product.batch_create(
+                            product_dicts,
+                            ml_enrich=True,
+                            batch_size=len(product_dicts)
+                        )
+                        processed_products.extend(batch_processed)
+                
+                all_products = processed_products
+                logger.info(f"✅ ML processing completed: {len(all_products)} products")
+                
             except Exception as e:
                 logger.error(f"ML batch processing failed: {e}")
-                logger.info("Falling back to individual processing")
+                logger.info("Falling back to no ML processing")
         elif self.auto_categories and self._category_cache:
             # Aplicar categorías aprendidas
             logger.info("Applying learned categories...")
@@ -734,13 +811,20 @@ class FastDataLoader:
             "ml_batch_size": self.ml_batch_size
         }
         
+        # 🔥 MODIFICADO: No intentar acceder a MLProductEnricher si no está disponible
         # Agregar métricas ML si está disponible
         if self.ml_enabled:
             try:
+                # Intentar importar MLProductEnricher dinámicamente solo cuando sea necesario
+                from src.core.data.product import MLProductEnricher
                 ml_metrics = MLProductEnricher.get_metrics()
                 stats["ml_metrics"] = ml_metrics
-            except Exception:
-                pass
+            except ImportError as e:
+                logger.debug(f"MLProductEnricher not available: {e}")
+                stats["ml_metrics"] = {"ml_enabled": False, "error": "not_available"}
+            except Exception as e:
+                logger.debug(f"Error getting ML metrics: {e}")
+                stats["ml_metrics"] = {"ml_enabled": True, "error": "metrics_unavailable"}
         
         return stats
 
@@ -824,7 +908,7 @@ if __name__ == "__main__":
         # 🔥 NUEVO: Configuración ML
         ml_enabled=getattr(settings, "ML_ENABLED", False),
         ml_features=getattr(settings, "ML_FEATURES", ["category", "entities"]),
-        ml_batch_size=32
+        ml_batch_size=64
     )
 
     # Carga rápida

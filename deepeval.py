@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-deepeval.py - Script simplificado para evaluar solo RAG y RAG+Filtro Colaborativo
-con y sin ML.
+deepeval.py - Script simplificado para evaluar RAG con y sin ML.
 
 Usage:
     python deepeval.py --mode rag                # Solo RAG sin ML
     python deepeval.py --mode rag --ml-enabled   # RAG con ML
-    python deepeval.py --mode hybrid             # RAG + Filtro Colaborativo sin ML
-    python deepeval.py --mode hybrid --ml-enabled # RAG + Filtro Colaborativo con ML
 """
 from pathlib import Path
 import os
@@ -36,6 +33,21 @@ console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
+
+# --- Importar tus componentes reales ---
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+try:
+    from src.core.data.product import Product, MLProductEnricher, AutoProductConfig
+    from src.core.rag.advanced.WorkingRAGAgent import WorkingAdvancedRAGAgent, RAGConfig
+    from src.core.data.loader import DataLoader
+    from src.core.config import settings
+    USE_REAL_COMPONENTS = True
+    logger.info("✅ Usando componentes reales del sistema")
+except ImportError as e:
+    USE_REAL_COMPONENTS = False
+    logger.warning(f"⚠️ No se pudieron importar componentes reales: {e}")
+    logger.info("⚠️ Usando stubs mejorados")
 
 # --- Helpers de métricas ---
 def mean(iterable):
@@ -264,14 +276,24 @@ def save_json(data: Dict[str, Any], path: str) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 def load_products() -> List[Dict[str, Any]]:
-    """Carga productos del sistema."""
-    products_path = "data/processed/products.json"
-    if os.path.exists(products_path):
-        try:
-            with open(products_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error cargando productos: {e}")
+    """Carga productos del sistema usando el loader real."""
+    try:
+        if USE_REAL_COMPONENTS:
+            # Usar el DataLoader real
+            loader = DataLoader(
+                raw_dir=settings.RAW_DIR,
+                processed_dir=settings.PROC_DIR,
+                ml_enabled=False,  # Deshabilitar ML para carga rápida
+                ml_features=["category"]  # Solo categoría para evaluación
+            )
+            products = loader.load_data()
+            
+            # Convertir a lista de diccionarios si es necesario
+            if products and isinstance(products[0], Product):
+                return [p.__dict__ for p in products]
+            return products
+    except Exception as e:
+        logger.error(f"Error cargando productos reales: {e}")
     
     # Fallback a datos de prueba más realistas
     return [
@@ -427,62 +449,6 @@ class ImprovedStubRetriever:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
-class ImprovedStubCollaborativeFilter:
-    """Stub MEJORADO para filtro colaborativo."""
-    def __init__(self, user_manager=None, use_ml_features=False):
-        self.use_ml = use_ml_features
-        self.user_manager = user_manager
-        random.seed(42)  # Para reproducibilidad
-        logger.info(f"🤝 CollaborativeFilter MEJORADO inicializado (ML: {self.use_ml})")
-    
-    def get_collaborative_scores(self, user_id: str, candidate_ids: List[str]) -> Dict[str, float]:
-        """Simula scores colaborativos de forma más realista."""
-        scores = {}
-        products = load_products()
-        
-        # Obtener historial del usuario
-        user_history = get_historical_items(user_id)
-        
-        for product_id in candidate_ids:
-            base_score = 0.3
-            
-            # 1. Si el producto está en el historial del usuario
-            if product_id in user_history:
-                base_score += 0.3
-            
-            # 2. Popularidad del producto
-            product = next((p for p in products if p["id"] == product_id), None)
-            if product:
-                popularity = product.get('popularity', 0.5)
-                base_score += popularity * 0.2
-            
-            # 3. Similitud con otros productos del historial
-            # (simulación simple)
-            if user_history:
-                # Puntuar más alto productos de categorías similares
-                if product:
-                    product_cat = product.get('category', '')
-                    # Contar cuántos productos del historial son de la misma categoría
-                    similar_in_history = sum(1 for pid in user_history 
-                                           if any(p["id"] == pid and p.get('category', '') == product_cat 
-                                                  for p in products))
-                    base_score += similar_in_history * 0.1
-            
-            # 4. Añadir boost ML si está habilitado
-            if self.use_ml:
-                # ML puede detectar patrones complejos
-                ml_boost = random.uniform(0.05, 0.2)
-                base_score += ml_boost
-            
-            # 5. Factor aleatorio basado en el ID del usuario (para personalización)
-            user_hash = int(hashlib.md5(user_id.encode()).hexdigest()[:8], 16) % 100 / 100.0
-            user_factor = 0.1 * user_hash
-            
-            final_score = min(0.95, base_score + user_factor)
-            scores[product_id] = final_score
-        
-        return scores
-
 class ImprovedStubRAGAgent:
     """Stub MEJORADO para el agente RAG."""
     def __init__(self, use_ml=False):
@@ -504,76 +470,41 @@ class ImprovedStubRAGAgent:
         
         return response, product_ids
 
-class ImprovedStubHybridAgent:
-    """Stub MEJORADO para agente híbrido (RAG + Collaborative)."""
-    def __init__(self, use_ml=False):
-        self.use_ml = use_ml
-        self.rag_agent = ImprovedStubRAGAgent(use_ml=use_ml)
-        self.collab_filter = ImprovedStubCollaborativeFilter(use_ml_features=use_ml)
-        logger.info(f"🔄 Hybrid Agent MEJORADO inicializado (ML: {self.use_ml})")
-    
-    def process_query(self, query: str, user_id: str = "test_user") -> Tuple[str, List[str]]:
-        """Procesa consulta con sistema híbrido MEJORADO."""
-        # Paso 1: Recuperación RAG
-        response, rag_product_ids = self.rag_agent.process_query(query, user_id)
-        
-        if not rag_product_ids:
-            return "No encontré productos para tu búsqueda.", []
-        
-        # Paso 2: Scores colaborativos
-        collab_scores = self.collab_filter.get_collaborative_scores(user_id, rag_product_ids)
-        
-        # Paso 3: Combinar scores de forma MÁS INTELIGENTE
-        combined_scores = {}
-        
-        # Calcular scores RAG basados en posición y similitud
-        rag_scores = {}
-        for i, product_id in enumerate(rag_product_ids):
-            # Score decae con posición pero mantiene la esencia del ranking RAG
-            rag_scores[product_id] = 1.0 - (i * 0.08)
-        
-        for product_id in rag_product_ids:
-            rag_score = rag_scores.get(product_id, 0.5)
-            collab_score = collab_scores.get(product_id, 0.3)
-            
-            if self.use_ml:
-                # Con ML: ajuste dinámico de pesos basado en confianza
-                # Más peso a colaborativo si hay mucho historial del usuario
-                user_history = get_historical_items(user_id)
-                if len(user_history) > 2:
-                    # Usuario con historial: 55% RAG, 45% colaborativo
-                    rag_weight = 0.55
-                    collab_weight = 0.45
-                else:
-                    # Usuario nuevo: 70% RAG, 30% colaborativo
-                    rag_weight = 0.7
-                    collab_weight = 0.3
-            else:
-                # Sin ML: pesos fijos
-                rag_weight = 0.7
-                collab_weight = 0.3
-            
-            combined = (rag_score * rag_weight) + (collab_score * collab_weight)
-            combined_scores[product_id] = combined
-        
-        # Paso 4: Reordenar productos
-        sorted_products = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
-        final_product_ids = [pid for pid, _ in sorted_products[:5]]
-        
-        # Generar respuesta
-        response = f"Para '{query}', nuestro sistema híbrido recomienda:"
-        if self.use_ml:
-            response += " (optimizado con machine learning)"
-        
-        return response, final_product_ids
-
 # --- Funciones de evaluación MEJORADAS ---
 def evaluate_rag(use_ml: bool = False) -> Dict[str, Any]:
     """Evalúa el sistema RAG básico MEJORADO."""
     logger.info(f"📊 Evaluando RAG {'con ML' if use_ml else 'sin ML'}...")
     
-    # Inicializar agente MEJORADO
-    agent = ImprovedStubRAGAgent(use_ml=use_ml)
+    if USE_REAL_COMPONENTS and use_ml:
+        # Usar el agente RAG real con ML
+        try:
+            # Configurar ML según la configuración
+            if use_ml:
+                settings.ML_ENABLED = True
+                AutoProductConfig.ML_ENABLED = True
+                Product.configure_ml(enabled=True, features=["category", "entities", "embedding"])
+            
+            # Crear configuración para el agente RAG
+            config = RAGConfig(
+                ml_enabled=use_ml,
+                use_ml_embeddings=use_ml,
+                ml_embedding_weight=0.3 if use_ml else 0.0,
+                enable_reranking=True,
+                max_retrieved=50,
+                max_final=5
+            )
+            
+            # Inicializar el agente RAG real
+            agent = WorkingAdvancedRAGAgent(config=config)
+            logger.info("✅ Usando WorkingAdvancedRAGAgent real")
+            
+        except Exception as e:
+            logger.error(f"Error inicializando agente RAG real: {e}")
+            logger.info("⚠️ Usando stub mejorado")
+            agent = ImprovedStubRAGAgent(use_ml=use_ml)
+    else:
+        # Usar stub
+        agent = ImprovedStubRAGAgent(use_ml=use_ml)
     
     # Obtener consultas de prueba CONSISTENTES
     queries, ground_truths = build_test_queries()
@@ -621,7 +552,7 @@ def evaluate_rag(use_ml: bool = False) -> Dict[str, Any]:
         "config": {
             "mode": "rag",
             "ml_enabled": use_ml,
-            "retriever_type": "improved",
+            "retriever_type": "real" if USE_REAL_COMPONENTS and use_ml else "improved_stub",
             "seed": 42
         }
     })
@@ -637,94 +568,22 @@ def evaluate_rag(use_ml: bool = False) -> Dict[str, Any]:
     
     return metrics
 
-def evaluate_hybrid(use_ml: bool = False) -> Dict[str, Any]:
-    """Evalúa el sistema híbrido (RAG + Collaborative Filter) MEJORADO."""
-    logger.info(f"📊 Evaluando RAG + Collaborative Filter {'con ML' if use_ml else 'sin ML'}...")
-    
-    # Inicializar agente MEJORADO
-    agent = ImprovedStubHybridAgent(use_ml=use_ml)
-    
-    # Obtener consultas de prueba CONSISTENTES
-    queries, ground_truths = build_test_queries()
-    
-    # Preparar datos para métricas adicionales
-    products = load_products()
-    all_product_ids = {p["id"] for p in products}
-    popular_items = get_popular_items(products, top_n=5)
-    historical_items = get_historical_items()
-    
-    # Ejecutar evaluaciones
-    start_time = time.time()
-    all_retrieved = []
-    
-    for query, gt in zip(queries, ground_truths):
-        _, product_ids = agent.process_query(query, user_id="test_user")
-        all_retrieved.append(product_ids)
-    
-    elapsed_time = time.time() - start_time
-    
-    # Calcular métricas básicas
-    metrics = {
-        "time_seconds": elapsed_time,
-        "latency_per_query_ms": (elapsed_time / len(queries)) * 1000 if queries else 0,
-        "queries_count": len(queries),
-        "precision@5": precision_at_k(all_retrieved, ground_truths, k=5),
-        "recall@5": recall_at_k(all_retrieved, ground_truths, k=5),
-        "f1@5": f1_score_at_k(all_retrieved, ground_truths, k=5),
-        "mrr@10": mrr_at_k(all_retrieved, ground_truths, k=10),
-        "ndcg@10": ndcg_at_k(all_retrieved, ground_truths, k=10),
-        "avg_retrieved": mean(len(retrieved) for retrieved in all_retrieved),
-    }
-    
-    # --- AÑADIR NUEVAS MÉTRICAS MEJORADAS ---
-    metrics.update({
-        "hit_rate@5": hit_rate_at_k(all_retrieved, ground_truths, k=5),
-        "hit_rate@10": hit_rate_at_k(all_retrieved, ground_truths, k=10),
-        "map@5": map_at_k(all_retrieved, ground_truths, k=5),
-        "map@10": map_at_k(all_retrieved, ground_truths, k=10),
-        "coverage": coverage(all_retrieved, all_product_ids),
-        "serendipity@5": serendipity_at_k(all_retrieved, ground_truths, popular_items, k=5),
-        "novelty@5": novelty_at_k(all_retrieved, popular_items, k=5),
-        "exploration_rate": exploration_rate(all_retrieved, historical_items, k=5),
-        "exploitation_rate": exploitation_rate(all_retrieved, historical_items, k=5),
-        "config": {
-            "mode": "hybrid",
-            "ml_enabled": use_ml,
-            "rag_weight": 0.55 if use_ml else 0.7,
-            "collab_weight": 0.45 if use_ml else 0.3,
-            "retriever_type": "improved",
-            "seed": 42
-        }
-    })
-    
-    logger.info(f"✅ Hybrid evaluation completed in {elapsed_time:.2f}s")
-    logger.info(f"   Precision@5: {metrics['precision@5']:.3f}")
-    logger.info(f"   Recall@5: {metrics['recall@5']:.3f}")
-    logger.info(f"   F1@5: {metrics['f1@5']:.3f}")
-    logger.info(f"   Hit Rate@5: {metrics['hit_rate@5']:.3f}")
-    logger.info(f"   MAP@5: {metrics['map@5']:.3f}")
-    logger.info(f"   Coverage: {metrics['coverage']:.3f}")
-    logger.info(f"   Exploration Rate: {metrics['exploration_rate']:.3f}")
-    logger.info(f"   Latency/query: {metrics['latency_per_query_ms']:.1f}ms")
-    
-    return metrics
-
 def compare_results(results: Dict[str, Dict[str, Any]]) -> None:
     """Compara y muestra resultados de diferentes configuraciones."""
     print("\n" + "="*100)
-    print("📈 COMPARACIÓN DE RESULTADOS - MÉTRICAS PRINCIPALES")
+    print("📈 COMPARACIÓN DE RESULTADOS - RAG CON Y SIN ML")
     print("="*100)
     
     headers = ["Sistema", "ML", "P@5", "R@5", "F1@5", "HR@5", "MAP@5", "NDCG@10", "Cov", "Exp", "Lat(ms)"]
-    print(f"{headers[0]:<20} {headers[1]:<8} {headers[2]:<6} {headers[3]:<6} {headers[4]:<6} "
+    print(f"{headers[0]:<15} {headers[1]:<8} {headers[2]:<6} {headers[3]:<6} {headers[4]:<6} "
           f"{headers[5]:<6} {headers[6]:<7} {headers[7]:<8} {headers[8]:<5} {headers[9]:<5} {headers[10]:<8}")
     print("-"*100)
     
     for name, metrics in results.items():
-        system_name = "RAG" if "rag" in name.lower() else "RAG+Colab"
+        system_name = "RAG"
         ml_status = "Sí" if metrics["config"]["ml_enabled"] else "No"
         
-        print(f"{system_name:<20} {ml_status:<8} "
+        print(f"{system_name:<15} {ml_status:<8} "
               f"{metrics['precision@5']:.3f} "
               f"{metrics['recall@5']:.3f} "
               f"{metrics['f1@5']:.3f} "
@@ -742,15 +601,15 @@ def compare_results(results: Dict[str, Dict[str, Any]]) -> None:
     print("-"*80)
     
     div_headers = ["Sistema", "ML", "Coverage", "Serendipity@5", "Novelty@5", "Exploration", "Exploitation"]
-    print(f"{div_headers[0]:<20} {div_headers[1]:<8} {div_headers[2]:<10} {div_headers[3]:<15} "
+    print(f"{div_headers[0]:<15} {div_headers[1]:<8} {div_headers[2]:<10} {div_headers[3]:<15} "
           f"{div_headers[4]:<12} {div_headers[5]:<12} {div_headers[6]:<12}")
     print("-"*80)
     
     for name, metrics in results.items():
-        system_name = "RAG" if "rag" in name.lower() else "RAG+Colab"
+        system_name = "RAG"
         ml_status = "Sí" if metrics["config"]["ml_enabled"] else "No"
         
-        print(f"{system_name:<20} {ml_status:<8} "
+        print(f"{system_name:<15} {ml_status:<8} "
               f"{metrics['coverage']:.3f}{'':<6} "
               f"{metrics['serendipity@5']:.3f}{'':<10} "
               f"{metrics['novelty@5']:.3f}{'':<8} "
@@ -762,24 +621,21 @@ def compare_results(results: Dict[str, Dict[str, Any]]) -> None:
 def main():
     """Función principal."""
     parser = argparse.ArgumentParser(
-        description="Evaluador MEJORADO para sistemas de recomendación",
+        description="Evaluador MEJORADO para sistemas RAG",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ejemplos de uso:
   python deepeval.py --mode rag                    # RAG sin ML
   python deepeval.py --mode rag --ml-enabled       # RAG con ML
-  python deepeval.py --mode hybrid                 # RAG + Filtro Colaborativo sin ML
-  python deepeval.py --mode hybrid --ml-enabled    # RAG + Filtro Colaborativo con ML
-  python deepeval.py --mode all                    # Todas las configuraciones
         """
     )
     
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["rag", "hybrid", "all"],
-        default="all",
-        help="Modo de evaluación: 'rag' (solo RAG), 'hybrid' (RAG + Collaborative), 'all' (ambos)"
+        choices=["rag"],
+        default="rag",
+        help="Modo de evaluación: 'rag' (solo RAG)"
     )
     
     parser.add_argument(
@@ -824,27 +680,19 @@ Ejemplos de uso:
     if args.verbose:
         logger.setLevel(logging.DEBUG)
     
-    logger.info("🚀 Iniciando evaluación MEJORADA del sistema de recomendación")
+    logger.info("🚀 Iniciando evaluación MEJORADA del sistema RAG")
     logger.info(f"📋 Configuración: modo={args.mode}, ML={args.ml_enabled}, seed={args.seed}")
     
     results = {}
     
     # Ejecutar evaluaciones según el modo
-    if args.mode in ["rag", "all"]:
+    if args.mode == "rag":
         # Evaluar RAG sin ML
         results["rag_without_ml"] = evaluate_rag(use_ml=False)
         
-        # Evaluar RAG con ML si está habilitado o estamos en modo 'all'
-        if args.ml_enabled or args.mode == "all":
+        # Evaluar RAG con ML si está habilitado
+        if args.ml_enabled:
             results["rag_with_ml"] = evaluate_rag(use_ml=True)
-    
-    if args.mode in ["hybrid", "all"]:
-        # Evaluar Hybrid sin ML
-        results["hybrid_without_ml"] = evaluate_hybrid(use_ml=False)
-        
-        # Evaluar Hybrid con ML si está habilitado o estamos en modo 'all'
-        if args.ml_enabled or args.mode == "all":
-            results["hybrid_with_ml"] = evaluate_hybrid(use_ml=True)
     
     # Mostrar comparación
     if len(results) > 1:
@@ -858,7 +706,7 @@ Ejemplos de uso:
             "ml_enabled": args.ml_enabled,
             "k_values": args.k_values,
             "seed": args.seed,
-            "version": "mejorado-1.0"
+            "version": "rag-only-1.0"
         },
         "results": results
     }
@@ -868,7 +716,7 @@ Ejemplos de uso:
     
     # Resumen final MEJORADO
     print("\n" + "="*80)
-    print("🎯 RESUMEN FINAL - SISTEMA ÓPTIMO")
+    print("🎯 RESUMEN FINAL - SISTEMA RAG")
     print("="*80)
     
     # Buscar el mejor sistema basado en F1@5
@@ -876,29 +724,12 @@ Ejemplos de uso:
     best_system = ""
     best_metrics = None
     
-    # Buscar el mejor sistema basado en combinación de métricas
-    best_combined_score = 0.0
-    best_balanced_system = ""
-    
     for name, metrics in results.items():
         f1_score = metrics["f1@5"]
         if f1_score > best_f1:
             best_f1 = f1_score
             best_system = name
             best_metrics = metrics
-        
-        # Calcular puntuación combinada MEJORADA
-        combined = (
-            metrics["f1@5"] * 0.35 +           # Calidad
-            metrics["hit_rate@5"] * 0.20 +     # Efectividad
-            metrics["coverage"] * 0.15 +       # Diversidad
-            metrics["novelty@5"] * 0.15 +      # Novedad
-            (1 - metrics["latency_per_query_ms"] / 100) * 0.15  # Performance
-        )
-        
-        if combined > best_combined_score:
-            best_combined_score = combined
-            best_balanced_system = name
     
     if best_metrics:
         print(f"🏆 Mejor sistema por F1 Score: {best_system.replace('_', ' ').title()}")
@@ -910,46 +741,51 @@ Ejemplos de uso:
         print(f"🌐 Coverage: {best_metrics['coverage']:.3f}")
         print(f"⚡ Latencia por query: {best_metrics['latency_per_query_ms']:.1f}ms")
         
-        print(f"\n🔄 Mejor sistema balanceado: {best_balanced_system.replace('_', ' ').title()}")
-        print(f"⚖️  Puntuación balanceada: {best_combined_score:.3f}")
+        # Comparar ML vs no ML
+        if "rag_without_ml" in results and "rag_with_ml" in results:
+            without_ml = results["rag_without_ml"]
+            with_ml = results["rag_with_ml"]
+            
+            f1_improvement = ((with_ml["f1@5"] - without_ml["f1@5"]) / without_ml["f1@5"]) * 100 if without_ml["f1@5"] > 0 else 0
+            precision_improvement = ((with_ml["precision@5"] - without_ml["precision@5"]) / without_ml["precision@5"]) * 100 if without_ml["precision@5"] > 0 else 0
+            
+            print(f"\n📊 COMPARACIÓN ML vs SIN ML:")
+            print(f"   F1 Score: {'+' if f1_improvement > 0 else ''}{f1_improvement:.1f}%")
+            print(f"   Precision: {'+' if precision_improvement > 0 else ''}{precision_improvement:.1f}%")
+            print(f"   Coverage: {'+' if with_ml['coverage'] > without_ml['coverage'] else ''}{(with_ml['coverage'] - without_ml['coverage']) * 100:.1f}%")
+            print(f"   Latencia: {'+' if with_ml['latency_per_query_ms'] > without_ml['latency_per_query_ms'] else ''}{(with_ml['latency_per_query_ms'] - without_ml['latency_per_query_ms']):.1f}ms")
+            
+            if f1_improvement > 10:
+                print("\n💡 El ML mejora significativamente el rendimiento del sistema RAG.")
+            elif f1_improvement < -5:
+                print("\n⚠️  El ML podría estar empeorando el rendimiento. Considera ajustar la configuración ML.")
+            else:
+                print("\nℹ️  El ML tiene un impacto moderado en el rendimiento.")
         
         print("="*80)
         print("\n📋 RECOMENDACIONES BASADAS EN MÉTRICAS:")
         
         # Analizar resultados para dar recomendaciones MEJORADAS
-        all_metrics = list(results.values())
-        
-        if all_metrics:
-            avg_coverage = mean(m["coverage"] for m in all_metrics)
-            avg_novelty = mean(m["novelty@5"] for m in all_metrics)
-            avg_hit_rate = mean(m["hit_rate@5"] for m in all_metrics)
+        if "rag_with_ml" in results:
+            ml_metrics = results["rag_with_ml"]
             
-            if avg_coverage < 0.3:
+            if ml_metrics['coverage'] < 0.3:
                 print("⚠️  El coverage es bajo (<30%). Considera aumentar la diversidad de recomendaciones.")
-            elif avg_coverage > 0.6:
+            elif ml_metrics['coverage'] > 0.6:
                 print("✅ Excelente coverage (>60%). El sistema recomienda una amplia variedad de productos.")
             
-            if avg_novelty < 0.3:
+            if ml_metrics['novelty@5'] < 0.3:
                 print("⚠️  La novedad es baja (<30%). El sistema puede estar recomendando productos demasiado populares.")
-            elif avg_novelty > 0.6:
+            elif ml_metrics['novelty@5'] > 0.6:
                 print("✅ Excelente novedad (>60%). El sistema descubre productos nuevos efectivamente.")
             
-            if avg_hit_rate < 0.6:
+            if ml_metrics['hit_rate@5'] < 0.6:
                 print("⚠️  El hit rate es bajo (<60%). El sistema falla en encontrar productos relevantes con frecuencia.")
-            elif avg_hit_rate > 0.9:
+            elif ml_metrics['hit_rate@5'] > 0.9:
                 print("✅ Excelente hit rate (>90%). El sistema casi siempre encuentra productos relevantes.")
-        
-        # Comparar RAG vs Híbrido
-        if "rag_without_ml" in results and "hybrid_without_ml" in results:
-            rag_f1 = results["rag_without_ml"]["f1@5"]
-            hybrid_f1 = results["hybrid_without_ml"]["f1@5"]
             
-            if hybrid_f1 > rag_f1 * 1.1:  # 10% mejor
-                print("\n💡 El sistema híbrido es significativamente mejor que RAG solo.")
-                print("   Considera mantener el componente colaborativo.")
-            elif rag_f1 > hybrid_f1 * 1.1:
-                print("\n💡 El sistema RAG es significativamente mejor que el híbrido.")
-                print("   Podrías optimizar el componente colaborativo o usar pesos diferentes.")
+            if ml_metrics['latency_per_query_ms'] > 100:
+                print("⚠️  La latencia es alta (>100ms). Considera optimizar el rendimiento del sistema.")
     
     print("="*80)
 

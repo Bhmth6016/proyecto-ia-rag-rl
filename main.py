@@ -10,8 +10,32 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 
-# Eliminado: import google.generativeai as genai
-# Eliminado: from dotenv import load_dotenv
+# 🔥 SOLUCIÓN: Crear directorios críticos ANTES de iniciar
+def pre_initialize_system():
+    """Creación de directorios críticos antes de cualquier inicialización."""
+    critical_dirs = [
+        "data/processed/historial",  # Para FeedbackProcessor
+        "data/feedback",             # Para success/failed queries
+        "data/users",                # Para UserManager
+        "data/raw",                  # Para datos crudos
+        "data/processed",            # Para datos procesados
+        "logs",                      # Para archivos de log
+    ]
+    
+    for dir_path in critical_dirs:
+        path = Path(dir_path)
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+            print(f"📁 Directorio creado: {dir_path}")
+    
+    # Crear archivos de log vacíos si no existen
+    log_files = ["logs/app.log", "logs/ml_system.log"]
+    for log_file in log_files:
+        log_path = Path(log_file)
+        if not log_path.exists():
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.touch()
+            print(f"📄 Archivo de log creado: {log_file}")
 
 # Importación nueva para LLM local
 from src.core.llm.local_llm import LocalLLMClient
@@ -70,13 +94,23 @@ def initialize_system(
     # 🔥 PARÁMETROS ML UNIFICADOS CON settings
     ml_enabled: Optional[bool] = None,  # None = usar configuración global
     ml_features: Optional[List[str]] = None,
-    ml_batch_size: int = 32,
+    ml_batch_size: int = 64,
     use_product_embeddings: Optional[bool] = None,  # None = usar configuración global
     chroma_ml_logging: bool = False,
     track_ml_metrics: bool = True,
     args: Optional[argparse.Namespace] = None
 ) -> Tuple[List[Product], Optional[WorkingAdvancedRAGAgent], UserManager, Dict[str, Any]]:
     """Initialize system components with complete ML support."""
+    
+    # ===========================================================
+    # 🚨 PROTECCIÓN PARA EVITAR SEGUNDA EJECUCIÓN (CACHÉ INTERNA)
+    # ===========================================================
+    if hasattr(initialize_system, "_already_called") and initialize_system._already_called:
+        logger.warning("⚠️ initialize_system ya fue ejecutado — usando caché previa.")
+        return initialize_system._cached_result  # Retorna resultado guardado
+
+    # Marca que ya se ejecutó
+    initialize_system._already_called = True
     
     # 🔥 CORREGIDO CRÍTICO: Actualizar settings desde argumentos
     if ml_enabled is not None:
@@ -163,7 +197,7 @@ def initialize_system(
             ml_batch_size=ml_batch_size,
         )
 
-        max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", "10000"))
+        max_products = int(os.getenv("MAX_PRODUCTS_TO_LOAD", "200"))
         
         # 🔥 Loggear métrica de carga
         log_ml_metric(
@@ -309,7 +343,8 @@ def initialize_system(
         ml_logger.info(f"🤖 ML Status: {'ENABLED' if settings.ML_ENABLED else 'DISABLED'}")
         ml_logger.info(f"💬 LLM Status: {'LOCAL' if settings.LOCAL_LLM_ENABLED else 'NONE'}")
 
-        return products, rag_agent, user_manager, {
+        # Guardar resultado en caché
+        initialize_system._cached_result = (products, rag_agent, user_manager, {
             'ml_enabled': settings.ML_ENABLED,  # 🔥 Usar configuración global
             'ml_features': list(settings.ML_FEATURES),  # 🔥 Usar configuración global
             'local_llm_enabled': settings.LOCAL_LLM_ENABLED,
@@ -318,7 +353,9 @@ def initialize_system(
             'use_product_embeddings': use_product_embeddings,
             'feedback_processor': feedback_processor,
             'initialization_time': initialization_time
-        }
+        })
+
+        return initialize_system._cached_result
 
     except Exception as e:
         # Loggear error con traceback
@@ -508,6 +545,12 @@ def parse_arguments():
                         help="Logging level")
     common.add_argument("-v", "--verbose", action="store_true",
                        help="Enable verbose output")
+    common.add_argument("--max-products-to-load", type=int, default=None,
+                    help="Maximum number of products to load (overrides env var)")
+    common.add_argument("--device", type=str, default=None,
+                    choices=['cpu', 'cuda'],
+                    help="Device for ML computations (cpu/cuda)")
+    
     
     # 🔥 CORREGIDO: Argumentos ML que actualizan settings global
     ml_group = common.add_argument_group('ML Configuration')
@@ -1504,6 +1547,9 @@ def _handle_evaluate_mode(args):
 #  MAIN MEJORADO CON ML UNIFICADO
 # =====================================================
 if __name__ == "__main__":
+    # 🔥 CRÍTICO: Llamar pre_initialize_system() ANTES de parse_arguments()
+    pre_initialize_system()
+    
     # Banner de inicio con información ML
     print("╔" + "═"*58 + "╗")
     print("║" + " "*58 + "║")
@@ -1541,7 +1587,16 @@ if __name__ == "__main__":
         settings.LOCAL_LLM_ENABLED = True
     elif hasattr(args, 'no_local_llm') and args.no_local_llm:
         settings.LOCAL_LLM_ENABLED = False
-    
+    if hasattr(args, 'max_products_to_load') and args.max_products_to_load is not None:
+        settings.MAX_PRODUCTS_TO_LOAD = args.max_products_to_load
+    if hasattr(args, 'max_products_to_load') and args.max_products_to_load is not None:
+        settings.MAX_PRODUCTS_TO_LOAD = args.max_products_to_load
+
+    if hasattr(args, 'device') and args.device is not None:
+        settings.DEVICE = args.device
+    # Actualizar DEVICE si se especifica
+    if hasattr(args, 'device') and args.device is not None:
+        settings.DEVICE = args.device
     if hasattr(args, 'local_llm_model'):
         settings.LOCAL_LLM_MODEL = args.local_llm_model
     if hasattr(args, 'local_llm_endpoint'):
@@ -1576,7 +1631,7 @@ if __name__ == "__main__":
             data_dir=args.data_dir,
             ml_enabled=settings.ML_ENABLED,  # 🔥 Usar configuración global actualizada
             ml_features=list(settings.ML_FEATURES),  # 🔥 Usar configuración global
-            ml_batch_size=getattr(args, 'ml_batch_size', 32),
+            ml_batch_size=getattr(args, 'ml_batch_size', 64),
             use_product_embeddings=getattr(args, 'use_product_embeddings', False),
             chroma_ml_logging=False,
             track_ml_metrics=getattr(args, 'track_ml_metrics', True),

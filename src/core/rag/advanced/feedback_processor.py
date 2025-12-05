@@ -64,7 +64,11 @@ class FeedbackProcessor:
 
         # Pre-cargar historial
         self._load_historial_queries()
-
+        historial_dir = Path("data/processed/historial")
+        if not historial_dir.exists():
+            historial_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"📁 Directorio historial creado: {historial_dir}")
+            time.sleep(0.3)  # Pequeño delay
         # Iniciar flush periódico
         self._flush_thread = threading.Thread(target=self._periodic_flush, daemon=True)
         self._flush_thread.start()

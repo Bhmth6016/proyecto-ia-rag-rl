@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Script COMPLETO Y MEJORADO para generar datos de entrenamiento para el sistema RAG + RL.
-Corregido para evitar errores de sampleo cuando las listas son vacías o demasiado pequeñas.
+Script ADAPTADO para generar datos específicos de videojuegos en los formatos requeridos
+MEJORADO con: modularización, type hints, validaciones y mejoras sugeridas
 """
 
 import json
@@ -9,440 +9,715 @@ import random
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
-import hashlib
+import uuid
+from typing import List, Dict, Any, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-class CompleteTrainingDataGenerator:
-    def __init__(self, num_users=12, searches_per_user=50):
+# ==================== CONFIGURACIÓN EXTERNA ====================
+# Estos datos podrían cargarse desde JSON/YAML externo
+
+PRODUCTS_CONFIG = [
+    {
+        "id": "B08N5WRWNW",
+        "title": "Logitech MX Master 3 - Ratón Inalámbrico",
+        "description": "Ratón ergonómico con scroll horizontal, 4000 DPI, batería 70 días, Bluetooth/Unifying",
+        "main_category": "Periféricos Gaming",
+        "categories": ["Ratones", "Accesorios PC", "Oficina", "Gaming"],
+        "price": 99.99,
+        "average_rating": 4.7,
+        "rating_count": 2345,
+        "features": ["Ergonómico", "Batería larga duración", "Scroll horizontal", "Multi-dispositivo"],
+        "brand": "Logitech",
+        "attributes": {"color": "Negro", "conectividad": "Bluetooth/2.4GHz", "DPI": "4000", "bateria_dias": "70"}
+    },
+    {
+        "id": "B07S92QBCJ",
+        "title": "Razer DeathAdder V2 - Ratón Gaming",
+        "description": "Ratón gaming con sensor óptico 20K DPI, 8 botones programables",
+        "main_category": "Periféricos Gaming",
+        "categories": ["Ratones Gaming", "Accesorios PC", "Gaming"],
+        "price": 69.99,
+        "average_rating": 4.6,
+        "rating_count": 1890,
+        "features": ["20K DPI", "8 botones", "Iluminación RGB", "Cable Speedflex"],
+        "brand": "Razer",
+        "attributes": {"color": "Negro", "DPI": "20000", "botones": "8", "peso": "82g"}
+    },
+    {
+        "id": "B09V3JN27K",
+        "title": "SteelSeries Apex Pro - Teclado Mecánico",
+        "description": "Teclado mecánico gaming con switches ajustables y pantalla OLED",
+        "main_category": "Periféricos Gaming",
+        "categories": ["Teclados", "Gaming", "Accesorios PC"],
+        "price": 199.99,
+        "average_rating": 4.8,
+        "rating_count": 1567,
+        "features": ["Switches ajustables", "Pantalla OLED", "Iluminación RGB", "Reposamuñecas magnético"],
+        "brand": "SteelSeries",
+        "attributes": {"switch": "OmniPoint", "layout": "US", "conexion": "USB", "teclas": "104"}
+    },
+    {
+        "id": "B08FC5L3RG",
+        "title": "PlayStation 5 - Consola Standard",
+        "description": "Consola de videojuegos de última generación con SSD ultra rápido",
+        "main_category": "Consolas",
+        "categories": ["Consolas", "Gaming", "Electrónica"],
+        "price": 499.99,
+        "average_rating": 4.9,
+        "rating_count": 4500,
+        "features": ["SSD 825GB", "Ray Tracing", "4K 120Hz", "Compatibilidad con PS4"],
+        "brand": "Sony",
+        "attributes": {"almacenamiento": "825GB", "resolucion": "8K", "hdr": "Sí", "puertos_usb": "3"}
+    },
+    {
+        "id": "B08H93ZRK9",
+        "title": "Xbox Series X - Consola 1TB",
+        "description": "Consola más potente de Xbox con Quick Resume y Game Pass",
+        "main_category": "Consolas",
+        "categories": ["Consolas", "Gaming", "Electrónica"],
+        "price": 479.99,
+        "average_rating": 4.8,
+        "rating_count": 3800,
+        "features": ["1TB SSD", "Quick Resume", "4K 120fps", "Game Pass incluido"],
+        "brand": "Microsoft",
+        "attributes": {"almacenamiento": "1TB", "resolucion": "4K", "fps": "120", "backward": "Sí"}
+    },
+    {
+        "id": "B0BN1ZKJ7D",
+        "title": "The Legend of Zelda: Tears of the Kingdom",
+        "description": "Juego de aventura y acción para Nintendo Switch",
+        "main_category": "Videojuegos",
+        "categories": ["Juegos Switch", "Aventura", "Acción"],
+        "price": 69.99,
+        "average_rating": 4.9,
+        "rating_count": 5200,
+        "features": ["Mundo abierto", "Multijugador", "Aventura épica"],
+        "brand": "Nintendo",
+        "attributes": {"plataforma": "Nintendo Switch", "genero": "Aventura", "online": "Sí", "idiomas": "ES"}
+    },
+    {
+        "id": "B09B8RBFDD",
+        "title": "Elden Ring - Edición Estándar",
+        "description": "Juego de rol y acción de mundo abierto por FromSoftware",
+        "main_category": "Videojuegos",
+        "categories": ["Juegos PS5", "RPG", "Acción"],
+        "price": 59.99,
+        "average_rating": 4.7,
+        "rating_count": 8900,
+        "features": ["Mundo abierto", "Combate souls-like", "Multijugador online"],
+        "brand": "Bandai Namco",
+        "attributes": {"plataforma": "PS5/Xbox/PC", "genero": "RPG", "online": "Sí", "modo": "Un jugador/Multijugador"}
+    },
+    {
+        "id": "B0C5N4VYF2",
+        "title": "Logitech G PRO X Superlight 2",
+        "description": "Ratón gaming ultra ligero para competición profesional",
+        "main_category": "Periféricos Gaming",
+        "categories": ["Ratones Gaming", "eSports", "Accesorios PC"],
+        "price": 159.99,
+        "average_rating": 4.6,
+        "rating_count": 1200,
+        "features": ["60g peso", "Sensor HERO 25K", "Lightspeed wireless", "Powerplay compatible"],
+        "brand": "Logitech",
+        "attributes": {"peso": "60g", "DPI": "25000", "conexion": "Inalámbrico", "bateria": "70h"}
+    }
+]
+
+USER_PROFILES_CONFIG = [
+    {
+        "type": "hardcore_gamer",
+        "preferred_categories": ["Periféricos Gaming", "Consolas", "Videojuegos"],
+        "preferred_brands": ["Logitech", "Razer", "SteelSeries", "Sony"],
+        "price_range": {"min": 50, "max": 500},
+        "age_range": (18, 35),
+        "professions": ["programador", "estudiante", "diseñador", "streamer"]
+    },
+    {
+        "type": "casual_gamer",
+        "preferred_categories": ["Videojuegos", "Consolas"],
+        "preferred_brands": ["Nintendo", "Sony", "Microsoft"],
+        "price_range": {"min": 30, "max": 300},
+        "age_range": (25, 50),
+        "professions": ["profesor", "administrativo", "médico", "ingeniero"]
+    },
+    {
+        "type": "competitive_gamer",
+        "preferred_categories": ["Periféricos Gaming", "eSports"],
+        "preferred_brands": ["Logitech", "Razer", "SteelSeries", "Corsair"],
+        "price_range": {"min": 100, "max": 1000},
+        "age_range": (16, 30),
+        "professions": ["estudiante", "profesional esports", "streamer", "coach"]
+    }
+]
+
+QUERIES_CONFIG = [
+    "ratón ergonómico para programar",
+    "mejor ratón para juegos FPS",
+    "teclado mecánico gaming barato",
+    "consola ps5 vs xbox series x",
+    "juegos nintendo switch para niños",
+    "auriculares gaming con buen micrófono",
+    "silla gaming ergonómica",
+    "monitor 240hz gaming",
+    "mejor juego mundo abierto 2024",
+    "ratón inalámbrico para trabajo"
+]
+
+# ==================== FUNCIONES UTILITARIAS ====================
+
+def write_jsonl(path: Path, data: List[Dict], append: bool = False) -> None:
+    """
+    Escribe datos en formato JSONL con manejo de errores
+    
+    Args:
+        path: Ruta del archivo
+        data: Lista de diccionarios a escribir
+        append: Si True, añade al archivo existente
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if append else "w"
+        
+        with path.open(mode, encoding="utf-8") as f:
+            for row in data:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        
+        logger.info(f"  ✅ {path} - {len(data)} registros escritos")
+    except Exception as e:
+        logger.error(f"  ❌ Error al escribir {path}: {e}")
+        raise
+
+def read_jsonl(path: Path) -> List[Dict]:
+    """
+    Lee datos desde un archivo JSONL
+    
+    Args:
+        path: Ruta del archivo
+    
+    Returns:
+        Lista de diccionarios con los datos
+    """
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return [json.loads(line) for line in f]
+    except Exception as e:
+        logger.error(f"Error al leer {path}: {e}")
+        return []
+
+
+class GamingDataGenerator:
+    def __init__(self, num_users: int = 10, interactions_per_user: int = 20):
         self.num_users = num_users
-        self.searches_per_user = searches_per_user
-
-        # Estructura completa de directorios REQUERIDA por el sistema
-        self.directories = [
-            "data/users",
-            "data/feedback",
-            "data/feedback/rlhf_metrics",
-            "data/processed/historial",
-            "data/raw",
-            "data/processed",
-            "data/models/rl_models",
-            "logs"
-        ]
-
-        # Productos realistas de Amazon - EXPANDIDOS para mejor testing colaborativo
-        self.amazon_products = [
-            # Consolas (mismo grupo de usuarios)
-            {"id": "B0D12C7Y5N", "title": "Nintendo Switch OLED - Mario Red Edition", "main_category": "consoles", "price": 349.99, "average_rating": 4.8},
-            {"id": "B0CGRVH2N4", "title": "PS5 Slim Standard Edition", "main_category": "consoles", "price": 499.99, "average_rating": 4.9},
-            {"id": "B08FC6MR62", "title": "Xbox Series X 1TB", "main_category": "consoles", "price": 479.99, "average_rating": 4.7},
-
-            # Gaming (mismo grupo)
-            {"id": "B0C5N4VYF2", "title": "Logitech G PRO X Superlight 2", "main_category": "gaming", "price": 159.99, "average_rating": 4.6},
-            {"id": "B0BDJHN2GS", "title": "HyperX Cloud III Wireless", "main_category": "gaming", "price": 129.99, "average_rating": 4.5},
-            {"id": "B0BQKPHZWS", "title": "Razer Huntsman V3 Pro Keyboard", "main_category": "gaming", "price": 199.99, "average_rating": 4.4},
-
-            # Juegos populares (alto rating para filtro colaborativo)
-            {"id": "B09V3HN1KC", "title": "Horizon Forbidden West", "main_category": "games", "price": 69.99, "average_rating": 4.8},
-            {"id": "B09B8RBFDD", "title": "Elden Ring", "main_category": "games", "price": 59.99, "average_rating": 4.9},
-            {"id": "B0BN1ZKJ7D", "title": "The Legend of Zelda: Tears of the Kingdom", "main_category": "games", "price": 69.99, "average_rating": 4.9},
-            {"id": "B0B72K7H9N", "title": "Call of Duty: Modern Warfare III", "main_category": "games", "price": 69.99, "average_rating": 4.3},
-
-            # Productos con feedback NEGATIVO para testing
-            {"id": "B0BRC9XTQ1", "title": "Generic Gaming Chair Basic", "main_category": "chairs", "price": 89.99, "average_rating": 2.8},
-            {"id": "B08K4S6WJ1", "title": "Low Quality Gaming Mouse", "main_category": "gaming", "price": 19.99, "average_rating": 2.5},
-        ]
-
-        # Consultas organizadas por grupos de usuarios similares
-        self.query_groups = {
-            "hardcore_gamers": [
-                "mejores juegos ps5 2024", "ratón fps competitivo", "monitor 240hz gaming",
-                "teclado mecánico switches speed", "auriculares gaming 7.1"
-            ],
-            "casual_gamers": [
-                "juegos nintendo switch para niños", "juegos familiares multiplayer",
-                "nintendo switch oled ofertas", "juegos de aventura mundo abierto"
-            ],
-            "tech_enthusiasts": [
-                "ssd nvme 1tb gaming", "fuente alimentación 750w gold",
-                "monitor 4k 144hz", "componentes pc gamer"
-            ]
-        }
-
-        # Grupos de usuarios más definidos para mejor testing colaborativo
-        # FIX: Reemplacé ids inexistentes por ids de ejemplo disponibles o dejé los ids originales,
-        # pero el código ahora maneja correctamente fav_products no encontrados.
-        self.user_profiles = [
-            {
-                "type": "hardcore_gamer",
-                "preferences": ["games", "consoles", "gaming", "competitive"],
-                "age_range": (18, 35),
-                "queries": self.query_groups["hardcore_gamers"],
-                "fav_products": ["B0CGRVH2N4", "B0C5N4VYF2", "B09B8RBFDD"]  # PS5, Logitech, Elden Ring
-            },
-            {
-                "type": "casual_gamer",
-                "preferences": ["family", "kids", "fun", "nintendo"],
-                "age_range": (25, 45),
-                "queries": self.query_groups["casual_gamers"],
-                "fav_products": ["B0D12C7Y5N", "B0BN1ZKJ7D"]  # Nintendo Switch, Zelda
-            },
-            {
-                "type": "tech_enthusiast",
-                "preferences": ["pc", "monitors", "hardware", "components"],
-                "age_range": (20, 40),
-                "queries": self.query_groups["tech_enthusiasts"],
-                # Estos IDs no existen en amazon_products en el ejemplo original.
-                # Ahora el código manejará correctamente el caso de lists vacías.
-                "fav_products": ["B09V3HN1KC", "B0C5N4VYF2"]  # reemplazados por ids válidos
-            }
-        ]
-
-        # Lista de marcas
-        self.available_brands = ["Sony", "Microsoft", "Nintendo", "Logitech", "Razer"]
-
-    # ---------------------------------------------------------------------
-    # HELPERS seguros de sampleo (evitan sample sobre poblaciones vacías)
-    # ---------------------------------------------------------------------
-    def _get_products_by_ids(self, ids_list):
-        """Devuelve lista de productos que coinciden con ids_list. No falla si no hay coincidencias."""
-        if not ids_list:
-            return []
-        found = [p for p in self.amazon_products if p["id"] in ids_list]
-        return found
-
-    def _safe_sample(self, population, k_min=2, k_max=4):
-        """
-        Muestra entre k_min y k_max items de population de forma robusta:
-        - Si population tiene >= k, usa random.sample.
-        - Si population no tiene suficientes elementos pero no está vacía, usa random.choices (con reemplazo).
-        - Si population está vacía, usa amazon_products como fallback.
-        """
-        if population is None:
-            population = []
-        k = random.randint(k_min, k_max)
-        if not population:
-            population = self.amazon_products
-        if len(population) >= k:
-            return random.sample(population, k)
-        else:
-            # fallback: permitir repeticiones para cumplir k
-            return random.choices(population, k=k)
-
-    # ---------------------------------------------------------------------
-    # Funciones principales (usando los helpers seguros)
-    # ---------------------------------------------------------------------
-    def setup_directories(self):
-        """Crea TODOS los directorios requeridos por el sistema"""
-        logger.info("📁 Creando estructura de directorios...")
-        for dir_path in self.directories:
-            Path(dir_path).mkdir(parents=True, exist_ok=True)
-            logger.info(f"  ✅ {dir_path}")
-
-    def generate_user_profile(self, idx):
-        """Genera perfil de usuario COMPATIBLE con el nuevo calculate_similarity"""
-        profile_type = random.choice(self.user_profiles)
-        age = random.randint(*profile_type["age_range"])
-
-        user_id = f"user_{idx:03d}"
-        session_id = f"{user_id}_{int(datetime.now().timestamp())}"
-
-        # Precio range basado en tipo de usuario
-        if profile_type["type"] == "bargain_hunter":
-            price_range = {"min": 0, "max": random.randint(100, 300)}
-        elif profile_type["type"] == "hardcore_gamer":
-            price_range = {"min": 0, "max": random.randint(500, 1500)}
-        else:
-            price_range = {"min": 0, "max": random.randint(300, 800)}
-
-        # Protejo la selección de marcas por si la lista es pequeña
-        n_brands = min(3, len(self.available_brands))
-        preferred_brands = random.sample(self.available_brands, n_brands)
-
-        user_data = {
-            "user_id": user_id,
-            "session_id": session_id,
-            "age": age,
-            "gender": random.choice(["male", "female"]),
-            "country": random.choice(["Spain", "Mexico", "Argentina", "Colombia"]),
-            "language": "es",
-            "preferred_categories": profile_type["preferences"],
-            "preferred_brands": preferred_brands,
-            "avoided_categories": [],
-            "price_sensitivity": random.choice(["low", "medium", "high"]),
-            "preferred_price_range": price_range,
-            "search_history": [],
-            "feedback_history": [],
-            "purchase_history": [],
-            "created_at": (datetime.now() - timedelta(days=random.randint(30, 365))).isoformat(),
-            "last_active": datetime.now().isoformat(),
-            "total_sessions": random.randint(5, 20)
-        }
-
-        # 🔥 GENERAR HISTORIAL COLABORATIVO COHERENTE
-        for _ in range(random.randint(15, 40)):
-            query = random.choice(profile_type["queries"])
-
-            # Productos preferidos del grupo tienen mayor probabilidad
-            if random.random() < 0.7:  # 70% de feedback a productos del grupo
-                fav_products = self._get_products_by_ids(profile_type.get("fav_products", []))
-                products_shown = self._safe_sample(fav_products, 2, 4)
-            else:
-                products_shown = self._safe_sample(self.amazon_products, 2, 4)
-
-            selected_product = random.choice(products_shown)
-
-            # 🔥 FEEDBACK POSITIVO CONSISTENTE para productos del grupo
-            if selected_product["id"] in profile_type.get("fav_products", []):
-                rating = random.choices([4, 5], weights=[0.3, 0.7])[0]  # Mayor probabilidad de 5
-            else:
-                rating = random.choices([1, 2, 3, 4, 5], weights=[0.1, 0.15, 0.25, 0.3, 0.2])[0]
-
-            user_data["feedback_history"].append({
-                "query": query,
-                "response": f"Recomendación para {query}",
-                "rating": rating,
-                "timestamp": (datetime.now() - timedelta(days=random.randint(1, 60))).isoformat(),
-                "products_shown": [p["id"] for p in products_shown],
-                "selected_product": selected_product["id"]
-            })
-
-        return user_data
-
-    def generate_success_queries_log(self):
-        """Genera success_queries.log con FEEDBACK POSITIVO para filtro colaborativo"""
-        logger.info("📝 Generando success_queries.log (solo feedback 4-5)...")
-
-        success_file = Path("data/feedback/success_queries.log")
-        existing_ids = set()
-
-        with open(success_file, "w", encoding="utf-8") as f:
-            for i in range(80):  # Más consultas exitosas
-                profile_type = random.choice(self.user_profiles)
-                query = random.choice(profile_type["queries"])
-
-                # Productos del grupo tienen mayor probabilidad
-                if random.random() < 0.6:
-                    fav_products = self._get_products_by_ids(profile_type.get("fav_products", []))
-                    product = random.choice(fav_products) if fav_products else random.choice(self.amazon_products)
-                else:
-                    product = random.choice(self.amazon_products)
-
-                query_hash = hashlib.md5(query.encode("utf-8")).hexdigest()
-                entry_id = f"session_{i:03d}-{query_hash}"
-
-                if entry_id not in existing_ids:
-                    existing_ids.add(entry_id)
-
-                    record = {
-                        "timestamp": (datetime.now() - timedelta(days=random.randint(1, 30))).isoformat(),
-                        "session_id": f"session_{i:03d}",
-                        "query": query,
-                        "response": f"Te recomiendo {product['title']}. Calificación {product['average_rating']}/5 - ${product['price']}",
-                        "feedback": random.choices([4, 5], weights=[0.3, 0.7])[0],  # Solo positivo
-                        "selected_product_id": product["id"],
-                        "source_file": "conversation_001.json",
-                        "processed": False
-                    }
-
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-        logger.info(f"  ✅ {success_file} - {len(existing_ids)} registros POSITIVOS")
-
-    def generate_failed_queries_log(self):
-        """Genera failed_queries.log con FEEDBACK NEGATIVO para soft negative filtering"""
-        logger.info("📝 Generando failed_queries.log (feedback 1-3)...")
-
-        failed_file = Path("data/feedback/failed_queries.log")
-        existing_ids = set()
-
-        failure_reasons = ["product_not_found", "incomplete_data", "low_quality_response"]
-
-        with open(failed_file, "w", encoding="utf-8") as f:
-            for i in range(30):  # Menos fallos (más realista)
-                query = random.choice([q for group in self.query_groups.values() for q in group])
-
-                query_hash = hashlib.md5(query.encode("utf-8")).hexdigest()
-                entry_id = f"session_fail_{i:03d}-{query_hash}"
-
-                if entry_id not in existing_ids:
-                    existing_ids.add(entry_id)
-
-                    # 🔥 PRODUCTOS CON BAJO RATING para testing de negative filtering
-                    low_rated_products = [p for p in self.amazon_products if p["average_rating"] < 3.5]
-                    mentioned_product = random.choice(low_rated_products) if low_rated_products else random.choice(self.amazon_products)
-
-                    record = {
-                        "timestamp": (datetime.now() - timedelta(days=random.randint(1, 30))).isoformat(),
-                        "session_id": f"session_fail_{i:03d}",
-                        "query": query,
-                        "response": f"No encontré buenas opciones para '{query}'. {mentioned_product['title']} tiene baja calificación.",
-                        "feedback": random.choices([1, 2, 3], weights=[0.3, 0.4, 0.3])[0],  # Solo negativo
-                        "failure_reason": random.choice(failure_reasons),
-                        "selected_product_id": mentioned_product["id"],  # Para negative filtering
-                        "source_file": "conversation_001.json",
-                        "processed": False
-                    }
-
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-        logger.info(f"  ✅ {failed_file} - {len(existing_ids)} registros NEGATIVOS")
-
-    def generate_feedback_weights(self):
-        """Genera pesos de feedback iniciales para testing del decay temporal"""
-        logger.info("⚖️ Generando pesos de feedback iniciales...")
-
-        weights_file = Path("data/feedback/feedback_weights.json")
-        weights = {}
-
-        # Productos populares tienen pesos altos
-        for product in self.amazon_products:
-            if product["average_rating"] >= 4.5:
-                weights[product["id"]] = random.randint(3, 8)
-            elif product["average_rating"] >= 4.0:
-                weights[product["id"]] = random.randint(1, 4)
-            else:
-                weights[product["id"]] = random.randint(0, 1)
-
-        with open(weights_file, "w", encoding="utf-8") as f:
-            json.dump(weights, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"  ✅ {weights_file} - {len(weights)} productos con pesos")
-
-    def generate_realtime_feedback(self):
-        """Genera feedback en tiempo real con INFERENCIA MEJORADA"""
-        logger.info("📝 Generando feedback en tiempo real...")
-
-        for day in range(7):
-            date_str = (datetime.now() - timedelta(days=day)).strftime("%Y-%m-%d")
-            feedback_file = Path(f"data/feedback/feedback_{date_str}.jsonl")
-
-            with open(feedback_file, "w", encoding="utf-8") as f:
-                for i in range(random.randint(8, 20)):
-                    profile_type = random.choice(self.user_profiles)
-                    query = random.choice(profile_type["queries"])
-
-                    # Productos mostrados basados en grupo de usuario
-                    if random.random() < 0.7:
-                        fav_products = self._get_products_by_ids(profile_type.get("fav_products", []))
-                        products = self._safe_sample(fav_products, 2, 4)
-                    else:
-                        products = self._safe_sample(self.amazon_products, 2, 4)
-
-                    # Inferencia mejorada: producto más relevante al query
-                    selected_product = self._infer_selected_product(query, products)
-                    rating = random.choices([1, 2, 3, 4, 5], weights=[0.05, 0.1, 0.2, 0.35, 0.3])[0]
-
-                    record = {
-                        "timestamp": (datetime.now() - timedelta(days=day, hours=random.randint(1, 23))).isoformat(),
-                        "query": query,
-                        "response": f"Recomendación: {selected_product['title']} - ${selected_product['price']}",
-                        "feedback": rating,
-                        "products_shown": [p["id"] for p in products],
-                        "selected_product_id": selected_product["id"],  # ✅ SIEMPRE presente
-                        "user_age": random.randint(18, 45),
-                        "user_gender": random.choice(["male", "female"]),
-                        "user_country": random.choice(["Spain", "Mexico"]),
-                        "inference_method": "multi_strategy",
-                        "processed": False
-                    }
-
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-            logger.info(f"  ✅ {feedback_file}")
-
-    def _infer_selected_product(self, query: str, products: list) -> dict:
-        """Simula la inferencia mejorada del WorkingRAGAgent"""
-        query_lower = query.lower()
-
-        # Estrategia 1: Coincidencia de términos en título
-        for product in products:
-            title_lower = product["title"].lower()
-            if any(term in title_lower for term in query_lower.split()):
-                return product
-
-        # Estrategia 2: Producto con mejor rating
-        best_rated = max(products, key=lambda x: x["average_rating"])
-        return best_rated
-
-    def generate_rlhf_metrics(self):
-        """Genera métricas RLHF que muestran MEJORA PROGRESIVA"""
-        logger.info("📊 Generando métricas RLHF...")
-
-        metrics_file = Path("data/feedback/rlhf_metrics/training_metrics.jsonl")
-        base_accuracy = 0.60
-
-        with open(metrics_file, "w", encoding="utf-8") as f:
-            for i in range(20):
-                # Mejora progresiva con algunos altibajos
-                if i < 5:
-                    improvement = random.uniform(0.02, 0.08)  # Mejora rápida inicial
-                elif i < 15:
-                    improvement = random.uniform(-0.03, 0.05)  # Estabilización
-                else:
-                    improvement = random.uniform(0.01, 0.03)  # Mejora lenta final
-
-                new_accuracy = max(0.5, min(0.92, base_accuracy + improvement))
-
-                record = {
-                    "timestamp": (datetime.now() - timedelta(days=20 - i)).isoformat(),
-                    "examples_used": random.randint(80, 250),
-                    "previous_accuracy": round(base_accuracy, 3),
-                    "new_accuracy": round(new_accuracy, 3),
-                    "improvement": round(improvement, 3),
-                    "training_time_seconds": random.randint(400, 2200),
-                    "success": improvement > 0
-                }
-
-                base_accuracy = new_accuracy
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-        logger.info(f"  ✅ {metrics_file} - Progreso de entrenamiento simulado")
-
-    def run(self):
-        """Ejecuta la generación completa ACTUALIZADA"""
-        logger.info("🚀 INICIANDO GENERACIÓN DE DATOS ACTUALIZADA")
-        logger.info("=" * 70)
-        logger.info("💡 INCLUYE TODAS LAS MEJORAS IMPLEMENTADAS:")
-        logger.info("   ✅ Cache MD5 para filtro colaborativo")
-        logger.info("   ✅ Soft negative filtering")
-        logger.info("   ✅ Decay temporal automático")
-        logger.info("   ✅ Pesos dinámicos normalizados")
-        logger.info("   ✅ Inferencia mejorada de productos")
-        logger.info("=" * 70)
-
+        self.interactions_per_user = interactions_per_user
+        
+        # Configuración desde constantes externas
+        self.gaming_products = PRODUCTS_CONFIG
+        self.user_profiles = USER_PROFILES_CONFIG
+        self.gaming_queries = QUERIES_CONFIG
+        
+        # Estructura de directorios
         self.setup_directories()
 
-        # 1. Perfiles de usuarios con comportamiento colaborativo coherente
-        logger.info("👥 Generando perfiles de usuarios COLABORATIVOS...")
-        for i in range(1, self.num_users + 1):
-            user_profile = self.generate_user_profile(i)
-            user_file = Path(f"data/users/{user_profile['user_id']}.json")
-            with open(user_file, "w", encoding="utf-8") as f:
-                json.dump(user_profile, f, ensure_ascii=False, indent=2)
-            logger.info(f"  ✅ {user_file} - {user_profile['preferred_categories'][0]}")
+    def setup_directories(self) -> None:
+        """Crea la estructura de directorios requerida"""
+        directories = [
+            "data/raw/interactions",
+            "data/raw/conversations",
+            "data/raw/feedback",
+            "data/raw/product_similarity",
+            "data/raw/user_preferences",
+            "data/processed"
+        ]
+        
+        for dir_path in directories:
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
+            logger.info(f"  ✅ Directorio creado: {dir_path}")
 
-        # 2. Sistema de feedback mejorado
-        self.generate_success_queries_log()
-        self.generate_failed_queries_log()
-        self.generate_feedback_weights()
-        self.generate_realtime_feedback()
+    def ts(self, days_range: int = 30) -> str:
+        """
+        Genera un timestamp aleatorio dentro del rango especificado
+        
+        Args:
+            days_range: Número máximo de días hacia atrás
+        
+        Returns:
+            Timestamp en formato ISO con Z
+        """
+        return (datetime.now() - timedelta(days=random.randint(0, days_range))).isoformat() + "Z"
 
-        # 3. Métricas RLHF realistas
-        self.generate_rlhf_metrics()
+    def random_user_profile(self) -> Dict[str, Any]:
+        """Selecciona aleatoriamente un perfil de usuario"""
+        return random.choice(self.user_profiles)
 
+    def sample_products(self, k_range: Tuple[int, int] = (3, 5)) -> List[Dict[str, Any]]:
+        """
+        Muestrea productos aleatoriamente
+        
+        Args:
+            k_range: Rango (mín, máx) de productos a muestrear
+        
+        Returns:
+            Lista de productos seleccionados
+        """
+        k = random.randint(*k_range)
+        return random.sample(self.gaming_products, k=min(k, len(self.gaming_products)))
+
+    def product_similarity(self, product_a: Dict[str, Any], product_b: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calcula la similitud entre dos productos
+        
+        Args:
+            product_a: Primer producto
+            product_b: Segundo producto
+        
+        Returns:
+            Diccionario con score de similitud y características compartidas
+        """
+        similarity_score = 0.0
+        similarity_type = ""
+        shared_features = []
+        
+        # Misma categoría principal
+        if product_a["main_category"] == product_b["main_category"]:
+            similarity_score += 0.3
+            similarity_type = "category"
+            shared_features.append(product_a["main_category"])
+        
+        # Misma marca
+        if product_a["brand"] == product_b["brand"]:
+            similarity_score += 0.4
+            similarity_type = "brand"
+            shared_features.append(product_a["brand"])
+        
+        # Categorías similares
+        common_cats = set(product_a["categories"]) & set(product_b["categories"])
+        if common_cats:
+            similarity_score += len(common_cats) * 0.1
+            if not similarity_type:
+                similarity_type = "categories"
+            shared_features.extend(list(common_cats)[:2])
+        
+        # Precio similar (±20%)
+        if product_a["price"] > 0 and product_b["price"] > 0:
+            price_ratio = min(product_a["price"], product_b["price"]) / max(product_a["price"], product_b["price"])
+            if price_ratio > 0.8:
+                similarity_score += 0.2
+                if not similarity_type:
+                    similarity_type = "price_range"
+                shared_features.append("precio similar")
+        
+        # Asegurar score entre 0 y 1
+        similarity_score = min(1.0, similarity_score)
+        
+        return {
+            "similarity_score": round(similarity_score, 2),
+            "similarity_type": similarity_type,
+            "shared_features": list(set(shared_features))[:3]
+        }
+
+    def generate_user_interactions(self) -> List[Dict[str, Any]]:
+        """Genera datos de interacción usuario-producto"""
+        logger.info("🔄 Generando interacciones usuario-producto...")
+        
+        interactions = []
+        total_interactions = 0
+        
+        for user_num in range(self.num_users):
+            profile = self.random_user_profile()
+            user_id = f"user_{user_num:03d}"
+            
+            user_interactions = random.randint(5, self.interactions_per_user)
+            total_interactions += user_interactions
+            
+            for interaction_num in range(user_interactions):
+                session_id = f"sess_{datetime.now().strftime('%Y%m%d')}_{user_num:03d}_{interaction_num:03d}"
+                query = random.choice(self.gaming_queries)
+                
+                # Seleccionar productos vistos
+                viewed_products = self.sample_products((3, 5))
+                viewed_ids = [p["id"] for p in viewed_products]
+                
+                # Producto clickeado
+                clicked_product = random.choice(viewed_products)
+                
+                # Determinar si compró
+                dwell_time = random.randint(10, 180)
+                purchased = random.random() < (dwell_time / 200)
+                
+                # Generar rating si compró
+                rating = None
+                feedback_text = None
+                if purchased:
+                    rating = random.choices([4, 5], weights=[0.3, 0.7])[0]
+                    feedback_options = [
+                        "Muy cómodo para largas jornadas",
+                        "Excelente para gaming",
+                        "Buen relación calidad-precio",
+                        "Superó mis expectativas",
+                        "Lo recomendaría a otros gamers"
+                    ]
+                    feedback_text = random.choice(feedback_options)
+                
+                interaction = {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "query": query,
+                    "timestamp": self.ts(30),
+                    "viewed_products": viewed_ids,
+                    "clicked_product": clicked_product["id"],
+                    "dwell_time_seconds": dwell_time,
+                    "purchased": purchased,
+                    "rating": rating,
+                    "feedback_text": feedback_text
+                }
+                
+                interactions.append(interaction)
+        
+        # Guardar a archivo
+        interactions_file = Path("data/raw/interactions/user_interactions.jsonl")
+        write_jsonl(interactions_file, interactions)
+        
+        logger.info(f"  📊 Total interacciones generadas: {total_interactions}")
+        return interactions
+
+    def generate_conversations(self) -> List[Dict[str, Any]]:
+        """Genera datos de conversaciones para RAG/RLHF"""
+        logger.info("💬 Generando conversaciones para RAG/RLHF...")
+        
+        conversation_templates = [
+            {
+                "user_intent": "recomendación producto gaming",
+                "user_messages": [
+                    "Necesito un ratón cómodo para trabajar todo el día",
+                    "¿Funciona con Mac?",
+                    "¿Tiene garantía?"
+                ],
+                "assistant_responses": [
+                    "Te recomiendo el Logitech MX Master 3. Es ergonómico, tiene batería de 70 días y scroll horizontal para productividad.",
+                    "Sí, es compatible con Mac, Windows y Linux.",
+                    "Tiene garantía de 2 años del fabricante."
+                ]
+            },
+            {
+                "user_intent": "comparación consolas",
+                "user_messages": [
+                    "¿Qué consola me recomiendas, PS5 o Xbox Series X?",
+                    "¿Cuál tiene mejores exclusivos?",
+                    "¿Y para juego en familia?"
+                ],
+                "assistant_responses": [
+                    "Depende de tus preferencias. PS5 tiene exclusivos como Spider-Man 2, Xbox incluye Game Pass.",
+                    "PS5 tiene más exclusivos de acción/aventura, Xbox tiene mejor servicio por suscripción.",
+                    "Para familia, Nintendo Switch es mejor opción con juegos como Mario Kart."
+                ]
+            },
+            {
+                "user_intent": "selección periféricos",
+                "user_messages": [
+                    "Busco un teclado mecánico para gaming",
+                    "¿Qué switches son mejores?",
+                    "¿Recomiendas algún modelo específico?"
+                ],
+                "assistant_responses": [
+                    "Te recomiendo el SteelSeries Apex Pro con switches ajustables.",
+                    "Los switches lineales (rojos) son buenos para gaming, los táctiles (marrón) para mixto.",
+                    "El SteelSeries Apex Pro o el Razer Huntsman V2 son excelentes opciones."
+                ]
+            }
+        ]
+        
+        conversations = []
+        
+        for conv_num in range(50):
+            template = random.choice(conversation_templates)
+            profile = self.random_user_profile()
+            
+            # Crear conversación con múltiples turnos
+            turns = []
+            turn_count = random.randint(2, 4)
+            
+            for i in range(turn_count):
+                if i == 0:
+                    # Primer turno: usuario
+                    turns.append({
+                        "role": "user",
+                        "content": template["user_messages"][0],
+                        "timestamp": self.ts(30)
+                    })
+                    
+                    # Respuesta del asistente
+                    recommended = random.sample(self.gaming_products, k=random.randint(1, 3))
+                    turns.append({
+                        "role": "assistant",
+                        "content": template["assistant_responses"][0],
+                        "recommended_products": [p["id"] for p in recommended],
+                        "timestamp": self.ts(30)
+                    })
+                elif i < len(template["user_messages"]):
+                    # Turnos adicionales
+                    turns.append({
+                        "role": "user",
+                        "content": template["user_messages"][i],
+                        "timestamp": self.ts(30)
+                    })
+            
+            conversation = {
+                "conversation_id": f"conv_{conv_num:03d}",
+                "turns": turns,
+                "successful": random.random() > 0.2,
+                "final_rating": random.choices([3, 4, 5], weights=[0.1, 0.3, 0.6])[0] if random.random() > 0.2 else random.randint(1, 2),
+                "user_profile": {
+                    "age": random.randint(*profile["age_range"]),
+                    "profession": random.choice(profile["professions"]),
+                    "use_case": random.choice(["trabajo", "gaming", "estudio", "mixto"])
+                }
+            }
+            
+            conversations.append(conversation)
+        
+        # Guardar a archivo
+        conversations_file = Path("data/raw/conversations/rag_training_data.jsonl")
+        write_jsonl(conversations_file, conversations)
+        
+        logger.info(f"  📊 Total conversaciones generadas: {len(conversations)}")
+        return conversations
+
+    def generate_feedback_rlhf(self) -> List[Dict[str, Any]]:
+        """Genera datos de feedback para RLHF"""
+        logger.info("📝 Generando feedback para RLHF...")
+        
+        queries_feedback = [
+            {
+                "query": "mejor ratón para juegos",
+                "model_response": "El Razer DeathAdder V2 es excelente para gaming con 20K DPI y diseño ergonómico.",
+                "human_response": "Sí, pero también considera el Logitech G Pro X Superlight 2 para juegos competitivos.",
+                "rating": 3,
+                "preferred_response": "human",
+                "reasons": ["más específico", "menciona alternativa", "contexto competitivo"]
+            },
+            {
+                "query": "consola para niños",
+                "model_response": "La PlayStation 5 tiene muchos juegos familiares.",
+                "human_response": "Para niños, la Nintendo Switch es mejor por sus controles intuitivos y juegos como Mario.",
+                "rating": 2,
+                "preferred_response": "human",
+                "reasons": ["más adecuado para niños", "ejemplos concretos", "considera usabilidad"]
+            },
+            {
+                "query": "teclado gaming barato",
+                "model_response": "Cualquier teclado mecánico con switches red.",
+                "human_response": "El Redragon K552 ofrece buena calidad-precio con switches mecánicos y construcción duradera.",
+                "rating": 4,
+                "preferred_response": "human",
+                "reasons": ["recomendación específica", "menciona marca concreta", "justifica la elección"]
+            }
+        ]
+        
+        feedback_list = []
+        
+        for i in range(40):
+            base_feedback = random.choice(queries_feedback)
+            
+            # Variar ligeramente cada ejemplo
+            feedback = {
+                "query": base_feedback["query"],
+                "model_response": base_feedback["model_response"],
+                "human_response": base_feedback["human_response"],
+                "rating": max(1, min(5, base_feedback["rating"] + random.randint(-1, 1))),
+                "preferred_response": base_feedback["preferred_response"],
+                "reasons": base_feedback["reasons"],
+                "domain": "gaming",
+                "expertise_level": random.choice(["principiante", "intermedio", "avanzado"]),
+                "timestamp": self.ts(60)
+            }
+            
+            feedback_list.append(feedback)
+        
+        # Guardar a archivo
+        feedback_file = Path("data/raw/feedback/rlhf_training.jsonl")
+        write_jsonl(feedback_file, feedback_list)
+        
+        logger.info(f"  📊 Total ejemplos de feedback generados: {len(feedback_list)}")
+        return feedback_list
+
+    def generate_product_similarity(self) -> Dict[str, Any]:
+        """Genera datos de similitud entre productos"""
+        logger.info("🔗 Generando similitud de productos...")
+        
+        product_pairs = []
+        
+        for i in range(len(self.gaming_products)):
+            for j in range(i + 1, len(self.gaming_products)):
+                product_a = self.gaming_products[i]
+                product_b = self.gaming_products[j]
+                
+                # Calcular similitud
+                similarity_data = self.product_similarity(product_a, product_b)
+                
+                if similarity_data["similarity_score"] > 0.3:
+                    product_pairs.append({
+                        "product_a": product_a["id"],
+                        "product_b": product_b["id"],
+                        **similarity_data
+                    })
+        
+        # Limitar a 20 pares más relevantes
+        product_pairs.sort(key=lambda x: x["similarity_score"], reverse=True)
+        selected_pairs = product_pairs[:20]
+        
+        # Guardar a archivo
+        similarity_data = {"product_pairs": selected_pairs}
+        similarity_file = Path("data/raw/product_similarity/product_similarities.json")
+        
+        try:
+            similarity_file.parent.mkdir(parents=True, exist_ok=True)
+            with similarity_file.open("w", encoding="utf-8") as f:
+                json.dump(similarity_data, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"  ✅ {similarity_file} - {len(selected_pairs)} pares de similitud generados")
+        except Exception as e:
+            logger.error(f"  ❌ Error al escribir {similarity_file}: {e}")
+        
+        return similarity_data
+
+    def generate_user_preferences(self) -> List[Dict[str, Any]]:
+        """Genera datos de preferencias de usuario"""
+        logger.info("👤 Generando preferencias de usuario...")
+        
+        preferences_list = []
+        
+        for user_num in range(self.num_users):
+            profile = self.random_user_profile()
+            user_id = f"user_{user_num:03d}"
+            
+            # Generar interacciones históricas
+            historical_interactions = []
+            for _ in range(random.randint(3, 10)):
+                product = random.choice(self.gaming_products)
+                action = random.choices(["view", "click", "purchase"], weights=[0.5, 0.3, 0.2])[0]
+                
+                interaction = {
+                    "product_id": product["id"],
+                    "action": action,
+                    "timestamp": (datetime.now() - timedelta(days=random.randint(1, 90))).isoformat()
+                }
+                
+                if action == "purchase":
+                    interaction["rating"] = random.choices([4, 5], weights=[0.3, 0.7])[0]
+                elif action == "view":
+                    interaction["dwell_time"] = random.randint(5, 120)
+                
+                historical_interactions.append(interaction)
+            
+            user_preferences = {
+                "user_id": user_id,
+                "preferred_categories": profile["preferred_categories"],
+                "preferred_brands": profile["preferred_brands"],
+                "price_range": profile["price_range"],
+                "avoided_categories": random.sample(["Ropa", "Alimentación", "Muebles", "Libros"], k=random.randint(0, 2)),
+                "historical_interactions": historical_interactions,
+                "demographics": {
+                    "age": random.randint(*profile["age_range"]),
+                    "gender": random.choice(["male", "female", "other"]),
+                    "country": random.choice(["Spain", "Mexico", "Argentina", "Colombia", "Chile"]),
+                    "language": "es"
+                },
+                "gaming_profile": {
+                    "experience_years": random.randint(1, 20),
+                    "preferred_genres": random.sample(["FPS", "RPG", "Estrategia", "Deportes", "Aventura"], k=random.randint(2, 4)),
+                    "play_time_weekly": random.choice(["5-10h", "10-20h", "20-40h", "40+h"]),
+                    "gaming_platforms": random.sample(["PC", "PlayStation", "Xbox", "Nintendo Switch", "Mobile"], k=random.randint(1, 3))
+                }
+            }
+            
+            preferences_list.append(user_preferences)
+        
+        # Guardar a archivo
+        preferences_file = Path("data/raw/user_preferences/user_preferences.jsonl")
+        write_jsonl(preferences_file, preferences_list)
+        
+        logger.info(f"  📊 Total preferencias generadas: {len(preferences_list)}")
+        return preferences_list
+
+    def save_products(self) -> None:
+        """Guarda los productos en formato JSONL"""
+        products_file = Path("data/raw/products.jsonl")
+        write_jsonl(products_file, self.gaming_products)
+        logger.info(f"  📊 Total productos guardados: {len(self.gaming_products)}")
+
+    def run_parallel(self) -> None:
+        """Ejecuta la generación en paralelo"""
+        logger.info("⚡ Ejecutando generación paralela...")
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(self.generate_user_interactions): "interacciones",
+                executor.submit(self.generate_conversations): "conversaciones",
+                executor.submit(self.generate_feedback_rlhf): "feedback",
+                executor.submit(self.generate_product_similarity): "similitud",
+                executor.submit(self.generate_user_preferences): "preferencias"
+            }
+            
+            for future in as_completed(futures):
+                task_name = futures[future]
+                try:
+                    future.result()
+                    logger.info(f"  ✅ {task_name} completado")
+                except Exception as e:
+                    logger.error(f"  ❌ Error en {task_name}: {e}")
+        
+        # Guardar productos (pequeño, no necesita paralelismo)
+        self.save_products()
+
+    def run_sequential(self) -> None:
+        """Ejecuta la generación secuencial"""
+        self.generate_user_interactions()
+        self.generate_conversations()
+        self.generate_feedback_rlhf()
+        self.generate_product_similarity()
+        self.generate_user_preferences()
+        self.save_products()
+
+    def run(self, parallel: bool = False) -> None:
+        """Ejecuta la generación completa de datos"""
+        logger.info("🚀 INICIANDO GENERACIÓN DE DATOS DE VIDEOJUEGOS")
         logger.info("=" * 70)
-        logger.info("🎉 GENERACIÓN COMPLETA FINALIZADA!")
-        logger.info("📊 DATOS OPTIMIZADOS PARA:")
-        logger.info("   🔍 Filtro colaborativo con usuarios similares")
-        logger.info("   ⚖️  Soft negative filtering automático")
-        logger.info("   📈 Reentrenamiento RLHF progresivo")
-        logger.info("   🎯 Inferencia inteligente de productos")
+        
+        start_time = datetime.now()
+        
+        if parallel:
+            self.run_parallel()
+        else:
+            self.run_sequential()
+        
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        logger.info("=" * 70)
+        logger.info(f"🎉 GENERACIÓN COMPLETA FINALIZADA en {duration:.2f} segundos!")
+        logger.info("📊 DATOS GENERADOS EN:")
+        logger.info("   📁 data/raw/interactions/user_interactions.jsonl")
+        logger.info("   📁 data/raw/conversations/rag_training_data.jsonl")
+        logger.info("   📁 data/raw/feedback/rlhf_training.jsonl")
+        logger.info("   📁 data/raw/product_similarity/product_similarities.json")
+        logger.info("   📁 data/raw/user_preferences/user_preferences.jsonl")
+        logger.info("   📁 data/raw/products.jsonl")
         logger.info("=" * 70)
 
 
 if __name__ == "__main__":
-    generator = CompleteTrainingDataGenerator(num_users=15, searches_per_user=50)
-    generator.run()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generador de datos de videojuegos")
+    parser.add_argument("--users", type=int, default=15, help="Número de usuarios")
+    parser.add_argument("--interactions", type=int, default=25, help="Interacciones por usuario")
+    parser.add_argument("--parallel", action="store_true", help="Ejecutar en paralelo")
+    
+    args = parser.parse_args()
+    
+    generator = GamingDataGenerator(num_users=args.users, interactions_per_user=args.interactions)
+    generator.run(parallel=args.parallel)

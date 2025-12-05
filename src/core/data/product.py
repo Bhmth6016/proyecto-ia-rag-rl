@@ -2,7 +2,7 @@ from __future__ import annotations
 # src/core/data/product.py
 import hashlib
 import re
-from typing import Optional, Dict, List, Any, ClassVar, Union, TYPE_CHECKING
+from typing import Optional, Dict, List, Any, ClassVar, Union
 from pydantic import BaseModel, Field, model_validator
 import uuid
 import logging
@@ -209,6 +209,7 @@ class MLProductEnricher:
     
     _instance = None
     _preprocessor = None
+    _preprocessor_class = None  # 🔥 NUEVO: Referencia a la clase
     
     def __new__(cls):
         if cls._instance is None:
@@ -222,11 +223,34 @@ class MLProductEnricher:
             return None
         
         try:
-            # Importación dinámica para evitar dependencia circular
-            from .ml_processor import ProductDataPreprocessor
+            # 🔥 SOLUCIÓN: Importación diferida con sys.modules check
+            import sys
+            import importlib
+            
+            module_name = 'src.core.data.ml_processor'
+            
+            if module_name not in sys.modules:
+                # Intentar importar el módulo
+                try:
+                    # 🔥 IMPORTANTE: Usar importlib para evitar dependencias circulares
+                    module = importlib.import_module(module_name)
+                    ProductDataPreprocessor = getattr(module, 'ProductDataPreprocessor')
+                    cls._preprocessor_class = ProductDataPreprocessor
+                except (ImportError, AttributeError) as e:
+                    logger.warning(f"No se pudo importar {module_name}: {e}")
+                    return None
+            else:
+                # El módulo ya está cargado, obtener la clase
+                module = sys.modules[module_name]
+                ProductDataPreprocessor = getattr(module, 'ProductDataPreprocessor', None)
+                if not ProductDataPreprocessor:
+                    logger.warning(f"ProductDataPreprocessor no encontrado en {module_name}")
+                    return None
+                cls._preprocessor_class = ProductDataPreprocessor
+            
             config = config or {}
             
-            processor = ProductDataPreprocessor(
+            processor = cls._preprocessor_class(
                 categories=config.get('categories', AutoProductConfig.DEFAULT_CATEGORIES),
                 use_gpu=config.get('use_gpu', False),
                 embedding_model=config.get('embedding_model', AutoProductConfig.DEFAULT_EMBEDDING_MODEL)
@@ -234,9 +258,6 @@ class MLProductEnricher:
             logger.info("ML ProductEnricher inicializado exitosamente")
             return processor
             
-        except ImportError as e:
-            logger.warning(f"ML dependencies not available: {e}")
-            return None
         except Exception as e:
             logger.error(f"Error inicializando ML preprocessor: {e}")
             return None
@@ -251,6 +272,24 @@ class MLProductEnricher:
             cls._preprocessor = cls._load_ml_processor(config)
         
         return cls._preprocessor
+    
+    @classmethod
+    def _safe_preprocessor_call(cls, method_name: str, *args, **kwargs) -> Any:
+        """Llama a un método del preprocesador de manera segura"""
+        preprocessor = cls.get_preprocessor()
+        if not preprocessor:
+            return None
+        
+        method = getattr(preprocessor, method_name, None)
+        if not method:
+            logger.warning(f"Método {method_name} no encontrado en preprocessor")
+            return None
+        
+        try:
+            return method(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error llamando a {method_name}: {e}")
+            return None
     
     @classmethod
     def enrich_product(
@@ -291,61 +330,146 @@ class MLProductEnricher:
                 return product_data
             
             enriched_data = product_data.copy()
-            
-            # Preparar texto completo
             full_text = f"{title}. {description}".strip()
             
-            # Usar métodos del preprocesador
-            # 1. Clasificación de categoría
+            # 🔥 SOLUCIÓN: Usar métodos internos si los métodos del preprocesador fallan
             if 'category' in enable_features and title:
-                predicted_category = preprocessor._predict_category_zero_shot(full_text)
+                predicted_category = None
+                
+                # Intentar usar el método del preprocesador
+                if hasattr(preprocessor, '_predict_category_zero_shot'):
+                    predicted_category = cls._safe_preprocessor_call(
+                        '_predict_category_zero_shot', full_text
+                    )
+                
+                # Fallback: usar método interno simple
+                if not predicted_category:
+                    predicted_category = cls._predict_simple_category(full_text)
+                
                 if predicted_category:
                     enriched_data['predicted_category'] = predicted_category
-                    
-                    # Si no hay categoría principal, usar la predicha
                     if 'main_category' not in enriched_data or not enriched_data['main_category']:
                         enriched_data['main_category'] = predicted_category
             
-            # 2. Extracción de entidades (NER)
             if 'entities' in enable_features:
-                entities = preprocessor._extract_entities_ner(full_text)
+                entities = None
+                
+                # Intentar usar el método del preprocesador
+                if hasattr(preprocessor, '_extract_entities_ner'):
+                    entities = cls._safe_preprocessor_call('_extract_entities_ner', full_text)
+                
+                # Fallback: extracción simple
+                if not entities:
+                    entities = cls._extract_simple_entities(full_text)
+                
                 if entities:
                     enriched_data['extracted_entities'] = entities
-                    
-                    # Extraer marca y modelo si están disponibles
                     if 'ORG' in entities and entities['ORG']:
                         enriched_data.setdefault('attributes', {})['brand'] = entities['ORG'][0]
                     if 'PRODUCT' in entities and entities['PRODUCT']:
                         enriched_data.setdefault('attributes', {})['model'] = entities['PRODUCT'][0]
             
-            # 3. Generación de tags (TF-IDF)
             if 'tags' in enable_features:
-                # Nota: TF-IDF requiere entrenamiento previo con fit_tfidf()
+                tags = None
+                
+                # Solo usar TF-IDF si está entrenado
                 if hasattr(preprocessor, '_tfidf_fitted') and preprocessor._tfidf_fitted:
-                    tags = preprocessor._generate_tags_tfidf(full_text)
-                    if tags:
-                        # Separar tags ML de tags manuales
-                        enriched_data['ml_tags'] = tags
-                        
-                        # Combinar con tags existentes
-                        existing_tags = set(enriched_data.get('tags', []))
-                        new_tags = [tag for tag in tags if tag not in existing_tags]
-                        if new_tags:
-                            enriched_data.setdefault('tags', []).extend(new_tags[:5])
+                    tags = cls._safe_preprocessor_call('_generate_tags_tfidf', full_text)
+                
+                # Fallback: tags simples basados en palabras clave
+                if not tags:
+                    tags = cls._generate_simple_tags(full_text)
+                
+                if tags:
+                    enriched_data['ml_tags'] = tags
+                    existing_tags = set(enriched_data.get('tags', []))
+                    new_tags = [tag for tag in tags if tag not in existing_tags]
+                    if new_tags:
+                        enriched_data.setdefault('tags', []).extend(new_tags[:5])
             
-            # 4. Embeddings semánticos
             if 'embedding' in enable_features:
-                embedding = preprocessor._generate_embedding(full_text)
+                embedding = None
+                
+                # Intentar usar el método del preprocesador
+                if hasattr(preprocessor, '_generate_embedding'):
+                    embedding = cls._safe_preprocessor_call('_generate_embedding', full_text)
+                
                 if embedding is not None:
                     enriched_data['embedding'] = embedding
-                    enriched_data['embedding_model'] = preprocessor.embedding_model_name
+                    enriched_data['embedding_model'] = getattr(preprocessor, 'embedding_model_name', 'unknown')
             
             return enriched_data
             
         except Exception as e:
             logger.error(f"Error en enriquecimiento ML: {e}")
-            # En caso de error, devolver datos originales
             return product_data
+    
+    @classmethod
+    def _predict_simple_category(cls, text: str) -> Optional[str]:
+        """Predicción simple de categoría usando palabras clave"""
+        text_lower = text.lower()
+        
+        category_keywords = {
+            'electronics': ['electronic', 'computer', 'laptop', 'phone', 'tablet', 'camera', 'tv', 'headphone'],
+            'books': ['book', 'novel', 'reading', 'author', 'publish', 'chapter', 'page'],
+            'clothing': ['shirt', 'dress', 'pants', 'jacket', 'shoe', 'wear', 'fashion', 'clothing'],
+            'home': ['furniture', 'home', 'kitchen', 'bed', 'chair', 'table', 'sofa', 'decor'],
+            'sports': ['sport', 'exercise', 'fitness', 'outdoor', 'running', 'gym', 'training'],
+            'toys': ['toy', 'game', 'play', 'children', 'kids', 'fun', 'doll'],
+        }
+        
+        for category, keywords in category_keywords.items():
+            for keyword in keywords:
+                if keyword in text_lower:
+                    return category
+        
+        return None
+    
+    @classmethod
+    def _extract_simple_entities(cls, text: str) -> Dict[str, List[str]]:
+        """Extracción simple de entidades usando regex"""
+        entities = {
+            'ORG': [],
+            'PRODUCT': [],
+            'LOC': []
+        }
+        
+        # Patrones simples
+        patterns = {
+            'ORG': [r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b(?=\s+(Inc|Corp|LLC|Ltd))'],
+            'PRODUCT': [r'\b[A-Z][A-Za-z0-9]+\b'],
+        }
+        
+        for entity_type, pattern_list in patterns.items():
+            for pattern in pattern_list:
+                matches = re.findall(pattern, text)
+                if matches:
+                    entities[entity_type].extend(matches[:3])
+        
+        return entities
+    
+    @classmethod
+    def _generate_simple_tags(cls, text: str) -> List[str]:
+        """Generación simple de tags usando palabras más frecuentes"""
+        words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+        
+        # Palabras de stop (inglesas/españolas)
+        stop_words = {
+            'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'has', 'was',
+            'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'con', 'por', 'para'
+        }
+        
+        # Contar frecuencia
+        word_counts = {}
+        for word in words:
+            if word not in stop_words:
+                word_counts[word] = word_counts.get(word, 0) + 1
+        
+        # Obtener las palabras más frecuentes
+        sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
+        tags = [word for word, count in sorted_words[:5]]
+        
+        return tags
     
     @classmethod
     def enrich_batch(
@@ -373,9 +497,18 @@ class MLProductEnricher:
             return products_data
         
         try:
-            # Usar el método de batch processing del preprocesador
-            enriched_batch = preprocessor.preprocess_batch(products_data)
-            return enriched_batch
+            # Si el preprocesador tiene método de batch, usarlo
+            if hasattr(preprocessor, 'preprocess_batch'):
+                enriched_batch = preprocessor.preprocess_batch(products_data)
+                return enriched_batch
+            else:
+                # Fallback: procesar individualmente
+                logger.info("No batch method available, processing individually")
+                enriched_products = []
+                for product_data in products_data:
+                    enriched = cls.enrich_product(product_data, enable_features, config)
+                    enriched_products.append(enriched)
+                return enriched_products
             
         except Exception as e:
             logger.error(f"Error en batch ML enrichment: {e}")
@@ -392,8 +525,12 @@ class MLProductEnricher:
             return False
         
         try:
-            preprocessor.fit_tfidf(descriptions)
-            return True
+            if hasattr(preprocessor, 'fit_tfidf'):
+                preprocessor.fit_tfidf(descriptions)
+                return True
+            else:
+                logger.warning("Preprocessor no tiene método fit_tfidf")
+                return False
         except Exception as e:
             logger.error(f"Error entrenando TF-IDF: {e}")
             return False
@@ -412,6 +549,7 @@ class MLProductEnricher:
             metrics = {
                 "ml_enabled": True,
                 "preprocessor_loaded": True,
+                "preprocessor_class": cls._preprocessor_class.__name__ if cls._preprocessor_class else None,
                 "embedding_cache_size": len(getattr(preprocessor, '_embedding_cache', {})),
                 "tfidf_fitted": getattr(preprocessor, '_tfidf_fitted', False)
             }
