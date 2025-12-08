@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FIX_AND_TRAIN_RLHF.py - Corrige el error del trainer y entrena
+FIX_AND_TRAIN_RLHF.py -
 """
 
 import os
