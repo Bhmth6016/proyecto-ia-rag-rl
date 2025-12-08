@@ -44,7 +44,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     users.add_argument("--age", type=int, help="Age for new user")
     users.add_argument("--gender", type=str, choices=['male', 'female', 'other'], help="Gender for new user")
     users.add_argument("--country", type=str, help="Country for new user")
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument('command', choices=['rag', 'index', 'ml', 'train', 'users'])  # 🔥 NUEVO: 'train'
+    parser.add_argument('subcommand', nargs='?', default='')
     # Common arguments
     for p in [rag, index, users]:
         p.add_argument("-v", "--verbose", action="store_true")

@@ -1,18 +1,83 @@
-# src/core/data/product_reference.py
+# src/core/data/product_reference.py - VERSIÓN CORREGIDA SIN IMPORTACIÓN CIRCULAR
 """
 ProductReference - Para estandarizar el manejo de productos en todo el sistema.
-Versión corregida con manejo consistente de ML.
+Versión corregida sin dependencias circulares.
 """
 from dataclasses import dataclass, asdict
-from typing import Optional, Any, Dict, Literal, List, Union
+from typing import Optional, Any, Dict, Literal, List, Union, Type, TYPE_CHECKING
 import json
 import logging
 import warnings
 
 logger = logging.getLogger(__name__)
 
-# Importar configuración
-from src.core.config import settings
+# Importar configuración con manejo de importación diferida
+def _get_settings():
+    """Obtener settings de forma diferida para evitar circular imports."""
+    try:
+        from src.core.config import settings as app_settings
+        return app_settings
+    except ImportError:
+        # Fallback si no se puede importar
+        class FallbackSettings:
+            ML_CONFIDENCE_THRESHOLD = 0.6
+            ML_WEIGHT = 0.3
+            
+        return FallbackSettings()
+
+# ============================================================================
+# 🔥 SOLUCIÓN: Manejo de importación de Product sin circularidad
+# ============================================================================
+
+class ProductClassHolder:
+    """Holder para la clase Product que se puede configurar en runtime."""
+    
+    # Variable global para almacenar la clase Product
+    _product_class: Optional[Type] = None
+    
+    @classmethod
+    def set_product_class(cls, product_class: Type) -> None:
+        """
+        Configura la clase Product que se usará en ProductReference.
+        
+        Args:
+            product_class: La clase Product real
+        """
+        cls._product_class = product_class
+        logger.info(f"Product class configurada: {product_class.__name__}")
+    
+    @classmethod
+    def get_product_class(cls) -> Type:
+        """
+        Obtiene la clase Product configurada.
+        
+        Returns:
+            La clase Product configurada
+            
+        Raises:
+            RuntimeError: Si la clase Product no está configurada
+        """
+        if cls._product_class is None:
+            # Intentar importar automáticamente como fallback
+            try:
+                from src.core.data.product import Product
+                cls._product_class = Product
+                logger.info("Product class importada automáticamente")
+            except ImportError as e:
+                raise RuntimeError(
+                    "Product class no está configurada y no se puede importar automáticamente. "
+                    "Llama a ProductClassHolder.set_product_class() al inicio de la aplicación. "
+                    f"Error: {e}"
+                )
+        return cls._product_class
+    
+    @classmethod
+    def is_available(cls) -> bool:
+        """Verifica si la clase Product está disponible."""
+        return cls._product_class is not None
+
+# Alias conveniente para uso
+Product = ProductClassHolder
 
 @dataclass
 class ProductReference:
@@ -31,7 +96,7 @@ class ProductReference:
         if self.ml_features is None:
             self.ml_features = {}
         
-        # 🔥 CORRECCIÓN: Normalizar source basado en ML features
+        # Normalizar source basado en ML features
         self._normalize_source()
     
     def _normalize_source(self):
@@ -66,7 +131,6 @@ class ProductReference:
     @property
     def is_ml_processed(self) -> bool:
         """Indica si el producto ha sido procesado por ML."""
-        # 🔥 CORRECCIÓN: Verificar múltiples fuentes
         return (
             bool(self.ml_features) or 
             self.source in ["ml", "ml_enhanced", "mixed"] or
@@ -82,7 +146,7 @@ class ProductReference:
     @property
     def embedding(self) -> Optional[List[float]]:
         """Obtiene el embedding del producto si está disponible."""
-        # 🔥 CORRECCIÓN: Buscar en múltiples lugares
+        # Buscar en múltiples lugares
         if self.product and hasattr(self.product, 'embedding'):
             return self.product.embedding
         
@@ -133,13 +197,14 @@ class ProductReference:
         Returns:
             Objeto Product original o None si no está disponible
         """
-        # 🔥 CORRECCIÓN: Priorizar producto original
+        # Priorizar producto original
         if self.product is not None:
             return self.product
         
         # Intentar recrear Product desde metadata
         try:
-            from src.core.data.product import Product
+            # 🔥 USAR ProductClassHolder para obtener la clase
+            ProductClass = Product.get_product_class()
             
             # Extraer datos básicos del producto
             product_data = {
@@ -156,9 +221,9 @@ class ProductReference:
                     product_data[field] = self.metadata[field]
             
             # Crear producto básico
-            product = Product(**product_data)
+            product = ProductClass(**product_data)
             
-            # 🔥 CORRECCIÓN: Transferir información ML si existe
+            # Transferir información ML si existe
             if self.is_ml_processed:
                 product.ml_processed = True
                 
@@ -175,8 +240,8 @@ class ProductReference:
             
             return product
             
-        except ImportError:
-            warnings.warn("Product module not available, returning None")
+        except RuntimeError as e:
+            warnings.warn(f"Product class no disponible: {e}")
             return None
         except Exception as e:
             logger.error(f"Error convirtiendo ProductReference a Product: {e}")
@@ -200,7 +265,7 @@ class ProductReference:
                     if value is not None:
                         product_dict[attr] = value
             
-            # 🔥 CORRECCIÓN: Extraer metadata ML usando método específico
+            # Extraer metadata ML usando método específico
             ml_data = self._extract_ml_product_data(product)
             if ml_data:
                 product_dict.update(ml_data)
@@ -271,14 +336,12 @@ class ProductReference:
                 if not k.startswith('_') and not callable(v) and not isinstance(v, type)
             }
         
-        # 🔥 CORRECCIÓN CRÍTICA: Manejo consistente de ML
+        # Manejo consistente de ML
         ml_processed = getattr(product, 'ml_processed', False)
         has_embedding = hasattr(product, 'embedding') and product.embedding is not None
         
         # Determinar source basado en características REALES
         if ml_processed or has_embedding:
-            # 🔥 NO CAMBIAR source dinámicamente - mantener lo que el usuario especificó
-            # Solo marcar como ml_enhanced si el usuario no especificó algo diferente
             if source == "rag" and (has_embedding or getattr(product, 'predicted_category', None)):
                 source = "ml_enhanced"
             elif source == "collaborative" and ml_processed:
@@ -297,7 +360,7 @@ class ProductReference:
         if has_embedding:
             metadata['embedding_dim'] = len(product.embedding)
         
-        # 🔥 CORRECCIÓN: Calcular confianza de forma más inteligente
+        # Calcular confianza de forma más inteligente
         confidence = cls._calculate_confidence(product, ml_confidence)
         
         return cls(
@@ -348,7 +411,6 @@ class ProductReference:
                 if hasattr(product, attr):
                     value = getattr(product, attr)
                     if value is not None:
-                        # 🔥 CORRECCIÓN: Limitar tamaño de embeddings en features
                         if attr == 'embedding' and isinstance(value, list) and len(value) > 10:
                             ml_features[attr] = value[:10]  # Solo primeros 10 para features
                         else:
@@ -380,7 +442,7 @@ class ProductReference:
         """Actualiza las features ML con nuevos valores."""
         self.ml_features.update(new_features)
         
-        # 🔥 CORRECCIÓN: Solo actualizar source si realmente hay nueva info ML significativa
+        # Solo actualizar source si realmente hay nueva info ML significativa
         significant_features = {'embedding', 'predicted_category', 'similarity_score', 'extracted_entities'}
         has_significant = any(feat in new_features for feat in significant_features)
         
@@ -429,13 +491,13 @@ class ProductReference:
         return f"ProductReference(id={self.id}, source={self.source}, ml_processed={self.is_ml_processed})"
 
 
-# 🔥 CORREGIDO: Funciones utilitarias para manejo de ProductReferences con ML
+# Funciones utilitarias para manejo de ProductReferences con ML
 def filter_by_ml_confidence(references: List[ProductReference], 
                           min_confidence: float = None) -> List[ProductReference]:
     """Filtra ProductReferences por confianza ML mínima."""
     if min_confidence is None:
-        # Usar configuración del sistema
-        min_confidence = settings.ML_CONFIDENCE_THRESHOLD
+        settings = _get_settings()
+        min_confidence = getattr(settings, 'ML_CONFIDENCE_THRESHOLD', 0.6)
     
     return [ref for ref in references if ref.ml_confidence >= min_confidence]
 
@@ -444,7 +506,8 @@ def sort_by_ml_score(references: List[ProductReference],
                     ml_weight: float = None) -> List[ProductReference]:
     """Ordena ProductReferences combinando score normal y ML."""
     if ml_weight is None:
-        ml_weight = settings.ML_WEIGHT
+        settings = _get_settings()
+        ml_weight = getattr(settings, 'ML_WEIGHT', 0.3)
     
     def combined_score(ref: ProductReference) -> float:
         base_score = ref.score
@@ -500,7 +563,7 @@ def create_ml_enhanced_reference(product: Any,
     if ml_data is None:
         ml_data = {}
     
-    # 🔥 CORRECCIÓN: Usar from_product con source ml
+    # Usar from_product con source ml
     ref = ProductReference.from_product(product, score=ml_score, source="ml")
     
     # Actualizar con datos ML específicos
@@ -514,7 +577,6 @@ def create_ml_enhanced_reference(product: Any,
 def merge_ml_references(references: List[ProductReference]) -> ProductReference:
     """
     Combina múltiples ProductReferences (por ejemplo, de diferentes fuentes ML).
-    Útil para ensamblar resultados de diferentes modelos ML.
     """
     if not references:
         raise ValueError("No references to merge")

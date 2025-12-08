@@ -1,6 +1,6 @@
 from __future__ import annotations
 # src/core/rag/basic/retriever.py
-
+import os
 import json
 import numpy as np  # ✅ Asegurar que numpy está importado
 import uuid
@@ -42,6 +42,11 @@ logger = get_logger(__name__)
 # ----------------------------------------------------------------------
 
 _SYNONYMS: Dict[str, List[str]] = {
+    # --- EXISTENTES ---
+    "pelea": ["fight", "fighting", "combat", "battle", "versus", "vs", "lucha", "fighter"],
+    "smash": ["super smash", "smash bros", "smash brothers", "nintendo smash"],
+    "mario": ["super mario", "mario bros", "nintendo mario"],
+
     "mochila": ["backpack", "bagpack", "laptop bag", "daypack"],
     "computador": ["laptop", "notebook", "pc", "computer", "macbook"],
     "auriculares": ["headphones", "headset", "earbuds", "audífonos", "earphones"],
@@ -64,7 +69,20 @@ _SYNONYMS: Dict[str, List[str]] = {
     "oficina": ["office", "printer", "stationery", "paper", "desk", "chair", "shredder"],
     "musica": ["music", "instrumentos", "instrumentos musicales", "audio"],
     "app": ["application", "software", "programa", "aplicación"],
-    "videojuego": ["video game", "juego", "game", "pc game"]
+    "videojuego": ["video game", "juego", "game", "pc game"],
+
+
+    # --- 🔥 NUEVOS SINÓNIMOS REQUERIDOS para videojuegos ---
+    "juego": ["game", "video game", "videogame", "gaming"],
+    "nintendo": ["switch", "wii", "gamecube", "nes", "snes", "n64"],
+    "playstation": ["ps4", "ps5", "sony playstation"],
+    "xbox": ["xbox one", "xbox series", "microsoft xbox"],
+
+    # 🔥 Géneros gaming
+    "acción": ["action", "shooter", "fps", "third person"],
+    "aventura": ["adventure", "rpg", "role playing"],
+    "deportes": ["sports", "fifa", "nba", "madden"],
+    "carreras": ["racing", "drive", "simulator"]
 }
 
 
@@ -141,19 +159,18 @@ class LocalEmbedder:
 # ----------------------------------------------------------------------
 # Retriever
 # ----------------------------------------------------------------------
-
 class Retriever:
     def __init__(
         self,
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
-        embedding_model: str = "all-MiniLM-L6-v2",  # 🔥 SIEMPRE LOCAL
+        embedding_model: str = "all-MiniLM-L6-v2",  # Siempre local
         device: str = getattr(settings, "DEVICE", "cpu"),
-        # 🔥 NUEVO: Configuración ML
-        use_product_embeddings: bool = False  # Usar embeddings propios de Product
+        # 🔥 Ahora configurable globalmente — toma ML si está habilitado
+        use_product_embeddings: bool = settings.ML_ENABLED
     ):
         logger.info(f"Initializing Retriever (store exists: {Path(index_path).exists()})")
         logger.info(f"Using Chroma version: {'NEW' if CHROMA_NEW else 'OLD'}")
-        logger.info(f"ML Embeddings: {'Enabled' if use_product_embeddings else 'Disabled'}")
+        logger.info(f"ML Embeddings (initial flag): {'Enabled' if use_product_embeddings else 'Disabled'}")
 
         self.index_path = Path(index_path).resolve()
         logger.info(f"Initializing Retriever with index path: {self.index_path}")
@@ -162,11 +179,11 @@ class Retriever:
 
         self.embedder_name = embedding_model
         self.device = device
-        
-        # 🔥 NUEVO: Configuración ML
-        self.use_product_embeddings = use_product_embeddings
 
-        # 🔥 CAMBIO: Usar embedder local
+        # 🔥 Config ML: bandera inicial pero puede cambiarse si el índice las soporta
+        self.use_product_embeddings = use_product_embeddings  
+
+        # Siempre embedder local
         self.embedder = LocalEmbedder(
             model_name=self.embedder_name,
             device=self.device
@@ -174,6 +191,11 @@ class Retriever:
 
         self.store = None
         self._ensure_store_loaded()
+
+        # 🔥 NEW → Auto-switch a ML si el índice ya tiene embeddings especializados
+        if self.index_exists():
+            self._check_ml_capabilities()
+
         self.feedback_weights = self._load_feedback_weights()
 
     # ------------------------------------------------------------
@@ -215,7 +237,27 @@ class Retriever:
         
         # Fallback al método original
         return self._score(query, product)
-
+    
+    def search(self, query: str, k: int = 5, **kwargs) -> List[Product]:
+        """
+        Método de compatibilidad para WorkingAdvancedRAGAgent.
+        Llama a retrieve() y asegura que devuelve productos.
+        """
+        try:
+            logger.info(f"[search] Buscando '{query[:50]}...' con k={k}")
+            
+            # Llama al método retrieve existente
+            results = self.retrieve(query=query, k=k, **kwargs)
+            
+            # Filtrar solo objetos Product
+            products = [item for item in results if isinstance(item, Product)]
+            
+            logger.info(f"[search] Devueltos {len(products)} productos (de {len(results)} resultados)")
+            return products
+            
+        except Exception as e:
+            logger.error(f"❌ Error en search(): {e}")
+            return []
     # ------------------------------------------------------------
     # Ensure store loaded
     # ------------------------------------------------------------
@@ -345,20 +387,18 @@ class Retriever:
         filters: Optional[Dict] = None,
         min_similarity: float = 0.3,
         top_k: Optional[int] = None,
-        # 🔥 NUEVO: Parámetro para usar embeddings ML
         use_ml_embeddings: Optional[bool] = None
     ):
-        """Compatibilidad con deepeval: aceptar top_k además de k."""
+        """Compatibilidad con deepeval — ahora con deduplicación avanzada."""
         try:
             # --- compatibilidad ---
             if top_k is not None:
                 k = top_k
             
-            # 🔥 NUEVO: Determinar si usar embeddings ML
+            # 🔥 Nuevo → uso de embeddings ML
             use_ml = use_ml_embeddings if use_ml_embeddings is not None else self.use_product_embeddings
 
             self._ensure_store_loaded()
-
             if self.store is None:
                 logger.error("❌ Store not available for retrieval")
                 return []
@@ -378,59 +418,60 @@ class Retriever:
                     seen.add(p.id)
                     products.append(p)
 
+            # 🔥 Aplicar filtros si existen
             if filters:
                 products = [p for p in products if self._matches_all_filters(p, filters)]
 
+            # =================================================================================
+            # 🔥🔥 **A) MEJORA SOLICITADA — DEDUPLICAR USANDO content_hash**
+            # =================================================================================
+            seen_hashes = set()
+            unique_products = []
+
+            for p in products:
+                if hasattr(p, "content_hash") and p.content_hash:
+                    if p.content_hash in seen_hashes:
+                        continue  # ← duplicado → descartar
+                    seen_hashes.add(p.content_hash)
+                unique_products.append(p)
+
+            products = unique_products  # ← nueva lista limpia
+            # =================================================================================
+
             scored = []
             for p in products:
-                # 🔥 NUEVO: Usar embeddings ML si está habilitado
-                if use_ml:
-                    base_score = self._calculate_similarity_with_embeddings(query, p)
-                else:
-                    base_score = self._score(query, p)
+                # 🔥 Si hay embeddings ML activos usa similitud vectorial
+                base_score = (
+                    self._calculate_similarity_with_embeddings(query, p)
+                    if use_ml else self._score(query, p)
+                )
 
                 if base_score < min_similarity:
                     continue
 
                 feedback_boost = self.feedback_weights.get(p.id, 0) * 0.1
-                final_score = base_score + feedback_boost
-                scored.append((final_score, p))
+                scored.append((base_score + feedback_boost, p))
 
             scored.sort(key=lambda x: x[0], reverse=True)
 
-            # 🔥 ESTE ES EL CAMBIO QUE TE PIDIERON
-            # 🔥 NUEVO BLOQUE DETALLADO
             if scored:
-                first_product = scored[0][1]
-                product_type = type(first_product).__name__
-                
-                # 🔥 NUEVO: Información sobre método usado
                 method = "ML Embeddings" if use_ml else "Text Similarity"
-                logger.info(f"[Retriever] Returning {min(k, len(scored))} objects using {method}")
-                
-                # Debug: verificar los primeros 3 resultados
+                logger.info(f"[Retriever] Returning {min(k,len(scored))} objects using {method}")
+
                 for i, (score, p) in enumerate(scored[:3]):
-                    if hasattr(p, "id") and hasattr(p, "title"):
-                        logger.debug(
-                            f"  Product {i+1}: id={p.id}, "
-                            f"title={p.title[:50]}..., "
-                            f"score={score:.3f}"
-                        )
-                    else:
-                        logger.warning(
-                            f"  Object {i+1} lacks Product attributes "
-                            f"(type: {type(p).__name__})"
-                        )
+                    logger.debug(f" {i+1}. {p.title[:50]}... score={score:.3f}")
 
                 return [p for _, p in scored[:k]]
 
-            else:
-                logger.warning("[Retriever] No scored products to return")
-                return []
+            logger.warning("[Retriever] No products passed scoring threshold")
+            return []
 
         except Exception as e:
             logger.error(f"❌ Retrieval error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
+
 
     # ------------------------------------------------------------
     # Raw chroma retrieve
@@ -614,7 +655,59 @@ class Retriever:
     # ----------------------------------------------------------------------
     # MÉTODOS NUEVOS
     # ----------------------------------------------------------------------
-
+    def _force_clear_index_safe(self):
+        """Método ultra-seguro para limpiar índice bloqueado."""
+        import time
+        import shutil
+        
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                if not self.index_path.exists():
+                    return True
+                
+                # Intentar usar handle_windows para Windows
+                if os.name == 'nt':  # Windows
+                    import subprocess
+                    
+                    # Usar handle.exe para encontrar y cerrar handles
+                    try:
+                        subprocess.run(
+                            ['handle.exe', str(self.index_path)], 
+                            capture_output=True, 
+                            text=True
+                        )
+                    except:
+                        pass
+                
+                # Esperar más tiempo
+                time.sleep(retry_delay)
+                
+                # Limpiar con shutil ignorando errores
+                shutil.rmtree(self.index_path, ignore_errors=True)
+                
+                # Verificar si realmente se eliminó
+                if not self.index_path.exists():
+                    logger.info(f"✅ Índice eliminado en intento {attempt + 1}")
+                    return True
+                    
+            except Exception as e:
+                logger.warning(f"Intento {attempt + 1} falló: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))  # Esperar más cada vez
+        
+        # Último recurso: mover en lugar de eliminar
+        try:
+            import datetime
+            backup_name = f"{self.index_path}_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.move(self.index_path, backup_name)
+            logger.info(f"📦 Índice movido a backup: {backup_name}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Falló incluso el backup: {e}")
+            raise RuntimeError(f"No se pudo limpiar índice bloqueado: {e}")
     def _safe_clear_index(self):
         """Eliminar el índice de forma segura, manejando archivos bloqueados."""
         import time
@@ -676,7 +769,32 @@ class Retriever:
         except Exception as e:
             logger.error(f"❌ Force clear also failed: {e}")
             raise RuntimeError(f"Could not clear index directory: {e}")
+    def __del__(self):
+        """Destructor para asegurar que Chroma se cierre correctamente."""
+        try:
+            if hasattr(self, 'store') and self.store:
+                # Forzar cierre de Chroma
+                if hasattr(self.store, '_client'):
+                    try:
+                        self.store._client = None
+                    except:
+                        pass
+                if hasattr(self.store, '_collection'):
+                    try:
+                        self.store._collection = None
+                    except:
+                        pass
+                self.store = None
+        except:
+            pass
 
+    def close(self):
+        """Cierra explícitamente la conexión Chroma."""
+        try:
+            self.__del__()
+            logger.info("✅ Conexión Chroma cerrada explícitamente")
+        except Exception as e:
+            logger.warning(f"⚠️ Error cerrando Chroma: {e}")
     # ----------------------------------------------------------------------
     # build_index actualizado
     # ----------------------------------------------------------------------
@@ -686,6 +804,9 @@ class Retriever:
                 raise ValueError("No products provided to build index")
 
             logger.info(f"Building index with {len(products)} products")
+
+            # 🔥 NUEVO: Cerrar conexión existente si hay
+            self.close()
 
             # Limpiar directorio existente con manejo seguro
             if self.index_path.exists():
@@ -701,6 +822,7 @@ class Retriever:
 
             logger.info(f"📝 Creating {len(documents)} documents")
 
+            # 🔥 NUEVO: Crear Chroma en un contexto separado
             if CHROMA_NEW:
                 # Versión nueva: NO usa embedding_function aquí
                 self.store = Chroma.from_documents(
@@ -721,6 +843,8 @@ class Retriever:
 
         except Exception as e:
             logger.error(f"❌ Index build failed: {e}")
+            # Asegurar cierre incluso en error
+            self.close()
             raise RuntimeError(f"Index build failed: {e}")
         
     def update_feedback_weights_immediately(self, selected_product_id: str, rating: int, all_shown_products: List[str] = None):

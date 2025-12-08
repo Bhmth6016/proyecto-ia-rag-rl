@@ -1,1508 +1,1194 @@
-from __future__ import annotations
-
 # src/core/rag/advanced/WorkingRAGAgent.py
-import time
-import re
+"""
+WorkingRAGAgent - Agente RAG avanzado con configuración ML centralizada.
+Usa ProductReference y settings como única fuente de verdad.
+"""
+
 import logging
-import numpy as np  # 🔥 NUEVO: Importar numpy para cálculos de embeddings
-from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass
+from typing import List, Optional, Dict, Any, Tuple, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+import time
+import torch
 from pathlib import Path
-from datetime import datetime
-import json
-from collections import deque
 
-# 🔥 REEMPLAZADO: Google Generative AI con LLM local
-# import google.generativeai as genai
-from src.core.llm.local_llm import LocalLLMClient
-
-# Local imports
-from src.core.data.product_reference import ProductReference
-from src.core.data.user_manager import UserManager
-from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
-from src.core.data.user_models import UserProfile, Gender
-from src.core.rag.advanced.RLHFMonitor import RLHFMonitor
-from src.core.init import get_system
-from src.core.rag.basic.retriever import Retriever
+# Importar configuración centralizada
+from src.core.config import settings, get_settings
 from src.core.data.product import Product
-from src.core.config import settings
-from src.core.rag.advanced.feedback_processor import FeedbackProcessor
+from src.core.data.product_reference import ProductReference, create_ml_enhanced_reference
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+
+
+class RAGMode(Enum):
+    """Modos de operación del RAG."""
+    BASIC = "basic"
+    HYBRID = "hybrid"
+    ML_ENHANCED = "ml_enhanced"
+    LLM_ENHANCED = "llm_enhanced"
+
 
 @dataclass
 class RAGConfig:
+    """Configuración del agente RAG."""
+    # Modo de operación
+    mode: RAGMode = RAGMode.HYBRID
+    
+    # Configuración de recuperación
     enable_reranking: bool = True
-    enable_rlhf: bool = True
-    max_retrieved: int = 50
+    max_retrieved: int = 15
     max_final: int = 5
-    memory_window: int = 3
-    domain: str = "videojuegos"
+    
+    # Configuración ML (se hereda de settings)
+    ml_enabled: bool = field(default_factory=lambda: settings.ML_ENABLED)
+    ml_features: List[str] = field(default_factory=lambda: list(settings.ML_FEATURES))
+    use_ml_embeddings: bool = field(default_factory=lambda: settings.ML_ENABLED and 'embedding' in settings.ML_FEATURES)
+    ml_embedding_weight: float = field(default_factory=lambda: settings.ML_WEIGHT)
+    
+    # Configuración LLM
+    local_llm_enabled: bool = field(default_factory=lambda: settings.LOCAL_LLM_ENABLED)
+    local_llm_model: str = field(default_factory=lambda: settings.LOCAL_LLM_MODEL)
+    use_llm_for_reranking: bool = False
+    
+    # Configuración de dominio
+    domain: str = "general"
     use_advanced_features: bool = True
-    # 🔥 NUEVO: Configuración ML completa
-    ml_enabled: bool = True  # Habilitar/deshabilitar ML
-    use_ml_embeddings: bool = True  # Usar embeddings ML para scoring
-    ml_embedding_weight: float = 0.3  # Peso para embeddings ML
-    min_ml_similarity: float = 0.2  # Similitud mínima para considerar embeddings
-    # 🔥 NUEVO: Configuración LLM local
-    local_llm_enabled: bool = True  # Habilitar LLM local
-    local_llm_model: str = "llama-3.2-3b-instruct"  # Modelo LLM local por defecto
-    # 🔥 NUEVO: Configuración para compatibilidad
-    use_product_embeddings: bool = True  # Alias para use_ml_embeddings
-
-@dataclass
-class RAGResponse:
-    answer: str
-    products: List[Product]
-    quality_score: float
-    retrieved_count: int
-    used_llm: bool = False
-    # 🔥 NUEVO: Información ML
-    ml_embeddings_used: int = 0
-    ml_scoring_method: str = "none"
-    # 🔥 NUEVO: Información LLM
-    local_llm_used: bool = False
-    local_llm_model: str = ""
-
-    @property
-    def text(self):
-        return self.answer
-    @property
-    def recommended(self):
-        return self.recommended_ids
-    @property
-    def recommended_ids(self):
-        return self.products
-
     
-# ===============================
-# Memory
-# ===============================
-class ConversationBufferMemory:
-    def __init__(self, max_length: int = 3):
-        self.memory: deque = deque(maxlen=max_length)
+    # Ponderaciones para scoring híbrido
+    semantic_weight: float = 0.6
+    popularity_weight: float = 0.2
+    diversity_weight: float = 0.1
+    freshness_weight: float = 0.1
 
-    def add(self, query: str, answer: str):
-        clean_answer = answer[:200] + "..." if len(answer) > 200 else answer
-        self.memory.append({"query": query, "answer": clean_answer})
 
-    def get_context(self) -> str:
-        if not self.memory:
-            return ""
-        return "\n".join([f"Q: {m['query']}\nA: {m['answer']}" for m in self.memory])
-
-    def clear(self):
-        self.memory.clear()
-
-# ===============================
-# Advanced Evaluator
-# ===============================
-class AdvancedEvaluator:
-    def evaluate_response(self, query: str, response: str, products: List[Product]) -> float:
-        """Evaluación avanzada para respuestas de gaming"""
-        if not response:
-            return 0.0
-            
-        if not products:
-            # Respuesta sin productos pero con sugerencias útiles
-            if len(response) > 100 and any(word in response.lower() for word in ['sugerencias', 'prueba', 'intenta']):
-                return 0.3
-            return 0.0
-        
-        # Score basado en múltiples factores optimizados para gaming
-        content_score = min(1.0, len(response) / 400)
-        products_score = min(1.0, len(products) / 3)
-        relevance_score = self._calculate_gaming_relevance(query, response, products)
-        structure_score = self._calculate_structure_score(response)
-        
-        final_score = (content_score * 0.25 + 
-                      products_score * 0.35 + 
-                      relevance_score * 0.25 + 
-                      structure_score * 0.15)
-        
-        return round(final_score, 2)
+class WorkingAdvancedRAGAgent:
+    """
+    Agente RAG avanzado que usa configuración ML centralizada
+    y ProductReference para manejo consistente.
+    """
     
-    def _calculate_gaming_relevance(self, query: str, response: str, products: List[Product]) -> float:
-        """Calcula relevancia específica para gaming"""
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-        response_lower = response.lower()
+    def __init__(self, config: Optional[RAGConfig] = None):
+        # 🔥 Usar configuración centralizada
+        self.settings = get_settings()
         
-        # Palabras clave de gaming
-        gaming_keywords = {'juego', 'videojuego', 'playstation', 'xbox', 'nintendo', 'switch', 
-                          'ps4', 'ps5', 'consola', 'game', 'gaming', 'edición', 'versión'}
+        # Configuración del agente
+        self.config = config or RAGConfig()
         
-        # Coincidencia con consulta
-        query_matches = sum(1 for word in query_words if len(word) > 2 and word in response_lower)
-        query_relevance = min(1.0, query_matches / max(1, len(query_words)))
+        # Componentes del sistema (lazy loaded)
+        self._retriever = None
+        self._llm_client = None
+        self._embedding_model = None
         
-        # Coincidencia con términos de gaming
-        gaming_matches = sum(1 for keyword in gaming_keywords if keyword in response_lower)
-        gaming_relevance = min(1.0, gaming_matches / 5)
+        # Cache para embeddings de queries
+        self._query_cache = {}
         
-        # Relevancia de productos
-        product_relevance = 0.0
-        for product in products:
-            title = str(getattr(product, 'title', '')).lower()
-            if any(word in title for word in query_words if len(word) > 2):
-                product_relevance += 0.2
+        # Inicializar logger
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         
-        product_relevance = min(1.0, product_relevance)
+        # 🔥 NUEVO: Pipeline RLHF
+        self.rlhf_pipeline = None
+        self.rlhf_model = None
+        self._init_rlhf()
         
-        return (query_relevance + gaming_relevance + product_relevance) / 3
-    
-    def _calculate_structure_score(self, response: str) -> float:
-        """Evalúa la estructura de la respuesta"""
-        score = 0.0
+        # 🔥 NUEVO: Inicializar Collaborative Filter
+        self._collaborative_filter = None
+        self._init_collaborative_filter()
         
-        # Puntos por buen formato
-        if "🎯" in response or "🎮" in response:
-            score += 0.3
-        if "💰" in response or "⭐" in response:
-            score += 0.2
-        if "PlayStation" in response or "Xbox" in response or "Nintendo" in response:
-            score += 0.2
-        if len(response.split('\n')) > 5:  # Bien estructurado
-            score += 0.3
-            
-        return min(1.0, score)
+        self.logger.info(f"🚀 WorkingAdvancedRAGAgent inicializado")
+        self.logger.info(f"   • Modo: {self.config.mode.value}")
+        self.logger.info(f"   • ML: {'✅' if self.config.ml_enabled else '❌'}")
+        self.logger.info(f"   • LLM Local: {'✅' if self.config.local_llm_enabled else '❌'}")
+        self.logger.info(f"   • RLHF: {'✅' if self.rlhf_pipeline else '❌'}")
+        self.logger.info(f"   • Collaborative Filter: {'✅' if self._collaborative_filter else '❌'}")
 
-# ===============================
-# Gaming RLHF Trainer
-# ===============================
-class GamingRLHFTrainer:
-    def __init__(self):
-        self.models_dir = Path("models/rl_models")
-        self.models_dir.mkdir(exist_ok=True, parents=True)
-    
-    def score_product_relevance(self, query: str, product: Product, user_profile: Dict) -> float:
-        """Scoring optimizado para productos de gaming"""
-        base_score = 0.3
-        
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-        
-        title = getattr(product, "title", "").lower()
-        category = str(getattr(product, 'main_category', '')).lower()
-        price = getattr(product, "price", None)
-        rating = getattr(product, "average_rating", 0)
-        
-        # Plataformas de gaming
-        platforms = {
-            'playstation': ['playstation', 'ps4', 'ps5', 'ps3'],
-            'xbox': ['xbox', 'xbox one', 'xbox series'], 
-            'nintendo': ['nintendo', 'switch', 'wii', 'ds'],
-            'pc': ['pc', 'computer', 'steam']
-        }
-        
-        # Score por plataforma detectada en query
-        for platform, keywords in platforms.items():
-            if any(keyword in query_lower for keyword in keywords):
-                if any(keyword in title for keyword in keywords):
-                    base_score += 0.3
-                    break
-        
-        # Score por coincidencia en título
-        title_matches = sum(1 for word in query_words if len(word) > 2 and word in title)
-        base_score += title_matches * 0.2
-        
-        # Score por género de juego
-        genres = {
-            'acción': ['acción', 'action', 'shooter', 'fps'],
-            'aventura': ['aventura', 'adventure', 'rpg', 'rol'],
-            'deportes': ['deporte', 'sport', 'fútbol', 'fifa'],
-            'estrategia': ['estrategia', 'strategy', 'táctica']
-        }
-        
-        for genre, keywords in genres.items():
-            if any(keyword in query_lower for keyword in keywords):
-                if any(keyword in title for keyword in keywords):
-                    base_score += 0.15
-                    break
-        
-        # Score por precio disponible
-        if price is not None:
-            base_score += 0.05
-            
-        # Score por rating alto
-        if rating and rating >= 4.0:
-            base_score += 0.1
-            
-        return min(1.0, base_score)
-
-# ===============================
-# 🔥 NUEVO: ML Embedding Scorer
-# ===============================
-class MLEmbeddingScorer:
-    """Clase para calcular similitud usando embeddings ML"""
-    
-    def __init__(self, retriever: Retriever = None):
-        self.retriever = retriever
-        self.cache = {}  # Cache de embeddings de queries
-        
-    def calculate_similarity(self, query: str, product: Product) -> float:
-        """Calcula similitud usando embeddings ML si están disponibles"""
+    def _init_rlhf(self):
+        """Inicializar componente RLHF si está habilitado"""
         try:
-            # Verificar si el producto tiene embedding
-            if not hasattr(product, 'embedding') or not product.embedding:
-                return 0.5  # Score neutro si no hay embedding
+            from src.core.rag.advanced.train_pipeline import RLHFTrainingPipeline
+            self.rlhf_pipeline = RLHFTrainingPipeline()
             
-            # Obtener embedding de la query (usar cache)
-            query_embedding = self._get_query_embedding(query)
-            if query_embedding is None:
-                return 0.5
+            # Intentar cargar modelo existente
+            if (Path("data/models/rlhf_model") / "pytorch_model.bin").exists():
+                self.rlhf_model = self.rlhf_pipeline.load_model()
+                logger.info("🧠 RLHF integrado (modelo cargado)")
+            else:
+                logger.info("🧠 RLHF integrado (sin modelo entrenado)")
+                
+        except ImportError as e:
+            logger.warning(f"⚠️ RLHF no disponible: {e}")
+            self.rlhf_pipeline = None
+    
+    # En WorkingRAGAgent._init_collaborative_filter()
+    def _init_collaborative_filter(self):
+        """Inicializar Collaborative Filter si está habilitado"""
+        try:
+            from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
+            from src.core.data.user_manager import UserManager
+            from src.core.data.product_service import ProductService  # 🔥 NUEVO
             
-            # Convertir a numpy arrays
-            query_vec = np.array(query_embedding, dtype=np.float32)
-            product_vec = np.array(product.embedding, dtype=np.float32)
+            # Obtener gestor de usuarios
+            user_manager = UserManager()
             
-            # Verificar dimensiones
-            if len(query_vec) != len(product_vec):
-                logger.warning(f"Dimension mismatch: query={len(query_vec)}, product={len(product_vec)}")
-                return 0.5
+            # 🔥 NUEVO: Usar ProductService real
+            product_service = ProductService()
             
-            # Normalizar vectores
-            query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
-            product_norm = product_vec / (np.linalg.norm(product_vec) + 1e-10)
+            # Crear filtro colaborativo con servicio real
+            self._collaborative_filter = CollaborativeFilter(
+                user_manager=user_manager,
+                product_service=product_service,  # 🔥 Pasar servicio real
+                use_ml_features=self.config.ml_enabled
+            )
             
-            # Calcular similitud coseno
-            similarity = np.dot(query_norm, product_norm)
+            logger.info("🤝 Collaborative Filter integrado (con ProductService)")
             
-            # Asegurar que esté en rango [0, 1]
-            similarity = max(0.0, min(1.0, float(similarity)))
+        except ImportError as e:
+            logger.warning(f"⚠️ Collaborative Filter no disponible: {e}")
+            # Fallback al servicio simple
+            self._init_simple_collaborative_filter()
+        except Exception as e:
+            logger.warning(f"⚠️ Error inicializando Collaborative Filter: {e}")
+    
+    # --------------------------------------------------
+    # Propiedades lazy
+    # --------------------------------------------------
+    
+    @property
+    def retriever(self):
+        """Retriever vectorial (lazy loading)."""
+        if self._retriever is None:
+            try:
+                from src.core.rag.basic.retriever import Retriever
+                self._retriever = Retriever(
+                    index_path=settings.VECTOR_INDEX_PATH,
+                    embedding_model=settings.EMBEDDING_MODEL,
+                    device=settings.DEVICE
+                )
+                self.logger.info(f"✅ Retriever inicializado: {settings.EMBEDDING_MODEL}")
+            except ImportError as e:
+                self.logger.error(f"❌ No se pudo cargar Retriever: {e}")
+                raise
+        return self._retriever
+    
+    @property
+    def llm_client(self):
+        """Cliente LLM local (lazy loading)."""
+        if self._llm_client is None and self.config.local_llm_enabled:
+            try:
+                from src.core.llm.local_llm import LocalLLMClient
+                self._llm_client = LocalLLMClient(
+                    model=settings.LOCAL_LLM_MODEL,
+                    endpoint=settings.LOCAL_LLM_ENDPOINT,
+                    temperature=settings.LOCAL_LLM_TEMPERATURE,
+                    timeout=settings.LOCAL_LLM_TIMEOUT
+                )
+                self.logger.info(f"✅ LLM Client inicializado: {settings.LOCAL_LLM_MODEL}")
+            except ImportError as e:
+                self.logger.warning(f"⚠️ No se pudo cargar LocalLLMClient: {e}")
+            except Exception as e:
+                self.logger.error(f"❌ Error inicializando LLM: {e}")
+        return self._llm_client
+    
+    @property
+    def embedding_model(self):
+        """Modelo de embeddings (lazy loading)."""
+        if self._embedding_model is None and self.config.use_ml_embeddings:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._embedding_model = SentenceTransformer(settings.ML_EMBEDDING_MODEL)
+                self.logger.info(f"✅ Embedding Model cargado: {settings.ML_EMBEDDING_MODEL}")
+            except ImportError as e:
+                self.logger.warning(f"⚠️ SentenceTransformer no disponible: {e}")
+            except Exception as e:
+                self.logger.error(f"❌ Error cargando embedding model: {e}")
+        return self._embedding_model
+    
+    # --------------------------------------------------
+    # Métodos principales
+    # --------------------------------------------------
+    
+    def process_query(self, query: str, user_id: str = None) -> Dict[str, Any]:
+        """
+        Procesa una consulta completa usando RAG avanzado.
+        """
+        start_time = time.time()
+        
+        try:
+            self.logger.info(f"🔍 Procesando consulta: '{query[:50]}...'")
             
-            logger.debug(f"[ML Scoring] Similarity for product {getattr(product, 'id', 'unknown')}: {similarity:.3f}")
-            return similarity
+            # 1. Búsqueda semántica inicial
+            initial_results = self._semantic_search(query)
+
+            # 🔍 Opcional: imprimir resultados encontrados como solicitaban
+            self.logger.debug(f"Encontrados {len(initial_results)} resultados iniciales")
+            for i, ref in enumerate(initial_results[:3]):
+                self.logger.debug(f"{i+1}. {ref.title[:50]}... (score: {ref.score})")
+
+            # 2. Enrich con ML si está habilitado
+            ml_enhanced_results = (
+                self._enhance_with_ml(initial_results, query)
+                if self.config.ml_enabled else initial_results
+            )
+
+            # 3. Re-ranking final
+            final_results = (
+                self._rerank_results(ml_enhanced_results, query, user_id)
+                if self.config.enable_reranking else
+                ml_enhanced_results[:self.config.max_final]
+            )
+
+            # 4. Generación de respuesta con LLM
+            answer = self._generate_answer(query, final_results)
+
+            # 5. Métricas
+            processing_time = time.time() - start_time
+
+            response = {
+                "query": query,
+                "answer": answer,
+                "products": final_results,
+                "stats": {
+                    "processing_time": round(processing_time, 2),
+                    "initial_results": len(initial_results),
+                    "final_results": len(final_results),
+                    "ml_enhanced": self.config.ml_enabled,
+                    "reranking_enabled": self.config.enable_reranking,
+                }
+            }
+
+            self.logger.info(f"✅ Consulta procesada en {processing_time:.2f}s")
+            return response
+
+        except Exception as e:
+            import traceback
+            self.logger.error(f"❌ Error procesando consulta: {e}")
+            self.logger.error(traceback.format_exc())
+
+            return {
+                "query": query,
+                "answer": "Lo siento, hubo un error procesando tu consulta.",
+                "products": [],
+                "error": str(e)
+            }
+
+    
+    # REEMPLAZA el método _semantic_search con esta versión corregida:
+    def _semantic_search(self, query: str) -> List[ProductReference]:
+        """Búsqueda semántica usando embeddings."""
+        try:
+            # 🔥 SIMPLIFICADO: Usar search() del retriever
+            raw_results = self.retriever.search(
+                query=query,
+                k=self.config.max_retrieved
+            )
+            
+            product_references = []
+            for product in raw_results:
+                try:
+                    # 🔥 Validar que el producto sea válido
+                    if not product or not hasattr(product, 'title'):
+                        continue
+                    
+                    # 🔥 Asegurar que el título no sea None
+                    if not product.title:
+                        continue
+                    
+                    # Calcular score
+                    score = self._calculate_product_score(product, query)
+                    
+                    # Crear referencia
+                    from src.core.data.product_reference import ProductReference
+                    ref = ProductReference.from_product(
+                        product=product,
+                        score=score,
+                        source="rag"
+                    )
+                    product_references.append(ref)
+                    
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Error procesando resultado: {e}")
+                    continue
+            
+            # 🔥 Ordenar solo si hay referencias
+            if product_references:
+                product_references.sort(key=lambda x: x.score, reverse=True)
+            
+            return product_references
             
         except Exception as e:
-            logger.error(f"[ML Scoring] Error calculating similarity: {e}")
-            return 0.5
+            self.logger.error(f"❌ Error en búsqueda semántica: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return []
+
+    # 🔥 AÑADE este método que falta:
+    def _calculate_initial_score(self, product: Product, query: str) -> float:
+        """Calcula score inicial basado en similitud semántica."""
+        if not product or not query:
+            return 0.0
+        
+        try:
+            # Método simple usando SequenceMatcher para similitud de texto
+            from difflib import SequenceMatcher
+            
+            # Calcular similitud basada en título y descripción
+            title = getattr(product, 'title', '')
+            description = getattr(product, 'description', '')
+            
+            # Ponderar título más que descripción
+            title_sim = SequenceMatcher(None, query.lower(), title.lower()).ratio()
+            desc_sim = SequenceMatcher(None, query.lower(), description.lower()).ratio() if description else 0
+            
+            # Combinar scores (70% título, 30% descripción)
+            score = (title_sim * 0.7) + (desc_sim * 0.3)
+            
+            # Ajustar con otros factores
+            price_factor = self._calculate_price_factor(product)
+            rating_factor = self._calculate_rating_factor(product)
+            
+            final_score = score * 0.6 + price_factor * 0.2 + rating_factor * 0.2
+            return min(1.0, max(0.0, final_score))
+            
+        except Exception:
+            return 0.3  # Score mínimo
+
+    def _calculate_price_factor(self, product: Product) -> float:
+        """Factor basado en precio (productos con precio definido son mejores)."""
+        price = getattr(product, 'price', None)
+        if price and isinstance(price, (int, float)) and price > 0:
+            return 0.8  # Bueno
+        return 0.3  # Malo
+
+    def _calculate_rating_factor(self, product: Product) -> float:
+        """Factor basado en rating."""
+        rating = getattr(product, 'average_rating', None)
+        if rating and isinstance(rating, (int, float)):
+            # Normalizar a 0-1
+            return min(1.0, rating / 5.0)
+        return 0.5  # Neutral
+    def _calculate_product_score(self, product: Any, query: str) -> float:
+        """Calcula un score simple para el producto basado en la query."""
+        try:
+            # 🔥 Asegurar que product tenga atributos necesarios
+            if not product or not hasattr(product, 'title'):
+                return 0.1
+            
+            # Método simple: similitud de texto
+            from difflib import SequenceMatcher
+            
+            # 🔥 Asegurar que title no sea None
+            title = getattr(product, 'title', '') or ''
+            
+            text_sim = SequenceMatcher(None, query.lower(), title.lower()).ratio()
+            
+            # 🔥 Agregar factores adicionales con manejo seguro de None
+            price_factor = 0.5  # Valor por defecto
+            if hasattr(product, 'price') and product.price is not None:
+                price = float(product.price) if product.price else 0.0
+                # Productos con precio definido obtienen mejor score
+                price_factor = 0.8 if price > 0 else 0.3
+            
+            rating_factor = 0.5  # Valor por defecto
+            if hasattr(product, 'average_rating') and product.average_rating is not None:
+                rating = float(product.average_rating) if product.average_rating else 0.0
+                rating_factor = min(1.0, rating / 5.0)
+            
+            # Combinar scores (60% similitud, 20% precio, 20% rating)
+            final_score = (text_sim * 0.6) + (price_factor * 0.2) + (rating_factor * 0.2)
+            
+            # 🔥 Asegurar que el score esté en rango [0, 1]
+            return max(0.0, min(1.0, final_score))
+            
+        except Exception as e:
+            self.logger.warning(f"Error calculando score: {e}")
+            return 0.1  # Score mínimo
+    def _enhance_with_ml(self, 
+                        results: List[ProductReference], 
+                        query: str) -> List[ProductReference]:
+        """
+        Enriquece resultados con procesamiento ML.
+        Usa settings como única fuente de verdad para configuración ML.
+        """
+        if not results or not self.config.ml_enabled:
+            return results
+        
+        enhanced_results = []
+        query_embedding = self._get_query_embedding(query)
+        
+        for ref in results:
+            # Solo procesar si el producto no tiene ya ML features
+            if not ref.is_ml_processed:
+                enhanced_ref = self._apply_ml_to_reference(ref, query_embedding)
+                enhanced_results.append(enhanced_ref)
+            else:
+                # Si ya tiene ML, calcular similitud adicional
+                if query_embedding and ref.has_embedding:
+                    similarity = self._calculate_similarity(
+                        query_embedding, 
+                        ref.embedding
+                    )
+                    ref.update_ml_features({
+                        'query_similarity': similarity,
+                        'ml_enhanced': True
+                    })
+                enhanced_results.append(ref)
+        
+        # Ordenar por puntaje ML mejorado
+        if self.config.use_ml_embeddings and query_embedding:
+            enhanced_results.sort(
+                key=lambda x: self._calculate_ml_score(x, query_embedding),
+                reverse=True
+            )
+        
+        self.logger.debug(f"🤖 ML Enhancement aplicado a {len(enhanced_results)} productos")
+        return enhanced_results
+    
+    def _apply_ml_to_reference(self, 
+                              ref: ProductReference,
+                              query_embedding: Optional[List[float]] = None) -> ProductReference:
+        """Aplica procesamiento ML a un ProductReference."""
+        if not ref.product:
+            return ref
+        
+        ml_data = {}
+        
+        # Extraer características ML según configuración
+        if 'category' in self.config.ml_features:
+            category = self._predict_category(ref.product)
+            if category:
+                ml_data['predicted_category'] = category
+                ml_data['category_confidence'] = 0.8  # Valor por defecto
+        
+        if 'entities' in self.config.ml_features:
+            entities = self._extract_entities(ref.product)
+            if entities:
+                ml_data['extracted_entities'] = entities
+        
+        if 'embedding' in self.config.ml_features and self.embedding_model:
+            # Generar embedding si no existe
+            if not ref.has_embedding:
+                text = ref.product.to_text() if hasattr(ref.product, 'to_text') else ref.title
+                embedding = self.embedding_model.encode(text)
+                ml_data['embedding'] = embedding.tolist()
+                ml_data['embedding_model'] = settings.ML_EMBEDDING_MODEL
+            
+            # Calcular similitud con query si hay embedding
+            if query_embedding is not None and 'embedding' in ml_data:
+                similarity = self._calculate_similarity(
+                    query_embedding, 
+                    ml_data['embedding']
+                )
+                ml_data['similarity_score'] = similarity
+        
+        if 'tags' in self.config.ml_features:
+            tags = self._generate_tags(ref.product)
+            if tags:
+                ml_data['ml_tags'] = tags
+        
+        # 🔥 Crear referencia mejorada con ML
+        if ml_data:
+            ml_score = ml_data.get('similarity_score', 0.0) or ml_data.get('category_confidence', 0.0)
+            
+            # Usar la función de conveniencia de product_reference
+            enhanced_ref = create_ml_enhanced_reference(
+                product=ref.product,
+                ml_score=ml_score,
+                ml_data=ml_data
+            )
+            
+            # Preservar score original
+            enhanced_ref.score = ref.score
+            
+            return enhanced_ref
+        
+        return ref
+    
+    def _predict_category(self, product: Product) -> Optional[str]:
+        """Predice categoría usando configuración del sistema."""
+        if not product or not product.title:
+            return None
+        
+        text = f"{product.title} {product.description or ''}".lower()
+        
+        # Buscar coincidencias con categorías del sistema
+        for category in settings.ML_CATEGORIES:
+            if category.lower() in text:
+                return category
+        
+        # Si no encuentra, usar categoría principal si existe
+        return product.main_category
+    
+    def _extract_entities(self, product: Product) -> Dict[str, List[str]]:
+        """Extrae entidades del producto."""
+        entities = {
+            "PRODUCT": [],
+            "BRAND": [],
+            "CATEGORY": []
+        }
+        
+        text = f"{product.title} {product.description or ''}"
+        
+        # Extracción simple de entidades
+        import re
+        # Patrón para marcas (palabras con mayúscula)
+        brand_pattern = r'\b[A-Z][a-z]+\b'
+        brands = re.findall(brand_pattern, text)
+        entities["BRAND"] = list(set(brands))[:5]
+        
+        # Palabras clave de producto
+        product_keywords = ['pro', 'max', 'plus', 'mini', 'ultra', 'lite']
+        words = text.lower().split()
+        for word in words:
+            if len(word) > 3 and word not in ['this', 'that', 'with', 'from']:
+                entities["PRODUCT"].append(word)
+        
+        entities["PRODUCT"] = list(set(entities["PRODUCT"]))[:10]
+        
+        return entities
+    
+    def _generate_tags(self, product: Product) -> List[str]:
+        """Genera tags automáticos para el producto."""
+        tags = []
+        
+        if product.title:
+            # Extraer palabras clave del título
+            import re
+            words = re.findall(r'\b[a-z]{3,}\b', product.title.lower())
+            tags.extend(words[:5])
+        
+        if product.main_category:
+            tags.append(product.main_category.lower())
+        
+        if hasattr(product, 'ml_tags') and product.ml_tags:
+            tags.extend(product.ml_tags[:3])
+        
+        return list(set(tags))[:8]
     
     def _get_query_embedding(self, query: str) -> Optional[List[float]]:
-        """Obtiene embedding de la query usando el retriever o cache"""
-        try:
-            # Usar cache si está disponible
-            if query in self.cache:
-                return self.cache[query]
-            
-            # Si hay retriever, usar su embedder
-            if self.retriever and hasattr(self.retriever, 'embedder'):
-                embedding = self.retriever.embedder.embed_query(query)
-                self.cache[query] = embedding
-                return embedding
-            
-            # Fallback: usar embedding simple basado en palabras
-            return self._simple_query_embedding(query)
-            
-        except Exception as e:
-            logger.error(f"[ML Scoring] Error getting query embedding: {e}")
-            return None
-    
-    def _simple_query_embedding(self, query: str) -> List[float]:
-        """Embedding simple para fallback (no usar en producción)"""
-        # Solo para demostración - en producción usar modelo real
-        return [float(hash(word) % 100) / 100.0 for word in query.split()][:384]
-
-# ===============================
-# Main Agent - VERSIÓN FINAL CON ML Y LLM LOCAL
-# ===============================
-class WorkingAdvancedRAGAgent:
-    def __init__(self, config: Optional[RAGConfig] = None):
-        self.config = config or RAGConfig()
-        self.system = get_system()
-        self.retriever = getattr(self.system, "retriever", Retriever())
+        """Obtiene embedding de la query."""
+        if query in self._query_cache:
+            return self._query_cache[query]
         
-        # 🔥 REEMPLAZADO: Gemini con LLM local
-        # self.llm_model = genai.GenerativeModel('gemini-pro')
-        self.llm_client = self._initialize_local_llm()
-        
-        # 🔥 CAMBIO 1: Inicialización condicional de UserManager y CollaborativeFilter
-        self.enable_user_features = bool(self.config and getattr(self.config, "use_advanced_features", False))
-
-        # Clase DummyUserManager para fallback garantizado
-        class DummyUserManager:
-            def get_user_preferences(self, user_id):
-                return {"default": True, "fallback": True}
-            
-            def track_interaction(self, user_id, product_id, rating):
-                print(f"[DummyUserManager] Tracked: user={user_id}, product={product_id}, rating={rating}")
-            
-            def get_similar_users(self, user_id, k=5):
-                return []
-            
-            def get_recommendations(self, user_id, k=10):
-                return []
-
-        # ======================================================
-        # 🔥 SIEMPRE tener un user_manager (real o dummy)
-        # ======================================================
-        if self.enable_user_features:
-            try:
-                from src.core.data.user_manager import UserManager
-                self.user_manager = UserManager()
-                print("✅ UserManager real inicializado")
-            except ImportError as e:
-                print(f"⚠️ No se pudo importar UserManager real: {e}")
-                self.user_manager = DummyUserManager()
-                print("⚠️ Usando DummyUserManager como fallback")
-        else:
-            self.user_manager = DummyUserManager()
-            print("✅ UserManager dummy inicializado (use_advanced_features = False)")
-
-        # ======================================================
-        # 🔥 CollaborativeFilter: solo se activa si user_manager es real
-        # ======================================================
-        try:
-            if isinstance(self.user_manager, DummyUserManager):
-                self.collaborative_filter = None
-            else:
-                self.collaborative_filter = CollaborativeFilter(self.user_manager)
-        except Exception as e:
-            print(f"⚠️ Error inicializando CollaborativeFilter: {e}")
-            self.collaborative_filter = None
-
-        # 🔥 NUEVO: Inicializar ML Embedding Scorer
-        self.ml_scorer = MLEmbeddingScorer(retriever=self.retriever)
-        
-        # Componentes optimizados
-        self.evaluator = AdvancedEvaluator()
-        self.feedback_processor = FeedbackProcessor()
-        self.rlhf_trainer = GamingRLHFTrainer()
-        
-        # Estado del usuario (MANTENER por compatibilidad temporal)
-        self.user_profiles: Dict[str, Dict] = {}
-        self.user_memory: Dict[str, ConversationBufferMemory] = {}
-        
-        # Configuración RLHF mejorada
-        self.min_feedback_for_retrain = 5
-        self.retrain_interval = 3600
-        self.last_retrain_time = 0
-        self.rlhf_monitor = RLHFMonitor()
-        
-        # 🔥 NUEVO: Configuración sistema híbrido con ML
-        self.hybrid_weights = {
-            'collaborative': 0.4,  # Peso para feedback usuarios similares
-            'rag': 0.3,            # Peso para RAG tradicional
-            'ml_embeddings': getattr(config, 'ml_embedding_weight', 0.3)  # Peso para ML
-        }
-        
-        self.min_similarity_threshold = 0.6  # Similitud mínima entre usuarios
-        
-        self._check_and_retrain()
-        
-        logger.info(f"✅ WorkingAdvancedRAGAgent inicializado - Sistema Híbrido ML Activado")
-        logger.info(f"💬 LLM Local: {'HABILITADO' if self.llm_client else 'DESHABILITADO'}")
-        logger.info(f"📊 Pesos híbridos: RAG={self.hybrid_weights['rag']}, "
-                   f"Collaborative={self.hybrid_weights['collaborative']}, "
-                   f"ML={self.hybrid_weights['ml_embeddings']}")
-    
-    def _initialize_local_llm(self) -> Optional[LocalLLMClient]:
-        """Inicializa el cliente LLM local basado en configuración"""
-        try:
-            # Verificar si LLM local está habilitado en configuración
-            local_llm_enabled = getattr(self.config, 'local_llm_enabled', False)
-            
-            if not local_llm_enabled:
-                logger.info("💬 LLM local deshabilitado por configuración")
-                return None
-            
-            # Obtener configuración
-            llm_model = getattr(self.config, 'local_llm_model', 'llama-3.2-3b-instruct')
-            
-            # Crear cliente LLM local con parámetros correctos
-            llm_client = LocalLLMClient(
-                model=llm_model,
-                endpoint=settings.LOCAL_LLM_ENDPOINT,
-                temperature=settings.LOCAL_LLM_TEMPERATURE,  # 🔥 IMPORTANTE
-                timeout=settings.LOCAL_LLM_TIMEOUT          # 🔥 IMPORTANTE
-            )
-            
-            # Verificar disponibilidad
-            if llm_client.check_availability():
-                logger.info(f"✅ LLM local inicializado: {llm_model}")
-                return llm_client
-            else:
-                logger.warning(f"⚠️ LLM local no disponible: {llm_model}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"❌ Error inicializando LLM local: {e}")
+        if not self.config.use_ml_embeddings or not self.embedding_model:
             return None
         
-    def _generate_with_llm(self, context: str, query: str, products: List[Product]) -> str:
-        """Genera respuesta usando LLM local."""
-        
-        system_prompt = """Eres un experto en recomendaciones de videojuegos y productos electrónicos.
-        Genera respuestas útiles, precisas y naturales en español.
-        Recomienda productos específicos cuando sea posible.
-        Usa un tono amigable pero profesional.
-        
-        Formato sugerido:
-        1. Un saludo amigable
-        2. Explicación de los productos encontrados
-        3. Recomendaciones específicas con detalles
-        4. Sugerencias adicionales si es necesario
-        5. Despedida cordial"""
-        
-        user_prompt = f"""
-        CONTEXTO DE CONVERSACIÓN PREVIA: {context}
-        
-        PRODUCTOS ENCONTRADOS: {[p.title for p in products[:5]]}
-        
-        CONSULTA DEL USUARIO: {query}
-        
-        Por favor, genera una respuesta útil y atractiva recomendando estos productos.
-        
-        Incluye información relevante como:
-        - Nombres de productos (usa títulos completos)
-        - Características principales (plataforma, género, edición especial si aplica)
-        - Precios si están disponibles (formato: € o $)
-        - Ratings o calificaciones si están disponibles
-        - Por qué son relevantes para la consulta
-        
-        Si hay muchos productos, recomienda solo los 3-5 más relevantes.
-        
-        Mantén un tono amigable y profesional en español.
-        Usa emojis apropiados para hacer la respuesta más atractiva.
-        """
-        
         try:
-            if self.llm_client:
-                # 🔥 Usar LLM local
-                response = self.llm_client.generate(user_prompt, system_prompt)
-                logger.info(f"💬 Respuesta generada con LLM local: {self.config.local_llm_model}")
-                return response
-            else:
-                # Fallback a respuesta simple sin LLM
-                logger.warning("⚠️ LLM local no disponible, usando fallback")
-                return self._generate_advanced_gaming_response(query, products)
+            embedding = self.embedding_model.encode(query)
+            self._query_cache[query] = embedding.tolist()
+            return embedding.tolist()
         except Exception as e:
-            logger.error(f"❌ Error LLM local: {e}")
-            # Fallback a respuesta simple
-            return self._generate_advanced_gaming_response(query, products)
-            
-    def process_query(self, query: str, user_id: str = "default") -> RAGResponse:
-        """Procesa consultas de gaming de forma optimizada - VERSIÓN CORREGIDA"""
+            self.logger.warning(f"⚠️ Error generando embedding para query: {e}")
+            return None
+    
+    def _calculate_similarity(self, 
+                             embedding1: List[float], 
+                             embedding2: List[float]) -> float:
+        """Calcula similitud coseno entre embeddings."""
         try:
-            # 🔥 CORRECCIÓN COMPLETA: Debug detallado
-            original_query = query
-            logger.info(f"🔍 INICIO process_query - Tipo: {type(query)}, Valor: {str(query)[:100]}")
-
-            # Extraer texto de consulta de forma segura
-            if hasattr(query, 'lower'):
-                query_text = query
-            elif isinstance(query, dict):
-                query_text = query.get('query', str(query))
-            elif isinstance(query, str) and query.strip().startswith('{'):
-                try:
-                    query_data = json.loads(query)
-                    query_text = query_data.get('query', str(query_data))
-                except json.JSONDecodeError:
-                    query_text = str(query)
-            else:
-                query_text = str(query)
-                
-            # 🔥 CORRECCIÓN CRÍTICA: Asegurar que query_text sea string y tenga método lower
-            if not hasattr(query_text, 'lower'):
-                query_text = str(query_text)
-                
-            logger.info(f"🔍 Query procesada: '{query_text}'")
-                
-            # 🔥 CORRECCIÓN: Verificar cada paso del procesamiento
-            profile = self.get_or_create_user_profile(user_id)
-            memory = self.get_or_create_memory(user_id)
-
-            # Enriquecimiento inteligente para gaming - con manejo de errores
-            try:
-                enriched_query = self._enrich_gaming_query(query_text, profile)
-                logger.info(f"🔍 Query enriquecida: '{enriched_query}'")
-            except Exception as e:
-                logger.error(f"❌ Error en enriquecimiento: {e}")
-                enriched_query = query_text
-
-            # 🔥 CAMBIO: Conversión a ProductReference durante la recuperación
-            try:
-                # Configurar si usar embeddings ML en el retriever
-                use_ml_in_retriever = getattr(self.config, "use_ml_embeddings", True)
-                
-                raw_candidates = self.retriever.retrieve(
-                    enriched_query, 
-                    k=self.config.max_retrieved,
-                    use_ml_embeddings=use_ml_in_retriever  # 🔥 Pasar configuración ML
+            import numpy as np
+            
+            v1 = np.array(embedding1)
+            v2 = np.array(embedding2)
+            
+            # Normalizar vectores
+            norm1 = np.linalg.norm(v1)
+            norm2 = np.linalg.norm(v2)
+            
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+            
+            # Calcular similitud coseno
+            similarity = np.dot(v1, v2) / (norm1 * norm2)
+            
+            # Asegurar valor entre 0 y 1
+            return max(0.0, min(1.0, similarity))
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error calculando similitud: {e}")
+            return 0.0
+    
+    def _calculate_ml_score(self, 
+                           ref: ProductReference, 
+                           query_embedding: List[float]) -> float:
+        """Calcula puntaje ML combinado para un producto."""
+        if not ref.is_ml_processed:
+            return ref.score
+        
+        base_score = ref.score
+        ml_bonus = 0.0
+        
+        # Bonificación por similitud ML
+        similarity = ref.ml_features.get('similarity_score')
+        if similarity:
+            ml_bonus += similarity * self.config.ml_embedding_weight
+        
+        # Bonificación por categoría predicha
+        if 'predicted_category' in ref.ml_features:
+            ml_bonus += 0.1 * self.config.ml_embedding_weight
+        
+        # Combinar scores
+        return base_score * (1 - self.config.ml_embedding_weight) + ml_bonus
+    
+    def _rerank_results(self, 
+                       results: List[ProductReference], 
+                       query: str, 
+                       user_id: Optional[str] = None) -> List[ProductReference]:
+        """Aplica re-ranking a los resultados con RLHF y Collaborative Filter."""
+        if not results:
+            return []
+        
+        reranked = []
+        
+        for ref in results[:self.config.max_retrieved]:
+            base_score = ref.score
+            
+            # 🔥 Aplicar RLHF scoring si disponible
+            rlhf_score = 0.0
+            if self.rlhf_model:
+                text = ref.title if hasattr(ref, 'title') else ""
+                rlhf_score = self._score_with_rlhf(query, text)
+            
+            # 🔥 Aplicar Collaborative Filter si hay usuario
+            collab_score = 0.0
+            if user_id and self._collaborative_filter:
+                collab_scores = self._collaborative_filter.get_collaborative_scores(
+                    user_id, 
+                    [ref.id]
                 )
-                
-                logger.info(f"🔍 Candidatos recuperados: {len(raw_candidates)} - Tipo: {type(raw_candidates[0]) if raw_candidates else 'None'}")
-                
-                # 🔥 NUEVO: Contar productos con embeddings ML
-                ml_products_count = sum(1 for p in raw_candidates if hasattr(p, 'embedding') and p.embedding)
-                logger.info(f"📊 {ml_products_count}/{len(raw_candidates)} productos tienen embeddings ML")
-                
-                # 🔥 CONVERTIR A ProductReference
-                candidates = []
-                for product in raw_candidates:
-                    if hasattr(product, 'id'):
-                        # Calcular score si está disponible (ajusta según tu lógica)
-                        score = getattr(product, 'score', 0.5)
-                        pref = ProductReference.from_product(product, score=score, source="rag")
-                        candidates.append(pref)
-                    else:
-                        candidates.append(product)
-            except Exception as e:
-                logger.error(f"❌ Error en recuperación: {e}")
-                candidates = []
-
-            # 🔥 CORRECCIÓN: Convertir IDs a objetos Product para el filtrado
-            product_objects = []
-            for candidate in candidates:
-                if isinstance(candidate, str):
-                    # Es un ID, crear un producto mínimo
-                    product_objects.append(Product(id=candidate, title=f"Producto {candidate}"))
-                elif isinstance(candidate, ProductReference):
-                    # Convertir ProductReference a Product si es necesario
-                    if hasattr(candidate, 'to_product'):
-                        product = candidate.to_product()
-                        if product:
-                            product_objects.append(product)
-                    else:
-                        # Si candidate ya es un Product, usarlo directamente
-                        if hasattr(candidate, 'id') and hasattr(candidate, 'title'):
-                            product_objects.append(candidate)
-                        else:
-                            logger.warning(f"Candidato no convertible a Product: {type(candidate)}")
-                else:
-                    product_objects.append(candidate)
-
-            # Filtrado con manejo de errores
-            try:
-                relevant_candidates = self._filter_gaming_products(product_objects, query_text)
-                logger.info(f"🔍 Candidatos filtrados: {len(relevant_candidates)}")
-            except Exception as e:
-                logger.error(f"❌ Error en filtrado: {e}")
-                relevant_candidates = product_objects
-
-            # 🔥 NUEVO: Contar embeddings después del filtrado
-            ml_filtered_count = sum(1 for p in relevant_candidates if hasattr(p, 'embedding') and p.embedding)
-
-            # Reranking con manejo de errores
-            try:
-                ranked, ml_used = self._rerank_with_rlhf_and_ml(relevant_candidates, query_text, profile)
-                logger.info(f"🔍 Productos rerankeados: {len(ranked)} - ML usado: {ml_used}")
-            except Exception as e:
-                logger.error(f"❌ Error en reranking: {e}")
-                ranked = relevant_candidates
-                ml_used = False
-
-            final_products = ranked[:self.config.max_final]
+                collab_score = collab_scores.get(ref.id, 0.0)
             
-            # Generación de respuesta
-            context_for_generation = memory.get_context()
-            full_context = f"{context_for_generation}\nNueva consulta: {query_text}" if context_for_generation else query_text
-            
-            response = self._generate_gaming_response(full_context, final_products, query_text)
-            quality_score = self.evaluator.evaluate_response(query_text, response, final_products)
-            
-            # Guardar en memoria
-            memory.add(query_text, response)
-            
-            logger.info(f"✅ Query COMPLETADA: '{query_text}' -> {len(final_products)} productos | Score: {quality_score}")
-            
-            return RAGResponse(
-                answer=response,
-                products=final_products,  # 🔥 CORRECCIÓN: Devolver productos completos, no solo IDs
-                quality_score=quality_score,
-                retrieved_count=len(ranked),
-                used_llm=bool(self.llm_client),  # 🔥 NUEVO: Indicar si se usó LLM
-                # 🔥 NUEVO: Información ML
-                ml_embeddings_used=ml_filtered_count,
-                ml_scoring_method="embedding_similarity" if ml_used else "none",
-                # 🔥 NUEVO: Información LLM
-                local_llm_used=bool(self.llm_client),
-                local_llm_model=getattr(self.config, 'local_llm_model', 'none')
+            # 🔥 Combinar scores (60% base, 20% RLHF, 20% Collaborative)
+            final_score = (
+                base_score * 0.6 +
+                rlhf_score * 0.2 +
+                collab_score * 0.2
             )
             
-        except Exception as e:
-            logger.error(f"❌ ERROR CRÍTICO en process_query: {e}")
-            logger.error(f"❌ Traceback completo:", exc_info=True)
-            return RAGResponse(
-                answer=self._error_response(str(query), e),
-                products=[],
-                quality_score=0.0,
-                retrieved_count=0,
-                ml_embeddings_used=0,
-                ml_scoring_method="error",
-                local_llm_used=False,
-                local_llm_model="error"
+            # Crear copia con nuevo score
+            new_ref = ProductReference(
+                id=ref.id,
+                product=ref.product,
+                score=final_score,
+                source=ref.source,
+                confidence=ref.confidence,
+                metadata=ref.metadata.copy(),
+                ml_features=ref.ml_features.copy()
             )
-            
-    def process_query_with_limit(self, query: str, limit: int = 5) -> List[Dict]:
-        """Versión de process_query que acepta limit parameter"""
-        results = self.process_query(query)
-        return results[:limit] if results else []
-
-    def _enrich_gaming_query(self, query: str, profile: Dict) -> str:
-        """Enriquecimiento inteligente + aprendizaje desde feedback"""
-        # --- 1) Enriquecimiento original basado en plataformas y géneros ---
-        query_lower = query.lower()
-        enriched_terms = []
+            reranked.append(new_ref)
         
-        # Detectar y expandir plataformas
-        platform_map = {
-            'playstation': ['ps4', 'ps5', 'playstation 4', 'playstation 5'],
-            'xbox': ['xbox one', 'xbox series x', 'xbox series s'],
-            'nintendo': ['switch', 'nintendo switch', 'wii', '3ds'],
-            'pc': ['computadora', 'steam', 'epic games']
-        }
+        # Ordenar
+        reranked.sort(key=lambda x: x.score, reverse=True)
+        final_results = reranked[:self.config.max_final]
         
-        for platform, expansions in platform_map.items():
-            if platform in query_lower:
-                enriched_terms.extend(expansions)
-        
-        # Detectar géneros
-        genre_map = {
-            'acción': ['shooter', 'fps', 'acción'],
-            'aventura': ['rpg', 'rol', 'aventura'],
-            'deportes': ['deporte', 'sports', 'fútbol'],
-            'estrategia': ['estrategy', 'táctica']
-        }
-        
-        for genre, expansions in genre_map.items():
-            if genre in query_lower:
-                enriched_terms.extend(expansions)
-
-        # --- 2) Enriquecimiento dinámico con términos aprendidos del feedback ---
-        learned_terms = self._get_successful_query_terms()
-        if learned_terms:
-            enriched_terms.extend(learned_terms)
-
-        # --- 3) Si hay términos para enriquecer, devolver query expandida ---
-        if enriched_terms:
-            enriched_query = f"{query} {' '.join(enriched_terms)}"
-            logger.debug(f"🔍 Query enriquecida con aprendizaje: '{query}' -> '{enriched_query}'")
-            return enriched_query
-
-        return query
+        logger.info(f"🔄 Re-ranking aplicado: RLHF={self.rlhf_model is not None}, CF={collab_score>0}")
+        return final_results
     
-    def _get_successful_query_terms(self) -> List[str]:
-        """Extrae términos comunes de consultas con feedback positivo"""
+    # 🔥 NUEVO: Método para usar RLHF en scoring
+    def _apply_rlhf_scoring(self, query: str, references: List[ProductReference]) -> Dict[str, float]:
+        """Aplica scoring RLHF a las referencias"""
+        if not self.rlhf_model or not references:
+            return {}
+        
+        scores = {}
         try:
-            success_log = Path("data/feedback/success_queries.log")
-            if not success_log.exists():
-                return []
-
-            with open(success_log, 'r', encoding='utf-8') as f:
-                queries = [json.loads(line).get('query', '') for line in f]
-
-            from collections import Counter
-            all_terms = []
-            for q in queries:
-                all_terms.extend(q.lower().split())
-
-            # Filtrar términos útiles
-            common_terms = [
-                term for term, count in Counter(all_terms).most_common(5)
-                if len(term) > 3 and count > 1
-            ]
-
-            return common_terms
-
-        except Exception:
-            return []
-
-    def _filter_gaming_products(self, products: List, query: str) -> List:
-        """Filtrado inteligente para productos de gaming - VERSIÓN CORREGIDA"""
-        if not products:
-            return []
-        
-        # 🔥 CORRECCIÓN: Los productos pueden ser IDs strings u objetos Product
-        filtered_products = []
-        
-        query_lower = query.lower()
-        query_words = set(word for word in query_lower.split() if len(word) > 2)
-        
-        # Términos clave de gaming
-        gaming_terms = {'playstation', 'xbox', 'nintendo', 'switch', 'game', 'juego', 
-                    'edición', 'versión', 'ps4', 'ps5', 'xbox one', 'gaming'}
-        
-        for product in products:
-            try:
-                # 🔥 CORRECCIÓN: Manejar tanto IDs como objetos Product
-                if isinstance(product, str):
-                    # Es un ID de producto, no podemos filtrar por contenido
-                    # Incluirlo y dejar que el reranking lo ordene
-                    filtered_products.append(product)
+            for ref in references:
+                if hasattr(ref, 'text'):
+                    text = ref.text
+                elif hasattr(ref, 'title'):
+                    text = ref.title
+                else:
                     continue
-                    
-                # Es un objeto Product, podemos filtrar por contenido
-                title = str(getattr(product, 'title', '')).lower()
-                category = str(getattr(product, 'main_category', '')).lower()
                 
-                # Coincidencia directa en título
-                title_match = any(word in title for word in query_words)
-                
-                # Coincidencia con términos de gaming
-                gaming_match = any(term in title for term in gaming_terms)
-                
-                # Coincidencia en categoría
-                category_match = any(word in category for word in query_words)
-                
-                # Para gaming, ser más permisivo pero priorizar coincidencias
-                if title_match or (gaming_match and (category_match or len(query_words) == 0)):
-                    filtered_products.append(product)
-                    
-            except Exception as e:
-                # 🔥 CORRECCIÓN: Si hay error, incluir el producto de todos modos
-                logger.debug(f"Error filtrando producto: {e}")
-                filtered_products.append(product)
-        
-        # Fallback: si no hay productos filtrados, devolver todos
-        if not filtered_products:
-            logger.info(f"🔄 Usando {len(products)} productos sin filtrar como fallback")
-            return products
-        
-        return filtered_products
-
-    def _rerank_with_rlhf_and_ml(self, products: List, query: str, profile: Dict) -> Tuple[List, bool]:
-        """🔥 NUEVO: Reranking híbrido con ML embeddings - Versión corregida"""
-        if not products:
-            return products, False
-
-        # 🔥 Si el reranking está deshabilitado por configuración, devolver tal cual
-        if not getattr(self.config, "enable_reranking", True):
-            logger.debug("Reranking deshabilitado por configuración")
-            return products, False
-
-        try:
-            # Asegurar que todos los productos son objetos Product
-            scorable_products = []
-            ml_embeddings_available = 0
+                # Puntuar con modelo RLHF
+                score = self._score_with_rlhf(query, text)
+                scores[ref.id] = score
             
-            for product in products:
-                if isinstance(product, str):
-                    # Es un ID, crear producto mínimo
-                    scorable_products.append(Product(id=product, title=f"Producto {product}"))
-                else:
-                    scorable_products.append(product)
-                    # Contar productos con embeddings ML
-                    if hasattr(product, 'embedding') and product.embedding:
-                        ml_embeddings_available += 1
-
-            # 🔥 Determinar si usar embeddings ML
-            use_ml_embeddings = (
-                getattr(self.config, "use_ml_embeddings", True) and 
-                ml_embeddings_available > 0
-            )
+            logger.debug(f"RLHF scoring aplicado a {len(scores)} productos")
+            return scores
             
-            logger.info(f"📊 Reranking ML: {use_ml_embeddings} ({ml_embeddings_available}/{len(scorable_products)} productos tienen embeddings)")
-
-            # Obtener perfil completo del usuario
-            user_profile = self._get_or_create_user_profile_demographic(profile.get('user_id'))
-
-            # 1️⃣ Score RAG / RLHF
-            rag_scores = {}
-            for product in scorable_products:
-                if hasattr(self, 'rlhf_trainer') and self.rlhf_trainer is not None:
-                    score = self.rlhf_trainer.score_product_relevance(query, product, profile)
-                else:
-                    # Fallback a scoring simple si no hay RLHF
-                    score = 0.5
-                rag_scores[getattr(product, 'id', 'unknown')] = score
-
-            # 2️⃣ Score colaborativo
-            collaborative_scores = {}
-            if (self.collaborative_filter is not None and
-                hasattr(self.collaborative_filter, 'get_collaborative_scores')):
-                try:
-                    collaborative_scores = self.collaborative_filter.get_collaborative_scores(
-                        user_profile, query, scorable_products
-                    )
-                except Exception as e:
-                    logger.warning(f"Error en filtro colaborativo: {e}")
-                    collaborative_scores = {}
-
-            # 3️⃣ 🔥 NUEVO: Score ML Embeddings
-            ml_scores = {}
-            if use_ml_embeddings:
-                for product in scorable_products:
-                    pid = getattr(product, 'id', 'unknown')
-                    if hasattr(product, 'embedding') and product.embedding:
-                        ml_score = self.ml_scorer.calculate_similarity(query, product)
-                        # Filtrar scores muy bajos
-                        if ml_score >= getattr(self.config, "min_ml_similarity", 0.2):
-                            ml_scores[pid] = ml_score
-                        else:
-                            ml_scores[pid] = 0.0
-                    else:
-                        ml_scores[pid] = 0.5  # Score neutro si no tiene embedding
-            
-            # 4️⃣ 🔥 NUEVO: Combinación híbrida con pesos dinámicos
-            hybrid_scores = {}
-            for product in scorable_products:
-                pid = getattr(product, 'id', 'unknown')
-                rag_score = rag_scores.get(pid, 0)
-                collab_score = collaborative_scores.get(pid, 0)
-                
-                # Calcular peso para ML dinámicamente
-                ml_weight = self.hybrid_weights['ml_embeddings'] if use_ml_embeddings else 0.0
-                
-                if use_ml_embeddings:
-                    ml_score = ml_scores.get(pid, 0.5)
-                else:
-                    ml_score = 0.0
-                    ml_weight = 0.0
-                
-                # 🔥 Ajustar pesos si no hay score colaborativo
-                if collab_score == 0 and self.collaborative_filter is None:
-                    # Redistribuir peso del colaborativo
-                    rag_weight = self.hybrid_weights['rag'] + self.hybrid_weights['collaborative'] * 0.5
-                    ml_weight = ml_weight + self.hybrid_weights['collaborative'] * 0.5
-                else:
-                    rag_weight = self.hybrid_weights['rag']
-                
-                # Calcular score híbrido
-                hybrid_score = (
-                    rag_weight * rag_score +
-                    self.hybrid_weights['collaborative'] * collab_score +
-                    ml_weight * ml_score
-                )
-                
-                hybrid_scores[pid] = hybrid_score
-
-            # 5️⃣ Ordenar y retornar productos por score híbrido
-            scored_products = [(hybrid_scores.get(getattr(p, 'id', 'unknown'), 0), p) for p in scorable_products]
-            scored_products.sort(key=lambda x: x[0], reverse=True)
-
-            logger.info(f"🎯 Reranking híbrido con ML: {len([s for s, _ in scored_products if s > 0])} productos con score positivo")
-            
-            return [p for _, p in scored_products], use_ml_embeddings
-
         except Exception as e:
-            logger.warning(f"Reranking híbrido falló, usando fallback: {e}")
-            return self._rerank_fallback(products, query, profile), False
-
-    # 🔥 MANTENER método original para compatibilidad
-    def _rerank_with_rlhf(self, products: List, query: str, profile: Dict) -> List:
-        """Método legacy - usar la nueva versión con ML"""
-        ranked_products, _ = self._rerank_with_rlhf_and_ml(products, query, profile)
-        return ranked_products
-
-    def _log_rlhf_data(self, query: str, response: List[Dict], score: float, user_id: str = None):
-        """Genera datos de entrenamiento para RLHF - VERSIÓN SIMPLIFICADA"""
+            logger.warning(f"⚠️ Error en RLHF scoring: {e}")
+            return {}
+    
+    def _score_with_rlhf(self, query: str, response: str) -> float:
+        """Usa modelo RLHF para puntuar respuesta"""
         try:
-            # Crear directorio de feedback si no existe
-            feedback_dir = Path("data/feedback")
-            feedback_dir.mkdir(parents=True, exist_ok=True)
+            if not self.rlhf_model:
+                return 0.5  # Score neutral
             
-            # Log exitoso
-            log_file = feedback_dir / "successful_queries.jsonl"
-            log_data = {
-                'query': query,
-                'response': str(response[:2]),  # Limitar tamaño
-                'score': score,
-                'user_id': user_id,
-                'timestamp': time.time()
-            }
+            # Tokenizar
+            inputs = self.rlhf_model.tokenizer(
+                f"Query: {query} Response: {response}",
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=256
+            ).to(self.rlhf_model.device)
             
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_data, ensure_ascii=False) + '\n')
-                
-        except Exception as e:
-            print(f"⚠️ Error logging RLHF data: {e}")
+            # Predecir
+            with torch.no_grad():
+                outputs = self.rlhf_model.model(**inputs)
+                score = torch.sigmoid(outputs.logits).item()
+            
+            return max(0.0, min(1.0, score))
+            
+        except Exception:
+            return 0.5
+    
+    def _calculate_rerank_score(self, 
+                               ref: ProductReference, 
+                               query: str, 
+                               user_id: Optional[str] = None) -> float:
+        """Calcula score de re-ranking combinando múltiples factores."""
+        base_score = ref.score
         
-    def _get_or_create_user_profile_demographic(self, user_id: str) -> UserProfile:
-        """Obtiene o crea perfil de usuario con datos demográficos (solo si está permitido)"""
+        # Factor de popularidad
+        popularity_score = self._calculate_popularity_score(ref)
+        
+        # Factor de diversidad (evitar productos similares)
+        diversity_score = self._calculate_diversity_score(ref, query)
+        
+        # Factor de novedad
+        freshness_score = self._calculate_freshness_score(ref)
+        
+        # Factor personalizado si hay usuario
+        personalization_score = 0.0
+        if user_id:
+            personalization_score = self._calculate_personalization_score(ref, user_id)
+        
+        # Combinar scores con ponderaciones
+        final_score = (
+            base_score * self.config.semantic_weight +
+            popularity_score * self.config.popularity_weight +
+            diversity_score * self.config.diversity_weight +
+            freshness_score * self.config.freshness_weight +
+            personalization_score * 0.2  # Peso fijo para personalización
+        )
+        
+        return final_score
+    
+    def _calculate_popularity_score(self, ref: ProductReference) -> float:
+        """Calcula score de popularidad basado en rating."""
+        # Valor por defecto si no hay producto
+        if not ref or not ref.product:
+            return 0.5
+        
+        # Valores seguros
+        rating = getattr(ref.product, 'average_rating', 0.0) or 0.0
+        rating_count = getattr(ref.product, 'rating_count', 0) or 0
+        
+        # Convertir a números
         try:
-            # 🔥 CAMBIO 3: No crear perfiles demográficos por defecto en cada llamada
-            # Si no permitimos features de usuario, devolver perfil temporal no persistente
-            if not self.enable_user_features or self.user_manager is None:
-                # Crear perfil temporal (UserProfile o similar)
-                return UserProfile(
-                    user_id=user_id,
-                    session_id=user_id,
-                    age=25,
-                    gender=Gender.MALE,
-                    country="Unknown",
-                    language="es"
-                )
-
-            # Intentar cargar perfil existente (no crear uno nuevo para cada query)
-            existing_profile = self.user_manager.get_user_profile(user_id)
-            if existing_profile:
-                return existing_profile
-
-            # Si no existe y se permiten features, CREAR solo si explícitamente deseado (evitar creación implícita masiva)
-            # Para evitar creación por cada query, crear solo si user_id no es "default"
-            if user_id and user_id != "default":
-                default_profile = self.user_manager.create_user_profile(
-                    age=25,
-                    gender="male",
-                    country="Spain",
-                    language="es",
-                    preferred_categories=["games", "videojuegos"],
-                    preferred_brands=["Sony", "Microsoft", "Nintendo"]
-                )
-                # 🔥 CAMBIO 6: Reducir logs de creación de usuario
-                logger.debug(f"👤 Creado perfil demográfico para {user_id}")
-                return default_profile
-
-            # Si user_id == "default", devolver perfil temporal
-            return UserProfile(
-                user_id=user_id,
-                session_id=user_id,
-                age=25,
-                gender=Gender.MALE,
-                country="Unknown",
-                language="es"
-            )
-
-        except Exception as e:
-            logger.error(f"Error obteniendo perfil demográfico: {e}")
-            return UserProfile(
-                user_id=user_id,
-                session_id=user_id,
-                age=25,
-                gender=Gender.MALE,
-                country="Unknown",
-                language="es"
-            )
-
-    def _rerank_fallback(self, products: List, query: str, profile: Dict) -> List:
-        """Fallback a RAG tradicional si el sistema híbrido falla"""
-        try:
-            # 🔥 CORRECCIÓN: Manejar tanto IDs como objetos Product en el fallback
-            scorable_products = []
-            for product in products:
-                if isinstance(product, str):
-                    scorable_products.append(Product(id=product, title=f"Producto {product}"))
-                else:
-                    scorable_products.append(product)
-                    
-            scored_products = [(self.rlhf_trainer.score_product_relevance(query, p, profile), p) 
-                            for p in scorable_products]
-            scored_products.sort(key=lambda x: x[0], reverse=True)
-            return [p for _, p in scored_products]
-        except Exception as e:
-            logger.error(f"Fallback también falló: {e}")
-            return products
-
-    def _generate_gaming_response(self, context: str, products: List[Product], original_query: str) -> str:
-        """Generación de respuesta optimizada para gaming"""
-        if not products:
-            return self._no_gaming_results_response(original_query)
+            rating_num = float(rating)
+            count_num = int(rating_count)
+        except (ValueError, TypeError):
+            return 0.5
         
-        # 🔥 NUEVO: Usar LLM local si está disponible
-        return self._generate_with_llm(context, original_query, products)
-
-    def _generate_advanced_gaming_response(self, query: str, products: List[Product]) -> str:
-        """Respuesta avanzada para gaming con formato enriquecido - Fallback cuando no hay LLM"""
-        # Agrupar por plataforma de forma inteligente
-        platforms = self._categorize_by_platform(products)
-        
-        lines = [f"🎮 **Recomendaciones de videojuegos para '{query}'**", ""]
-        
-        total_shown = 0
-        max_platforms = 2
-        max_games_per_platform = 3
-        
-        for platform, prods in list(platforms.items())[:max_platforms]:
-            # Emoji para plataforma
-            platform_emoji = {
-                'PlayStation': '📀',
-                'Xbox': '🎯', 
-                'Nintendo': '🎴',
-                'PC': '🖥️',
-                'Otras plataformas': '🎪'
-            }.get(platform, '🎮')
-            
-            lines.append(f"{platform_emoji} **{platform}**")
-            
-            for i, p in enumerate(prods[:max_games_per_platform], 1):
-                title = getattr(p, 'title', 'Videojuego sin nombre')
-                price = getattr(p, 'price', None)
-                rating = getattr(p, 'average_rating', None)
-                
-                # Formato enriquecido
-                price_str = f"💰 ${price:.2f}" if price else "💰 Precio no disponible"
-                rating_str = f"⭐ {rating}/5" if rating else "⭐ Sin calificaciones"
-                
-                lines.append(f"  {i}. **{title}**")
-                lines.append(f"     {price_str} | {rating_str}")
-                total_shown += 1
-            
-            lines.append("")
-        
-        # Información adicional
-        if len(products) > total_shown:
-            lines.append(f"💡 *Y {len(products) - total_shown} juegos más disponibles...*")
-        
-        # Sugerencia contextual
-        lines.append(self._get_contextual_suggestion(query, products))
-        
-        return "\n".join(lines)
-
-    def _categorize_by_platform(self, products: List[Product]) -> Dict[str, List[Product]]:
-        """Categorización inteligente por plataforma"""
-        platforms = {}
-        
-        for product in products:
-            title = str(getattr(product, 'title', '')).lower()
-            platform = "Otras plataformas"
-            
-            # Detección de plataforma mejorada
-            if any(term in title for term in ['playstation', 'ps4', 'ps5', 'ps3']):
-                platform = "PlayStation"
-            elif any(term in title for term in ['xbox', 'xbox one', 'xbox series']):
-                platform = "Xbox"
-            elif any(term in title for term in ['nintendo', 'switch', 'wii', 'ds']):
-                platform = "Nintendo" 
-            elif any(term in title for term in ['pc', 'computer', 'steam']):
-                platform = "PC"
-                
-            platforms.setdefault(platform, []).append(product)
-        
-        return platforms
-
-    def _get_contextual_suggestion(self, query: str, products: List[Product]) -> str:
-        """Sugerencias contextuales inteligentes"""
-        query_lower = query.lower()
-        
-        if 'barato' in query_lower or 'económico' in query_lower:
-            return "💸 *Tip: Filtra por precio en tu próxima búsqueda*"
-        elif 'nuevo' in query_lower or 'lanzamiento' in query_lower:
-            return "🆕 *Tip: Busca 'últimos lanzamientos' para novedades*"
-        elif any(term in query_lower for term in ['acción', 'shooter', 'fps']):
-            return "🔫 *Tip: Prueba 'call of duty' o 'battlefield' para shooters*"
-        elif any(term in query_lower for term in ['aventura', 'rpg', 'rol']):
-            return "🗺️ *Tip: Prueba 'zelda' o 'final fantasy' para aventuras*"
-        elif len(products) < 3:
-            return "🔍 *Tip: Prueba términos más generales para más resultados*"
+        # Lógica de cálculo
+        if count_num > 100:
+            return min(1.0, rating_num / 5.0)
+        elif count_num > 10:
+            return (rating_num / 5.0) * 0.8
         else:
-            return "🎯 *Tip: Especifica plataforma o género para mejores resultados*"
-
-    def _no_gaming_results_response(self, query: str) -> str:
-        """Respuesta cuando no hay resultados"""
-        suggestions = [
-            "Prueba con el nombre específico del juego",
-            "Busca por plataforma: 'playstation', 'xbox', 'nintendo', 'pc'", 
-            "Intenta con el género: 'acción', 'aventura', 'deportes', 'estrategia'",
-            "Usa términos como 'mejor valorado', 'novedades' o 'clásicos'",
-            "Verifica la ortografía o usa términos en inglés"
-        ]
+            return 0.5  # Valor neutral para pocas o ninguna review
+    
+    def _calculate_diversity_score(self, 
+                                  ref: ProductReference, 
+                                  query: str) -> float:
+        """Calcula score de diversidad para evitar resultados similares."""
+        # Por ahora, implementación simple
+        # En una implementación real, se compararía con otros resultados
+        return 0.7
+    
+    def _calculate_freshness_score(self, ref: ProductReference) -> float:
+        """Calcula score de novedad/actualidad."""
+        # Por ahora, implementación simple
+        return 0.8
+    
+    def _calculate_personalization_score(self, 
+                                        ref: ProductReference, 
+                                        user_id: str) -> float:
+        """Calcula score de personalización basado en historial del usuario."""
+        # Por ahora, implementación simple
+        # En una implementación real, se consultaría el historial del usuario
+        return 0.6
+    
+    def _generate_answer(self, 
+                        query: str, 
+                        products: List[ProductReference]) -> str:
+        """Genera respuesta usando LLM o plantilla simple."""
+        # Si hay LLM disponible, usarlo
+        if self.config.local_llm_enabled and self.llm_client and products:
+            try:
+                # Construir contexto con productos
+                context = self._build_context_for_llm(products)
+                
+                prompt = f"""
+                Eres un asistente de recomendaciones de Amazon.
+                Usuario pregunta: "{query}"
+                
+                Productos disponibles para recomendar:
+                {context}
+                
+                Genera una respuesta útil y natural que recomiende los productos más relevantes.
+                Incluye detalles específicos de los productos como precio, características y por qué son relevantes.
+                """
+                
+                response = self.llm_client.generate(prompt)
+                return response.strip()
+                
+            except Exception as e:
+                self.logger.warning(f"⚠️ Error generando respuesta con LLM: {e}")
         
-        return f"🎮 **No encontré videojuegos para '{query}'**\n\n**Sugerencias para gaming:**\n" + "\n".join(f"• {s}" for s in suggestions)
-
-    def _error_response(self, query: str, error: Exception) -> str:
-        return f"❌ **Error procesando tu búsqueda de '{query}'**\n\nDetalle: {str(error)[:100]}...\n\nPor favor, intenta con otros términos."
-
-    def get_or_create_user_profile(self, user_id: str) -> Dict:
-        if user_id not in self.user_profiles:
-            self.user_profiles[user_id] = {
-                "user_id": user_id, 
-                "preferred_categories": ["games", "videojuegos"],
-                "preferred_platforms": [],
-                "search_history": [], 
-                "purchase_history": [],
-                "gaming_preferences": {}
-            }
-        return self.user_profiles[user_id]
-
-    def get_or_create_memory(self, user_id: str) -> ConversationBufferMemory:
-        if user_id not in self.user_memory:
-            self.user_memory[user_id] = ConversationBufferMemory(max_length=self.config.memory_window)
-        return self.user_memory[user_id]
-
-    def clear_memory(self, user_id: str = "default"):
-        """Limpia la memoria del usuario"""
-        if user_id in self.user_memory:
-            self.user_memory[user_id].clear()
-
-    def _calculate_dynamic_weights(self, collaborative_count: int, total_products: int) -> Dict[str, float]:
-        """Calcula pesos dinámicos NORMALIZADOS"""
-        if total_products == 0:
-            return self.hybrid_weights
+        # Fallback a plantilla simple
+        return self._generate_template_answer(query, products)
+    
+    def _build_context_for_llm(self, products: List[ProductReference]) -> str:
+        """Construye contexto para el LLM."""
+        context_lines = []
         
-        collaborative_ratio = collaborative_count / total_products
+        for i, ref in enumerate(products[:3]):  # Limitar a 3 productos para contexto
+            title = ref.title[:100]
+            price = ref.price
+            category = ref.ml_features.get('predicted_category') or ref.metadata.get('main_category', 'Unknown')
+            
+            line = f"{i+1}. {title} - ${price:.2f} - Categoría: {category}"
+            context_lines.append(line)
         
-        # Ajustar pesos según evidencia
-        if collaborative_ratio < 0.1:  # Poca evidencia
-            rag_weight = 0.7
-            collab_weight = 0.3
-        elif collaborative_ratio < 0.3:  # Evidencia moderada
-            rag_weight = 0.4
-            collab_weight = 0.6
-        else:  # Buena evidencia
-            rag_weight = 0.3
-            collab_weight = 0.7
+        return "\n".join(context_lines)
+    
+    def _generate_template_answer(self, query: str, products: List[ProductReference]) -> str:
+        """Genera respuesta usando plantilla simple con categorías mejoradas."""
+        if not products:
+            return f"Lo siento, no encontré productos para '{query}'."
         
-        # ✅ NORMALIZAR SIEMPRE
-        total = rag_weight + collab_weight
+        # Construir respuesta con plantilla
+        answer_parts = [f"Encontré {len(products)} productos para '{query}':\n"]
+        
+        for i, ref in enumerate(products[:self.config.max_final]):
+            title = ref.title[:80]
+            price = ref.price
+            
+            # 🔥 CORRECCIÓN: Usar el método mejorado de extracción
+            category = self._extract_category_for_display(ref, title)
+            
+            # Añadir emojis basados en categoría
+            emoji = self._get_category_emoji(category)
+            
+            # 🔥 MOSTRAR CATEGORÍA en la respuesta
+            answer_parts.append(
+                f"{emoji} {i+1}. {title[:60]} "
+                f"(💰 ${price:.2f} | 🏷️ {category})"  # ← ¡AHORA MUESTRA CATEGORÍA!
+            )
+        
+        # Añadir recomendación final
+        if len(products) > 1:
+            best_product = products[0]
+            best_title = best_product.title[:60]
+            best_price = best_product.price
+            
+            best_category = self._extract_category_for_display(best_product, best_title)
+            best_emoji = self._get_category_emoji(best_category)
+            
+            answer_parts.append(
+                f"\n{best_emoji} **Recomendación principal**: {best_title} "
+                f"(💰 ${best_price:.2f} | 🏷️ {best_category})"
+            )
+        
+        return "\n".join(answer_parts)
+    def _extract_category_for_display(self, ref: ProductReference, title: str) -> str:
+        """Extrae la mejor categoría para mostrar de múltiples fuentes."""
+        # 🔥 PRIMERO: Intentar extraer del título (más confiable para Nintendo)
+        if 'nintendo' in title.lower() or 'wii' in title.lower() or 'gamecube' in title.lower():
+            return 'Video Games'
+        
+        if 'playstation' in title.lower() or 'ps4' in title.lower() or 'ps5' in title.lower():
+            return 'Video Games'
+        
+        if 'xbox' in title.lower():
+            return 'Video Games'
+        
+        # Luego seguir con la lógica existente...
+        category = 'General'
+        
+        # 1. Intentar de ml_features (predicción ML en tiempo real)
+        if ref.ml_features and 'predicted_category' in ref.ml_features:
+            category = ref.ml_features['predicted_category']
+            self.logger.debug(f"[DEBUG] Usando ml_features: {category}")
+        
+        # 2. Intentar de metadata (guardado en índice Chroma)
+        elif ref.metadata and 'main_category' in ref.metadata:
+            category = ref.metadata['main_category']
+            self.logger.debug(f"[DEBUG] Usando metadata['main_category']: {category}")
+        
+        # 3. Intentar de metadata con otro nombre de campo
+        elif ref.metadata:
+            # Buscar cualquier campo que contenga "categor" en el nombre
+            for key in ref.metadata.keys():
+                if 'categor' in key.lower():
+                    category = ref.metadata[key]
+                    self.logger.debug(f"[DEBUG] Usando metadata['{key}']: {category}")
+                    break
+        
+        # 4. Si aún es "General", extraer del título
+        if category == 'General':
+            extracted = self._extract_category_from_title(title)
+            if extracted != 'General':
+                category = extracted
+                self.logger.debug(f"[DEBUG] Usando extraída del título: {category}")
+        
+        self.logger.debug(f"[DEBUG] Categoría final: {category}")
+        return category
+
+    def _extract_category_from_title(self, title: str) -> str:
+        """Extrae categoría del título usando palabras clave."""
+        title_lower = title.lower()
+        
+        # Diccionario de palabras clave
+        category_keywords = {
+            'Video Games': ['nintendo', 'playstation', 'xbox', 'switch', 'wii', 'gamecube',
+                        'ps4', 'ps5', 'xbox one', 'game', 'video game', 'videogame',
+                        'switch', 'nes', 'snes', 'n64', 'gameboy', '3ds', 'ds'],
+            'Electronics': ['iphone', 'samsung', 'android', 'smartphone', 'phone', 'tablet',
+                        'laptop', 'computer', 'pc', 'macbook', 'electronic'],
+            'Books': ['book', 'novel', 'author', 'edition', 'hardcover', 'paperback'],
+            'Sports': ['wwe', 'fight', 'combat', 'sport', 'fitness', 'gym', 'ball'],
+            'Toys': ['toy', 'lego', 'doll', 'action figure', 'puzzle', 'board game'],
+            'Home': ['kitchen', 'home', 'furniture', 'appliance', 'cookware'],
+            'Clothing': ['shirt', 't-shirt', 'pants', 'jeans', 'dress', 'jacket'],
+            'Beauty': ['beauty', 'makeup', 'cosmetic', 'skincare', 'perfume'],
+            'Automotive': ['car', 'auto', 'vehicle', 'tire', 'engine', 'motor'],
+            'Office': ['office', 'stationery', 'pen', 'pencil', 'notebook']
+        }
+        
+        for category, keywords in category_keywords.items():
+            for keyword in keywords:
+                if keyword in title_lower:
+                    return category
+        
+        return 'General'
+    def _get_category_emoji(self, category: str) -> str:
+        """Devuelve emoji apropiado para la categoría."""
+        emoji_map = {
+            'Electronics': '📱',
+            'Books': '📚',
+            'Clothing': '👕',
+            'Home': '🏠',
+            'Sports': '⚽',
+            'Beauty': '💄',
+            'Toys': '🧸',
+            'Automotive': '🚗',
+            'Office': '💼'
+        }
+        
+        for key, emoji in emoji_map.items():
+            if key.lower() in category.lower():
+                return emoji
+        
+        return '📦'  # Emoji por defecto
+    
+    # --------------------------------------------------
+    # Métodos de utilidad y configuración
+    # --------------------------------------------------
+    
+    def get_config_summary(self) -> Dict[str, Any]:
+        """Obtiene resumen de configuración."""
         return {
-            'rag': rag_weight / total,
-            'collaborative': collab_weight / total
+            "rag_config": {
+                "mode": self.config.mode.value,
+                "ml_enabled": self.config.ml_enabled,
+                "ml_features": self.config.ml_features,
+                "local_llm_enabled": self.config.local_llm_enabled,
+                "max_final_results": self.config.max_final,
+                "enable_reranking": self.config.enable_reranking
+            },
+            "system_settings": {
+                "ML_ENABLED": settings.ML_ENABLED,
+                "ML_FEATURES": list(settings.ML_FEATURES),
+                "LOCAL_LLM_ENABLED": settings.LOCAL_LLM_ENABLED,
+                "LOCAL_LLM_MODEL": settings.LOCAL_LLM_MODEL
+            },
+            "components": {
+                "retriever_loaded": self._retriever is not None,
+                "llm_client_loaded": self._llm_client is not None,
+                "embedding_model_loaded": self._embedding_model is not None,
+                "rlhf_pipeline": self.rlhf_pipeline is not None,
+                "collaborative_filter": self._collaborative_filter is not None
+            }
+        }
+    
+    def update_config(self, **kwargs) -> None:
+        """Actualiza configuración dinámicamente."""
+        for key, value in kwargs.items():
+            if hasattr(self.config, key):
+                setattr(self.config, key, value)
+                self.logger.info(f"📡 Config actualizada: {key}={value}")
+    
+    def clear_cache(self) -> None:
+        """Limpia caché interno."""
+        self._query_cache.clear()
+        self.logger.info("🗑️  Cache limpiado")
+    
+    def test_components(self) -> Dict[str, Any]:
+        """Prueba todos los componentes del sistema."""
+        results = {
+            "retriever": False,
+            "llm_client": False,
+            "embedding_model": False,
+            "rlhf_pipeline": self.rlhf_pipeline is not None,
+            "collaborative_filter": self._collaborative_filter is not None,
+            "errors": []
+        }
+        
+        # Probar retriever
+        try:
+            _ = self.retriever
+            results["retriever"] = True
+        except Exception as e:
+            results["errors"].append(f"Retriever: {e}")
+        
+        # Probar LLM client
+        if self.config.local_llm_enabled:
+            try:
+                _ = self.llm_client
+                results["llm_client"] = True
+            except Exception as e:
+                results["errors"].append(f"LLM Client: {e}")
+        
+        # Probar embedding model
+        if self.config.use_ml_embeddings:
+            try:
+                _ = self.embedding_model
+                results["embedding_model"] = True
+            except Exception as e:
+                results["errors"].append(f"Embedding Model: {e}")
+        
+        return results
+
+
+# ----------------------------------------------------------
+# Funciones de conveniencia
+# ----------------------------------------------------------
+
+def create_rag_agent(
+    mode: str = "hybrid",
+    ml_enabled: Optional[bool] = None,
+    local_llm_enabled: Optional[bool] = None
+) -> WorkingAdvancedRAGAgent:
+    """
+    Crea un agente RAG con configuración simplificada.
+    
+    Args:
+        mode: Modo de operación (basic, hybrid, ml_enhanced, llm_enhanced)
+        ml_enabled: Habilitar ML (usa settings si es None)
+        local_llm_enabled: Habilitar LLM local (usa settings si es None)
+        
+    Returns:
+        WorkingAdvancedRAGAgent configurado
+    """
+    # Usar configuración del sistema por defecto
+    if ml_enabled is None:
+        ml_enabled = settings.ML_ENABLED
+    if local_llm_enabled is None:
+        local_llm_enabled = settings.LOCAL_LLM_ENABLED
+    
+    # Crear configuración
+    config = RAGConfig(
+        mode=RAGMode(mode),
+        ml_enabled=ml_enabled,
+        local_llm_enabled=local_llm_enabled
+    )
+    
+    # Crear agente
+    agent = WorkingAdvancedRAGAgent(config=config)
+    
+    logger.info(f"🧠 RAG Agent creado en modo {mode}")
+    logger.info(f"   • ML: {'✅' if ml_enabled else '❌'}")
+    logger.info(f"   • LLM Local: {'✅' if local_llm_enabled else '❌'}")
+    logger.info(f"   • RLHF: {'✅' if agent.rlhf_pipeline else '❌'}")
+    logger.info(f"   • Collaborative Filter: {'✅' if agent._collaborative_filter else '❌'}")
+    
+    return agent
+
+
+def test_rag_pipeline(query: str = "smartphone barato") -> Dict[str, Any]:
+    """
+    Prueba rápida del pipeline RAG.
+    
+    Args:
+        query: Consulta de prueba
+        
+    Returns:
+        Resultados de la prueba
+    """
+    logger.info(f"🧪 Probando pipeline RAG con query: '{query}'")
+    
+    try:
+        # Crear agente
+        agent = create_rag_agent(mode="hybrid")
+        
+        # Procesar consulta
+        result = agent.process_query(query)
+        
+        # Preparar respuesta de prueba
+        test_result = {
+            "success": True,
+            "query": query,
+            "answer_length": len(result.get("answer", "")),
+            "products_found": len(result.get("products", [])),
+            "processing_time": result.get("stats", {}).get("processing_time", 0),
+            "config_summary": agent.get_config_summary()
+        }
+        
+        logger.info(f"✅ Test completado: {test_result['products_found']} productos encontrados")
+        return test_result
+        
+    except Exception as e:
+        logger.error(f"❌ Test falló: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "query": query
         }
 
-    def _infer_selected_product(self, answer: str, rating: int, user_query: str = "") -> Optional[str]:
-        """
-        Infiere qué producto seleccionó el usuario basado en su respuesta.
-        Versión mejorada con múltiples estrategias.
-        """
-        import re
-        import json
 
-        # ==========================================================
-        # ESTRATEGIA 1: Buscar ID explícito en formato especial
-        # ==========================================================
-        explicit_patterns = [
-            r'\[PRODUCT:([A-Za-z0-9_\-]+)\]',      # [PRODUCT:ABC123]
-            r'\[ID:([A-Za-z0-9_\-]+)\]',           # [ID:ABC123]
-            r'Product ID:\s*([A-Za-z0-9_\-]+)',    # Product ID: ABC123
-            r'ID\s*:\s*([A-Za-z0-9_\-]+)',         # ID: ABC123
-            r'producto\s+([A-Z][A-Z0-9]{4,})',     # producto ABC123
-            r'ref[:\s]*([A-Z][A-Z0-9]{4,})',       # ref: ABC123
-        ]
+# ----------------------------------------------------------
+# Ejecución directa para pruebas
+# ----------------------------------------------------------
 
-        for pattern in explicit_patterns:
-            matches = re.findall(pattern, answer, re.IGNORECASE)
-            if matches:
-                selected_id = matches[0]
-                print(f"[Feedback] Found explicit product ID via pattern '{pattern}': {selected_id}")
-                return selected_id
-
-        # ==========================================================
-        # ESTRATEGIA 2: Buscar JSON embebido
-        # ==========================================================
-        if '{' in answer and '}' in answer:
-            try:
-                json_start = answer.find('{')
-                json_end = answer.rfind('}') + 1
-                json_str = answer[json_start:json_end]
-
-                metadata = json.loads(json_str)
-
-                if 'selected_product_id' in metadata:
-                    print(f"[Feedback] Found ID in JSON metadata: {metadata['selected_product_id']}")
-                    return metadata['selected_product_id']
-
-                if 'product_id' in metadata:
-                    print(f"[Feedback] Found ID as 'product_id' in JSON: {metadata['product_id']}")
-                    return metadata['product_id']
-
-            except json.JSONDecodeError:
-                pass
-            except KeyError:
-                pass
-
-        # ==========================================================
-        # ESTRATEGIA 3: Buscar IDs conocidos en los productos actuales
-        # ==========================================================
-        if hasattr(self, "current_products") and self.current_products:
-            products = self.current_products
-        elif hasattr(self, "products") and self.products:
-            products = self.products
-        else:
-            products = []
-
-        if products:
-            # Diccionario título → id
-            title_to_id = {}
-            for product in products:
-                if hasattr(product, "title") and hasattr(product, "id"):
-                    clean = product.title.lower().strip()
-                    if len(clean) > 3:
-                        title_to_id[clean] = product.id
-
-            answer_lower = answer.lower()
-
-            # Coincidencia por título completo
-            for title, product_id in title_to_id.items():
-                if title in answer_lower and len(title) > 5:
-                    print(f"[Feedback] Found product by title match '{title[:30]}...': {product_id}")
-                    return product_id
-
-            # Coincidencia parcial por palabras clave
-            for product in products:
-                if hasattr(product, "title") and hasattr(product, "id"):
-                    title_words = set(product.title.lower().split())
-                    answer_words = set(answer_lower.split())
-
-                    common = title_words.intersection(answer_words)
-                    common_filtered = [w for w in common if len(w) > 3]
-
-                    if len(common_filtered) >= 2:
-                        print(f"[Feedback] Found product by keyword match: {common_filtered} → {product.id}")
-                        return product.id
-
-        # ==========================================================
-        # ESTRATEGIA 4: Buscar patrones comunes de posibles IDs
-        # ==========================================================
-        id_patterns = [
-            r'\b([A-Z][A-Z0-9]{3,})\b',
-            r'\b([0-9]{4,}[A-Z]?)\b',
-            r'\b([A-Z]{2,}-[0-9]{3,})\b',
-        ]
-
-        for pattern in id_patterns:
-            matches = re.findall(pattern, answer.upper())
-            if matches:
-                if products:
-                    existing = [getattr(p, "id", "") for p in products]
-                    for match in matches:
-                        if match in existing:
-                            print(f"[Feedback] Found ID pattern match '{pattern}': {match}")
-                            return match
-                else:
-                    print(f"[Feedback] Found ID pattern (no verification): {matches[0]}")
-                    return matches[0]
-
-        # ==========================================================
-        # ESTRATEGIA 5: Si el rating es alto, asumir el primer producto
-        # ==========================================================
-        if rating >= 4 and products:
-            first_id = getattr(products[0], "id", "unknown")
-            print(f"[Feedback] Using first product due to high rating ({rating}): {first_id}")
-            return first_id
-
-        # ==========================================================
-        # ESTRATEGIA 6: Fallback al método padre
-        # ==========================================================
-        try:
-            import inspect
-            if hasattr(super(), "_infer_selected_product"):
-                result = super()._infer_selected_product(answer, rating, user_query)
-                print(f"[Feedback] Using parent class method: {result}")
-                return result
-        except:
-            pass
-
-        # ==========================================================
-        # ÚLTIMO RECURSO
-        # ==========================================================
-        print(f"[Feedback] WARNING: Could not infer product ID from answer")
-        print(f"  Answer preview: {answer[:200]}...")
-        print(f"  Query: {user_query}")
-        print(f"  Rating: {rating}")
-
-        if products:
-            default_id = getattr(products[0], "id", "unknown")
-            print(f"[Feedback] Using default (first) product ID: {default_id}")
-            return default_id
-
-        return "unknown_product_id"
-
-
-    def _find_best_query_match(self, user_query: str, product_ids: List[str], answer: str) -> Optional[str]:
-        """Encuentra el producto que mejor coincide con la query del usuario"""
-        try:
-            query_terms = set(user_query.lower().split())
-            best_match = None
-            best_score = 0
-            
-            # Buscar en la respuesta secciones que mencionen cada producto
-            for product_id in product_ids:
-                # Buscar contexto alrededor del product_id en la respuesta
-                product_context = self._extract_product_context(answer, product_id)
-                if product_context:
-                    context_terms = set(product_context.lower().split())
-                    common_terms = query_terms & context_terms
-                    score = len(common_terms) / len(query_terms) if query_terms else 0
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_match = product_id
-            
-            return best_match if best_score > 0.3 else None
-            
-        except Exception:
-            return None
-
-    def _extract_product_context(self, answer: str, product_id: str) -> str:
-        """Extrae contexto alrededor de la mención de un producto"""
-        try:
-            # Buscar líneas que contengan el product_id
-            lines = answer.split('\n')
-            for i, line in enumerate(lines):
-                if product_id in line:
-                    # Tomar línea actual y anterior/siguiente
-                    start = max(0, i - 1)
-                    end = min(len(lines), i + 2)
-                    context_lines = lines[start:end]
-                    return ' '.join(context_lines)
-            return ""
-        except Exception:
-            return ""
-
-    def log_feedback(self, query: str, answer: str, rating: int, user_id: str = "default"):
-        """Log de feedback con inferencia mejorada"""
-        try:
-            user_profile = self._get_or_create_user_profile_demographic(user_id)
-            all_product_ids = self._extract_products_from_response(answer)
-            
-            # ✅ INFERENCIA MEJORADA
-            selected_product_id = self._infer_selected_product(answer, rating, query)
-            
-            entry = {
-                "timestamp": datetime.now().isoformat(), 
-                "query": query, 
-                "answer": answer, 
-                "rating": rating, 
-                "user_id": user_id,
-                "user_age": user_profile.age,
-                "user_gender": user_profile.gender.value,
-                "user_country": user_profile.country,
-                "products_shown": all_product_ids,
-                "selected_product_id": selected_product_id,
-                "inference_method": "multi_strategy",
-                "domain": self.config.domain
-            }
-            
-            # Guardar y actualizar pesos
-            fdir = Path("data/feedback")
-            fdir.mkdir(exist_ok=True, parents=True)
-            fname = fdir / f"feedback_gaming_{datetime.now().strftime('%Y%m%d')}.jsonl"
-            with open(fname, "a", encoding='utf-8') as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            
-            if selected_product_id:
-                self.retriever.update_feedback_weights_immediately(
-                    selected_product_id, 
-                    rating, 
-                    all_product_ids
-                )
-            
-            # Actualizar perfil de usuario
-            user_profile.add_feedback_event(
-                query=query,
-                response=answer,
-                rating=rating,
-                products_shown=all_product_ids,
-                selected_product=selected_product_id
-            )
-            
-            if self.enable_user_features and self.user_manager:
-                self.user_manager.save_user_profile(user_profile)
-            
-            logger.info(f"📝 Feedback: rating {rating} para {user_id} (producto: {selected_product_id})")
-            
-        except Exception as e:
-            logger.error(f"Error registrando feedback: {e}")
-
-    def _extract_products_from_response(self, answer: str) -> List[str]:
-        """Extrae IDs de productos mencionados en la respuesta"""
-        # Implementación simple - en sistema real usaría regex más sofisticado
-        import re
-        product_ids = re.findall(r'[A-Z0-9]{10}', answer)
-        return product_ids
-            
-    def _check_and_retrain(self):
-        """Verifica y ejecuta reentrenamiento con mejores condiciones"""
-        try:
-            feedback_count = self._count_recent_feedback()
-            has_enough_feedback = feedback_count >= self.min_feedback_for_retrain
-            should_retrain_time = (time.time() - self.last_retrain_time) > self.retrain_interval
-            
-            # ✅ NUEVA CONDICIÓN: también reentrenar si hay nuevo feedback significativo
-            has_significant_new_feedback = feedback_count > 0 and self.last_retrain_time == 0
-            
-            if has_enough_feedback and (should_retrain_time or has_significant_new_feedback):
-                logger.info(f"🔁 Iniciando reentrenamiento con {feedback_count} feedbacks")
-                success = self._retrain_with_feedback()
-                if success:
-                    self.last_retrain_time = time.time()
-                    logger.info("✅ Reentrenamiento completado exitosamente")
-                else:
-                    logger.warning("⚠️ Reentrenamiento falló, se reintentará más tarde")
-                    
-        except Exception as e:
-            logger.error(f"❌ Error en reentrenamiento automático: {e}")
+if __name__ == "__main__":
+    # Configurar logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     
-    def _count_recent_feedback(self) -> int:
-        """Cuenta feedback de los últimos 7 días"""
-        count = 0
-        feedback_dir = Path("data/feedback")
-        
-        for jsonl_file in feedback_dir.glob("feedback_*.jsonl"):
-            try:
-                with open(jsonl_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        record = json.loads(line)
-                        # Verificar si es reciente (últimos 7 días)
-                        timestamp = record.get('timestamp', '')
-                        if self._is_recent(timestamp, days=7):
-                            count += 1
-            except:
-                continue
-                
-        return count
+    print("🧠 WorkingAdvancedRAGAgent - Prueba directa")
+    print("="*50)
     
-    def _retrain_with_feedback(self) -> bool:
-        """Reentrena el modelo RLHF - versión mejorada"""
-        try:
-            from .trainer import RLHFTrainer
-            
-            trainer = RLHFTrainer()
-            
-            # ✅ BUSCAR ARCHIVOS MÁS FLEXIBLE
-            feedback_dir = Path("data/feedback")
-            failed_log = feedback_dir / "failed_queries.log"
-            success_log = feedback_dir / "success_queries.log"
-            
-            # ✅ CREAR ARCHIVOS SI NO EXISTEN
-            failed_log.parent.mkdir(parents=True, exist_ok=True)
-            if not failed_log.exists():
-                failed_log.touch()
-            if not success_log.exists():
-                success_log.touch()
-            
-            dataset = trainer.prepare_rlhf_dataset_from_logs(failed_log, success_log)
-            
-            if len(dataset) >= 3:
-                start_time = time.time()
-                trainer.train(dataset)
-                training_time = time.time() - start_time
-                
-                # 📊 REGISTRAR MÉTRICAS
-                self.rlhf_monitor.log_training_session(
-                    examples_used=len(dataset),
-                    previous_accuracy=0.0,  # TODO: calcular accuracy real
-                    new_accuracy=0.1,       # TODO: calcular accuracy real  
-                    training_time=training_time
-                )
-            else:
-                logger.info(f"⏳ No suficiente data aún: {len(dataset)}/3 ejemplos")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Error en reentrenamiento RLHF: {e}")
-            return False
-        
-    def _is_recent(self, timestamp: str, days: int = 7) -> bool:
-        """Verifica si un timestamp es reciente (últimos N días)"""
-        try:
-            from datetime import datetime, timezone
-            record_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            current_time = datetime.now(timezone.utc)
-            time_diff = current_time - record_time
-            return time_diff.days <= days
-        except:
-            return False
-        
-    def _find_explicit_mention(self, answer: str, product_ids: List[str]) -> Optional[str]:
-        """Busca menciones explícitas de productos en la respuesta"""
-        try:
-            # Buscar patrones como "recomiendo el producto X", "te sugiero Y"
-            patterns = [
-                r'recomiendo.*?([A-Z0-9]{10})',
-                r'sugiero.*?([A-Z0-9]{10})', 
-                r'te recomiendo.*?([A-Z0-9]{10})',
-                r'producto.*?([A-Z0-9]{10})'
-            ]
-            
-            for pattern in patterns:
-                matches = re.findall(pattern, answer, re.IGNORECASE)
-                for match in matches:
-                    if match in product_ids:
-                        return match
-            
-            return None
-        except Exception:
-            return None
+    # Probar configuración
+    agent = create_rag_agent(mode="hybrid")
+    
+    # Mostrar configuración
+    config_summary = agent.get_config_summary()
+    print(f"\n📋 Configuración:")
+    print(f"   • Modo: {config_summary['rag_config']['mode']}")
+    print(f"   • ML: {'✅' if config_summary['rag_config']['ml_enabled'] else '❌'}")
+    print(f"   • LLM Local: {'✅' if config_summary['rag_config']['local_llm_enabled'] else '❌'}")
+    print(f"   • RLHF: {'✅' if config_summary['components']['rlhf_pipeline'] else '❌'}")
+    print(f"   • Collaborative Filter: {'✅' if config_summary['components']['collaborative_filter'] else '❌'}")
+    
+    # Probar componentes
+    test_results = agent.test_components()
+    print(f"\n🔧 Componentes:")
+    print(f"   • Retriever: {'✅' if test_results['retriever'] else '❌'}")
+    print(f"   • LLM Client: {'✅' if test_results['llm_client'] else '❌'}")
+    print(f"   • Embedding Model: {'✅' if test_results['embedding_model'] else '❌'}")
+    print(f"   • RLHF Pipeline: {'✅' if test_results['rlhf_pipeline'] else '❌'}")
+    print(f"   • Collaborative Filter: {'✅' if test_results['collaborative_filter'] else '❌'}")
+    
+    if test_results['errors']:
+        print(f"\n⚠️ Errores encontrados:")
+        for error in test_results['errors']:
+            print(f"   • {error}")
+    
+    print("\n✅ RAG Agent listo para usar")

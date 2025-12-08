@@ -1,4 +1,5 @@
 from __future__ import annotations
+from src.core.config import settings
 # src/core/rag/advanced/collaborative_filter.py
 import logging
 from typing import List, Dict, Optional, Tuple, Any
@@ -20,15 +21,19 @@ class CollaborativeFilter:
     Filtro colaborativo para recomendaciones cruzadas entre usuarios similares
     """
     
-    def __init__(self, user_manager, min_similarity: float = 0.6, use_ml_features: bool = False):
+    def __init__(self, user_manager, product_service=None, min_similarity: float = 0.6, use_ml_features: bool = False):
         self.user_manager = user_manager
+        self.product_service = product_service  # 🔥 NUEVO: Servicio de productos
         self.min_similarity = min_similarity
-        self.use_ml_features = use_ml_features
+        self.use_ml_features = use_ml_features  # Puede usar settings.ML_ENABLED
         
         # Cache
         self.positive_feedback_cache: Dict[str, Dict[str, float]] = {}
         self.cache_ttl = 3600
         self.last_cache_update: Dict[str, float] = {}
+        
+        # 🔥 NUEVO: Cache de embeddings
+        self.product_embeddings_cache: Dict[str, np.ndarray] = {}
         
         # Pesos base e híbridos
         self.base_weights = {'collaborative': 0.6, 'rag': 0.4}
@@ -40,10 +45,30 @@ class CollaborativeFilter:
         
         # 🔥 NUEVO: Modelo ML para embeddings (se inicializa cuando sea necesario)
         self.ml_model: Optional[Any] = None
-        self.product_embeddings_cache: Dict[str, np.ndarray] = {}
+        
+        # Precargar embeddings
+        self._preload_embeddings()
         
         print(f"[CollaborativeFilter] Pesos iniciales: {self.hybrid_weights}")
         print(f"[CollaborativeFilter] ML Features habilitado: {use_ml_features}")
+
+    def _preload_embeddings(self):
+        """Precarga embeddings de productos populares"""
+        try:
+            if not self.product_service:
+                return
+            
+            # Obtener productos populares (top 100)
+            popular_products = self.product_service.get_popular_products(100)
+            
+            for product in popular_products:
+                if hasattr(product, 'embedding') and product.embedding:
+                    self.product_embeddings_cache[product.id] = np.array(product.embedding)
+            
+            logger.info(f"📊 {len(self.product_embeddings_cache)} embeddings precargados")
+            
+        except Exception as e:
+            logger.debug(f"⚠️ Error precargando embeddings: {e}")
 
     def _initialize_ml_model(self, embeddings: List[np.ndarray]) -> None:
         """Inicializa el modelo ML para búsqueda de vecinos cercanos"""
@@ -111,29 +136,44 @@ class CollaborativeFilter:
         except Exception as e:
             logger.debug(f"Error calculando score ML para producto {getattr(product, 'id', 'unknown')}: {e}")
             return 0.0
-
+    
+    def _safe_get_product_id(self, feedback) -> Optional[str]:
+        """Obtiene product_id de forma segura."""
+        try:
+            product_id = getattr(feedback, 'selected_product', None)
+            
+            # Validar que sea un string no vacío
+            if product_id and isinstance(product_id, str) and product_id.strip():
+                return product_id.strip()
+            return None
+        except Exception:
+            return None
+    
     def _get_user_preferred_embeddings(self, user: UserProfile) -> List[np.ndarray]:
-        """
-        Obtiene embeddings de productos que el usuario ha preferido (feedback positivo)
-        """
         embeddings = []
         
         try:
-            # Buscar productos con feedback positivo del usuario
             for feedback in user.feedback_history:
-                if feedback.rating >= 4:  # Feedback positivo
-                    # Intentar obtener el producto y su embedding
-                    product_id = feedback.selected_product
+                if feedback.rating >= 4:
                     
-                    # Usar cache de embeddings para evitar múltiples consultas
+                    # 🔥 USAR LA FUNCIÓN SEGURA para obtener el product_id
+                    product_id = self._safe_get_product_id(feedback)
+                    if not product_id:
+                        continue  # Saltar si no hay ID válido
+                    
+                    # 1. Buscar en caché
                     if product_id in self.product_embeddings_cache:
                         embeddings.append(self.product_embeddings_cache[product_id])
-                    else:
-                        # Aquí necesitarías una forma de obtener el producto por ID
-                        # Esto dependerá de tu arquitectura
-                        # Por ahora, devolvemos lista vacía si no hay cache
-                        pass
-                        
+                        continue
+                    
+                    # 2. Obtener desde servicio si no está en cache
+                    if self.product_service:
+                        product = self.product_service.get_product(product_id)
+                        if product and hasattr(product, 'embedding') and product.embedding:
+                            embedding_array = np.array(product.embedding)
+                            self.product_embeddings_cache[product_id] = embedding_array
+                            embeddings.append(embedding_array)
+
         except Exception as e:
             logger.debug(f"Error obteniendo embeddings preferidos del usuario {user.user_id}: {e}")
         
@@ -166,35 +206,45 @@ class CollaborativeFilter:
             candidate_products: Optional[List[Product]] = None,
             max_similar_users: int = 8):
         
-        # 🔥 CORRECCIÓN: Manejar caso cuando user_or_profile es None
-        if user_or_profile is None:
+        # -------------------------------------------------
+        # 🔥 VALIDACIONES INICIALES
+        # -------------------------------------------------
+        if user_or_profile is None or user_or_profile == "":
             return {}
-            
-        # ---- CASO 1: llamado externo (DeepEval) ----
-        if isinstance(user_or_profile, str) and isinstance(query_or_candidates, list):
+
+        # Si es string → se interpreta como ID externo (DeepEval)
+        if isinstance(user_or_profile, str):
             user_id = user_or_profile
-            product_ids = query_or_candidates
+            
+            # No permitir strings vacíos o inválidos
+            if not user_id:
+                return {}
 
             try:
-                # 🔥 CORRECCIÓN: Manejar caso cuando user_manager no está disponible
-                if self.user_manager is None:
-                    return {}
-                    
                 user = self.user_manager.get_user_profile(user_id)
+
+                if user is None:
+                    # Se podría crear perfil temporal, pero solicitud indica devolver vacío
+                    logger.debug(f"Usuario {user_id} no encontrado, usando perfil básico → return vacío")
+                    return {}
+
+                target_user = user   # Referencia estándar
+
             except Exception as e:
-                logger.debug(f"No se pudo obtener perfil de usuario {user_id}: {e}")
+                logger.debug(f"No se pudo obtener perfil usuario {user_id}: {e}")
                 return {}
 
-            if user is None:
-                return {}
-
-        # ---- CASO 2: llamado interno ----
+        # -------------------------------------------------
+        # CASO INTERNO (el user ya es perfil real)
+        # -------------------------------------------------
         else:
             user = user_or_profile
             target_user = user_or_profile
-            query = query_or_candidates
+            query = query_or_candidates  # DeepEval ≠ interno
 
-        # ahora sigue tu lógica normal...
+        # -------------------------------------------------
+        # 🔥 LÓGICA PRINCIPAL
+        # -------------------------------------------------
         try:
             similar_users = self.user_manager.find_similar_users(
                 target_user, self.min_similarity
@@ -202,17 +252,19 @@ class CollaborativeFilter:
 
             collaborative_scores = {}
 
+            # 1) Si hay usuarios similares → filtrado colaborativo normal
             if similar_users:
                 collaborative_scores = self._get_collaborative_from_similar_users(
                     target_user, similar_users, query, candidate_products
                 )
 
+            # 2) Si no hay resultados → fallback basado en categoría
             if not collaborative_scores:
                 collaborative_scores = self._get_category_fallback_scores(
                     target_user, query, candidate_products
                 )
-            
-            # 🔥 NUEVO: Aplicar scoring ML si está habilitado
+
+            # 3) (Opcional) Re-rank con ML si está habilitado
             if self.use_ml_features and candidate_products and similar_users:
                 collaborative_scores = self._apply_ml_scoring(
                     collaborative_scores, candidate_products, similar_users
@@ -224,6 +276,91 @@ class CollaborativeFilter:
             logger.error(f"Error en filtro colaborativo: {e}")
             return {}
 
+    def _get_collaborative_from_similar_users(self, target_user, similar_users, query, candidate_products):
+        """Lógica colaborativa con usuarios similares"""
+        collaborative_scores = defaultdict(float)
+        similarity_weights = defaultdict(float)
+        
+        for similar_user in similar_users:
+            similarity = target_user.calculate_similarity(similar_user)
+            
+            positive_feedback = self._get_positive_feedback_scores(similar_user, query)
+            
+            for product_id, feedback_score in positive_feedback.items():
+                collaborative_scores[product_id] += feedback_score * similarity
+                similarity_weights[product_id] += similarity
+        
+        return self._normalize_with_quality_filter(collaborative_scores, similarity_weights)
+
+    def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
+        """
+        Fallback: da scores basados en categorías preferidas del usuario
+        """
+        fallback_scores = {}
+        
+        try:
+            user_categories = set()
+            if user.preferred_categories:
+                for cat in user.preferred_categories:
+                    # 🔥 CORRECCIÓN: Manejar categorías None o no strings
+                    if cat and isinstance(cat, str):
+                        user_categories.add(cat.lower())
+            
+            query_lower = ""
+            query_terms = set()
+            if query and isinstance(query, str):
+                query_lower = query.lower()
+                query_terms = set(query_lower.split())
+            
+            for product in products:
+                score = 0.0
+                
+                # 🔥 CORRECCIÓN: Manejar main_category None
+                product_category = getattr(product, 'main_category', '')
+                if product_category is None:
+                    product_category = ''
+                if isinstance(product_category, str):
+                    product_category = product_category.lower()
+                else:
+                    product_category = str(product_category).lower() if product_category else ''
+                
+                # 🔥 CORRECCIÓN: Manejar title None
+                product_title = getattr(product, 'title', '')
+                if product_title is None:
+                    product_title = ''
+                if isinstance(product_title, str):
+                    product_title = product_title.lower()
+                else:
+                    product_title = str(product_title).lower() if product_title else ''
+                
+                # Score por categoría preferida
+                if user_categories and product_category:
+                    if any(cat in product_category for cat in user_categories):
+                        score += 0.3
+                
+                # Score por términos en título
+                if query_terms and product_title:
+                    title_terms = set(product_title.split())
+                    common_terms = query_terms & title_terms
+                    
+                    if common_terms:
+                        score += len(common_terms) * 0.1
+                
+                # Score por rating alto
+                rating = getattr(product, 'average_rating', 0)
+                if rating and rating >= 4.0:
+                    score += 0.2
+                
+                if score > 0 and hasattr(product, 'id'):
+                    fallback_scores[product.id] = min(score, 1.0)
+            
+            logger.debug(f"🔄 Fallback categórico: {len(fallback_scores)} productos con score")
+            return fallback_scores
+            
+        except Exception as e:
+            logger.debug(f"Error en fallback categórico: {e}")
+            return {}
+    
     def _apply_ml_scoring(self, collaborative_scores: Dict[str, float], 
                          candidate_products: List[Product], 
                          similar_users: List[UserProfile]) -> Dict[str, float]:
@@ -249,65 +386,6 @@ class CollaborativeFilter:
                 enhanced_scores[product_id] = ml_score * 0.3
         
         return enhanced_scores
-
-    def _get_collaborative_from_similar_users(self, target_user, similar_users, query, candidate_products):
-        """Lógica colaborativa con usuarios similares"""
-        collaborative_scores = defaultdict(float)
-        similarity_weights = defaultdict(float)
-        
-        for similar_user in similar_users:
-            similarity = target_user.calculate_similarity(similar_user)
-            
-            positive_feedback = self._get_positive_feedback_scores(similar_user, query)
-            
-            for product_id, feedback_score in positive_feedback.items():
-                collaborative_scores[product_id] += feedback_score * similarity
-                similarity_weights[product_id] += similarity
-        
-        return self._normalize_with_quality_filter(collaborative_scores, similarity_weights)
-
-    def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
-        """
-        Fallback: da scores basados en categorías preferidas del usuario
-        """
-        fallback_scores = {}
-        
-        try:
-            user_categories = set(user.preferred_categories)
-            
-            for product in products:
-                score = 0.0
-                
-                # Verificar categoría del producto
-                product_category = getattr(product, 'main_category', '').lower()
-                product_title = getattr(product, 'title', '').lower()
-                
-                # Score por categoría preferida
-                if any(cat in product_category for cat in user_categories):
-                    score += 0.3
-                
-                # Score por términos en título
-                query_terms = set(query.lower().split())
-                title_terms = set(product_title.split())
-                common_terms = query_terms & title_terms
-                
-                if common_terms:
-                    score += len(common_terms) * 0.1
-                
-                # Score por rating alto
-                rating = getattr(product, 'average_rating', 0)
-                if rating and rating >= 4.0:
-                    score += 0.2
-                
-                if score > 0:
-                    fallback_scores[product.id] = min(score, 1.0)
-            
-            logger.debug(f"🔄 Fallback categórico: {len(fallback_scores)} productos con score")
-            return fallback_scores
-            
-        except Exception as e:
-            logger.debug(f"Error en fallback categórico: {e}")
-            return {}
         
     def adjust_weights_dynamically(
             self,
@@ -381,6 +459,48 @@ class CollaborativeFilter:
 
         return self.hybrid_weights
 
+    def _estimate_query_suitability_for_rag(self, query: str) -> float:
+        """Estima qué tan adecuada es la query para RAG"""
+        if not query:
+            return 0.5
+        
+        rag_confidence = 0.5
+        
+        # Consultas largas y específicas son mejores para RAG
+        if len(query.split()) > 3:
+            rag_confidence += 0.2
+        
+        # Consultas con términos técnicos o específicos
+        technical_terms = ['características', 'especificaciones', 'comparar', 'mejor', 
+                          'recomendar', 'qué es', 'cómo funciona']
+        
+        # 🔥 CORRECCIÓN: Verificar que query no sea None antes de usar .lower()
+        query_lower = query.lower() if query else ""
+        if any(term in query_lower for term in technical_terms):
+            rag_confidence += 0.15
+        
+        return max(0.1, min(0.9, rag_confidence))
+
+    def _estimate_user_suitability_for_collab(self, user_id: str) -> float:
+        """Estima qué tan adecuado es el usuario para filtro colaborativo"""
+        try:
+            user = self.user_manager.get_user_profile(user_id)
+            if not user:
+                return 0.3
+            
+            # Usuarios con más historial son mejores para colaborativo
+            feedback_count = len(user.feedback_history)
+            if feedback_count > 20:
+                return 0.8
+            elif feedback_count > 10:
+                return 0.6
+            elif feedback_count > 5:
+                return 0.5
+            else:
+                return 0.4
+        except:
+            return 0.3
+
     def _evaluate_results_quality(self, results: list, query: str) -> float:
         """
         Evalúa si los resultados parecen relevantes.
@@ -398,57 +518,18 @@ class CollaborativeFilter:
             total = 0
 
             for r in results:
-                title = getattr(r, "title", "").lower()
+                title = getattr(r, "title", "")
+                # 🔥 CORRECCIÓN: Manejar title None
                 if title:
+                    title_lower = title.lower()
                     total += 1
-                    if any(word in title for word in q):
+                    if any(word in title_lower for word in q):
                         matches += 1
 
             if total > 0:
                 score += (matches / total) * 0.4
 
         return max(0.1, min(1.0, score))
-
-    
-    def _estimate_rag_confidence(self, query: str) -> float:
-        """Estima confianza del componente RAG basado en la consulta."""
-        if not query:
-            return 0.5
-        
-        # Factores que aumentan confianza en RAG:
-        confidence = 0.5  # Base
-        
-        # Consultas largas y específicas son mejores para RAG
-        if len(query.split()) > 3:
-            confidence += 0.2
-        
-        # Consultas con términos técnicos o específicos
-        technical_terms = ['características', 'especificaciones', 'comparar', 'mejor', 
-                          'recomendar', 'qué es', 'cómo funciona']
-        if any(term in query.lower() for term in technical_terms):
-            confidence += 0.15
-        
-        # Limitar entre 0.1 y 0.9
-        return max(0.1, min(0.9, confidence))
-    
-    def _estimate_collab_confidence(self, user_id: str) -> float:
-        """Estima confianza del filtro colaborativo basado en el usuario."""
-        if not user_id or not self.user_manager:
-            return 0.3
-        
-        try:
-            # Obtener usuarios similares
-            similar_users = self.user_manager.get_similar_users(user_id, k=5)
-            
-            # Más usuarios similares = mayor confianza
-            if len(similar_users) >= 3:
-                return 0.8
-            elif len(similar_users) >= 1:
-                return 0.6
-            else:
-                return 0.4
-        except:
-            return 0.3
     
     def get_weights(self, user_id: str = None, query: str = None) -> Dict[str, float]:
         """Obtiene pesos (ajustados dinámicamente si se proporciona contexto)."""
@@ -458,8 +539,9 @@ class CollaborativeFilter:
       
     def _get_positive_feedback_scores(self, user: UserProfile, query: str) -> Dict[str, float]:
         """Obtiene SOLO feedback positivo con cache robusto"""
-        # ✅ CACHE KEY ROBUSTO
-        query_hash = hashlib.md5(query.lower().encode()).hexdigest()[:12]
+        # 🔥 CORRECCIÓN: Manejar query None
+        query_safe = query if query else ""
+        query_hash = hashlib.md5(query_safe.lower().encode()).hexdigest()[:12]
         cache_key = f"{user.user_id}_{query_hash}"
         current_time = time.time()
         
@@ -471,7 +553,7 @@ class CollaborativeFilter:
         feedback_scores = {}
         
         try:
-            relevant_feedback = self._find_relevant_positive_feedback(user, query)
+            relevant_feedback = self._find_relevant_positive_feedback(user, query_safe)
             
             for feedback in relevant_feedback:
                 product_id = feedback.get('selected_product_id')
@@ -498,67 +580,41 @@ class CollaborativeFilter:
             logger.debug(f"Error obteniendo feedback positivo de {user.user_id}: {e}")
         
         return feedback_scores
-
     
-
-    
-
-    
-    
-    def _get_user_feedback_scores(self, user: UserProfile, query: str) -> Dict[str, float]:
-        """
-        Obtiene scores de feedback de un usuario para productos relevantes a la query
-        """
-        feedback_scores = {}
-        
-        try:
-            # Buscar en historial de feedback del usuario
-            relevant_feedback = self._find_relevant_feedback(user, query)
-            
-            for feedback in relevant_feedback:
-                product_id = feedback.get('selected_product_id')
-                if product_id:
-                    # Convertir rating 1-5 a score 0-1
-                    rating = feedback.get('rating', 3)
-                    normalized_score = (rating - 1) / 4.0  # 1→0, 5→1
-                    
-                    # Ponderar por antigüedad (feedback reciente vale más)
-                    recency_weight = self._calculate_recency_weight(feedback.get('timestamp'))
-                    
-                    feedback_scores[product_id] = max(
-                        feedback_scores.get(product_id, 0),
-                        normalized_score * recency_weight
-                    )
-        
-        except Exception as e:
-            logger.debug(f"Error obteniendo feedback de usuario {user.user_id}: {e}")
-        
-        return feedback_scores
-    
-    def _find_relevant_feedback(self, user: UserProfile, query: str) -> List[Dict]:
-        """
-        Encuentra feedback relevante basado en similitud de queries
-        """
+    def _find_relevant_positive_feedback(self, user: UserProfile, query: str) -> List[Dict]:
+        """Encuentra feedback relevante y positivo basado en similitud de queries"""
         relevant_feedback = []
+        
+        # 🔥 CORRECCIÓN: Manejar query None
+        if not query:
+            return relevant_feedback
+            
         query_terms = set(query.lower().split())
         
         for feedback_event in user.feedback_history:
-            feedback_query = feedback_event.query.lower()
-            feedback_terms = set(feedback_query.split())
+            # Solo considerar feedback positivo
+            if feedback_event.rating < 4:
+                continue
             
-            # Calcular similitud de Jaccard entre queries
-            intersection = len(query_terms & feedback_terms)
-            union = len(query_terms | feedback_terms)
-            
-            if union > 0:
-                similarity = intersection / union
-                if similarity > 0.3:  # Umbral de similitud
-                    relevant_feedback.append({
-                        'selected_product_id': feedback_event.selected_product,
-                        'rating': feedback_event.rating,
-                        'timestamp': feedback_event.timestamp,
-                        'query_similarity': similarity
-                    })
+            # 🔥 CORRECCIÓN: Manejar feedback_event.query None
+            feedback_query = getattr(feedback_event, 'query', '')
+            if feedback_query:
+                feedback_query = feedback_query.lower()
+                feedback_terms = set(feedback_query.split())
+                
+                # Calcular similitud de Jaccard entre queries
+                intersection = len(query_terms & feedback_terms)
+                union = len(query_terms | feedback_terms)
+                
+                if union > 0:
+                    similarity = intersection / union
+                    if similarity > 0.3:  # Umbral de similitud
+                        relevant_feedback.append({
+                            'selected_product_id': feedback_event.selected_product,
+                            'rating': feedback_event.rating,
+                            'timestamp': feedback_event.timestamp,
+                            'query_similarity': similarity
+                        })
         
         # Ordenar por similitud y luego por recencia
         relevant_feedback.sort(key=lambda x: (
@@ -566,13 +622,16 @@ class CollaborativeFilter:
             x['timestamp']
         ), reverse=True)
         
-        return relevant_feedback[:5]  # Top 5 más relevantes
+        return relevant_feedback[:8]  # Top 8 más relevantes
     
     def _calculate_recency_weight(self, timestamp: datetime) -> float:
         """
         Calcula peso basado en recencia (feedback reciente vale más)
         """
         try:
+            if not timestamp:
+                return 0.5
+                
             days_ago = (datetime.now() - timestamp).days
             # Feedback de última semana: peso 1.0, después decae exponencialmente
             if days_ago <= 7:
@@ -586,24 +645,6 @@ class CollaborativeFilter:
         except:
             return 0.5  # Peso por defecto
     
-    def update_hybrid_weights(self, user: UserProfile, success_rate: float):
-        """
-        Ajusta pesos híbridos basado en rendimiento histórico del usuario
-        """
-        try:
-            # Si el usuario tiene buen historial con colaborativo, aumentar peso
-            if success_rate > 0.7:  # 70% de éxito
-                self.hybrid_weights['collaborative'] = min(0.8, self.hybrid_weights['collaborative'] + 0.1)
-                self.hybrid_weights['rag'] = max(0.2, self.hybrid_weights['rag'] - 0.1)
-            elif success_rate < 0.3:  # 30% de éxito
-                self.hybrid_weights['collaborative'] = max(0.2, self.hybrid_weights['collaborative'] - 0.1)
-                self.hybrid_weights['rag'] = min(0.8, self.hybrid_weights['rag'] + 0.1)
-                
-            logger.info(f"🔧 Pesos híbridos ajustados: Collaborative={self.hybrid_weights['collaborative']}, RAG={self.hybrid_weights['rag']}")
-            
-        except Exception as e:
-            logger.debug(f"Error ajustando pesos híbridos: {e}")
-            
     def _normalize_with_quality_filter(self, collaborative_scores: Dict[str, float], 
                                  similarity_weights: Dict[str, float]) -> Dict[str, float]:
         """Normaliza scores aplicando filtros de calidad"""
@@ -623,37 +664,3 @@ class CollaborativeFilter:
                     normalized_scores[product_id] = normalized_score
         
         return normalized_scores
-    def _find_relevant_positive_feedback(self, user: UserProfile, query: str) -> List[Dict]:
-        """Encuentra feedback relevante y positivo basado en similitud de queries"""
-        relevant_feedback = []
-        query_terms = set(query.lower().split())
-        
-        for feedback_event in user.feedback_history:
-            # Solo considerar feedback positivo
-            if feedback_event.rating < 4:
-                continue
-                
-            feedback_query = feedback_event.query.lower()
-            feedback_terms = set(feedback_query.split())
-            
-            # Calcular similitud de Jaccard entre queries
-            intersection = len(query_terms & feedback_terms)
-            union = len(query_terms | feedback_terms)
-            
-            if union > 0:
-                similarity = intersection / union
-                if similarity > 0.3:  # Umbral de similitud
-                    relevant_feedback.append({
-                        'selected_product_id': feedback_event.selected_product,
-                        'rating': feedback_event.rating,
-                        'timestamp': feedback_event.timestamp,
-                        'query_similarity': similarity
-                    })
-        
-        # Ordenar por similitud y luego por recencia
-        relevant_feedback.sort(key=lambda x: (
-            x['query_similarity'], 
-            x['timestamp']
-        ), reverse=True)
-        
-        return relevant_feedback[:8]  # Top 8 más relevantes

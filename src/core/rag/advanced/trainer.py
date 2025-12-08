@@ -77,180 +77,121 @@ class RLHFTrainer:
             return Dataset.from_dict({'query': [], 'response': [], 'labels': []})
 
     def train(self, dataset: Dataset, save_dir: Path = None) -> Dict[str, Any]:
-        """Entrenamiento RLHF robusto y funcional"""
-        import time
-        start_time = time.time()
-        
-        save_dir = save_dir or settings.MODELS_DIR / "rlhf_model"
-        save_dir.mkdir(parents=True, exist_ok=True)
-        
-        print(f"🎯 Entrenando con {len(dataset)} ejemplos...")
-        
-        # 1. VERIFICAR COLUMNAS DISPONIBLES
-        print(f"📊 Columnas disponibles: {dataset.column_names}")
-        
-        # 2. CREAR TEXTO COMBINADO (manejar diferentes estructuras)
-        def create_combined_text(example):
-            """Crea texto combinado a partir de query y response"""
-            if 'text' in example:
-                # Ya tiene columna 'text'
-                return example
-            
-            # Construir texto combinado
-            query = example.get('query', '')
-            response = example.get('response', '')
-            
-            if not query and 'answer' in example:
-                query = example.get('answer', '')
-            
-            example['text'] = f"Query: {query} Response: {response}"
-            return example
-        
-        # Aplicar transformación
-        dataset = dataset.map(create_combined_text)
-        
-        # 3. TOKENIZACIÓN
-        def tokenize_function(examples):
-            # Usar columna 'text' que acabamos de crear
-            return self.tokenizer(
-                examples["text"],
-                padding="max_length",
-                truncation=True,
-                max_length=256,
-                return_tensors="pt"
-            )
-        
-        # Tokenizar sin remover columnas primero
-        tokenized_dataset = dataset.map(
-            tokenize_function,
-            batched=True,
-        )
-        
-        # Ahora remover columnas no necesarias
-        columns_to_remove = [col for col in tokenized_dataset.column_names 
-                           if col not in ['input_ids', 'attention_mask', 'labels']]
-        if columns_to_remove:
-            tokenized_dataset = tokenized_dataset.remove_columns(columns_to_remove)
-        
-        # 4. ASEGURAR QUE LABELS SON FLOATS
-        def convert_labels_to_float(examples):
-            if 'labels' in examples:
-                # Convertir cada label a float
-                labels = []
-                for label in examples['labels']:
-                    if isinstance(label, (int, np.integer)):
-                        labels.append(float(label))
-                    elif isinstance(label, (float, np.floating)):
-                        labels.append(float(label))
-                    else:
-                        try:
-                            labels.append(float(label))
-                        except:
-                            labels.append(0.0)
-                examples['labels'] = labels
-            return examples
-        
-        tokenized_dataset = tokenized_dataset.map(
-            convert_labels_to_float,
-            batched=True
-        )
-        
-        # 5. CONFIGURAR FORMATO PARA PYTORCH
-        tokenized_dataset.set_format(
-            type="torch",
-            columns=["input_ids", "attention_mask", "labels"]
-        )
-        
-        # 6. VERIFICAR TIPOS DE DATOS
-        print("🔍 Verificando tipos de datos finales...")
-        if len(tokenized_dataset) > 0:
-            sample = tokenized_dataset[0]
-            for key, value in sample.items():
-                dtype = value.dtype if hasattr(value, 'dtype') else type(value)
-                shape = value.shape if hasattr(value, 'shape') else 'N/A'
-                print(f"  {key}: dtype={dtype}, shape={shape}")
-        
-        # 7. CONFIGURACIÓN DE ENTRENAMIENTO
-        training_args = TrainingArguments(
-            output_dir=str(save_dir),
-            num_train_epochs=3,
-            per_device_train_batch_size=4,
-            learning_rate=2e-5,
-            weight_decay=0.01,
-            logging_dir=str(save_dir / "logs"),
-            logging_steps=10,
-            save_strategy="no",
-            report_to="none",
-            disable_tqdm=False,
-            use_cpu=settings.DEVICE == "cpu",
-            fp16=False,
-            remove_unused_columns=False,
-        )
-        
-        # 8. TRAINER SIMPLIFICADO (sin compute_loss personalizado)
-        # Primero, intentar con Trainer estándar
+        """Entrenamiento RLHF simplificado y funcional"""
         try:
+            # CORRECCIÓN: Asegurar que el dataset tenga estructura correcta
+            print(f"📊 Dataset recibido: {len(dataset)} ejemplos")
+            print(f"📊 Columnas: {dataset.column_names}")
+            
+            # Verificar y preparar datos
+            if len(dataset) < 10:
+                print("⚠️ Dataset demasiado pequeño para entrenar")
+                return {'error': 'insufficient_data'}
+            
+            # 1. Asegurar que tenemos las columnas necesarias
+            required_columns = {'query', 'response', 'labels'}
+            available_columns = set(dataset.column_names)
+            
+            if not required_columns.issubset(available_columns):
+                print(f"❌ Faltan columnas: {required_columns - available_columns}")
+                # Intentar crear las columnas faltantes
+                dataset = dataset.map(self._fix_dataset_columns)
+            
+            # 2. Tokenización simplificada
+            def tokenize_function(examples):
+                # Crear texto combinado
+                texts = [
+                    f"Query: {q} Response: {r}"
+                    for q, r in zip(examples['query'], examples['response'])
+                ]
+                return self.tokenizer(
+                    texts,
+                    padding="max_length",
+                    truncation=True,
+                    max_length=256
+                )
+            
+            tokenized_dataset = dataset.map(
+                tokenize_function,
+                batched=True,
+                remove_columns=[col for col in dataset.column_names if col != "labels"]
+            )
+
+            
+            # 3. Añadir labels
+            def add_labels(examples):
+                examples['labels'] = examples['labels']
+                return examples
+            
+            tokenized_dataset = tokenized_dataset.map(
+                add_labels,
+                batched=True
+            )
+            
+            # 4. Configuración de entrenamiento mínima
+            training_args = TrainingArguments(
+                output_dir=str(save_dir),
+                num_train_epochs=2,
+                per_device_train_batch_size=4,
+                learning_rate=2e-5,
+                warmup_steps=50,
+                weight_decay=0.01,
+                logging_dir=str(save_dir / "logs"),
+                logging_steps=10,
+                save_strategy="no",
+                report_to="none",
+                remove_unused_columns=False
+            )
+            
+            # 5. Trainer simple
             trainer = Trainer(
                 model=self.model,
                 args=training_args,
-                train_dataset=tokenized_dataset,
+                train_dataset=tokenized_dataset
             )
             
-            print("🚀 Iniciando entrenamiento con Trainer estándar...")
-            train_result = trainer.train()
+            # 6. Entrenar
+            print("🚀 Iniciando entrenamiento...")
+            trainer.train()
+            
+            # 7. Guardar
+            trainer.save_model(str(save_dir))
+            self.tokenizer.save_pretrained(str(save_dir))
+            
+            return {'success': True, 'samples': len(dataset)}
             
         except Exception as e:
-            print(f"⚠️ Trainer estándar falló: {e}")
-            print("🔄 Intentando con Trainer personalizado para regresión...")
-            
-            # Trainer personalizado para regresión
-            class RegressionTrainer(Trainer):
-                def compute_loss(self, model, inputs, return_outputs=False):
-                    # Extraer labels
-                    labels = inputs.get("labels")
-                    
-                    # Remover labels de inputs para el forward pass
-                    inputs_without_labels = {k: v for k, v in inputs.items() if k != "labels"}
-                    
-                    # Forward pass
-                    outputs = model(**inputs_without_labels)
-                    logits = outputs.logits
-                    
-                    # Calcular MSE loss para regresión
-                    if labels is not None:
-                        # Asegurar que labels y logits tienen formas compatibles
-                        if labels.dim() == 1:
-                            labels = labels.unsqueeze(-1)
-                        if logits.dim() == 1:
-                            logits = logits.unsqueeze(-1)
-                        
-                        loss_fct = torch.nn.MSELoss()
-                        loss = loss_fct(logits, labels.float())
-                    else:
-                        loss = outputs.loss if hasattr(outputs, 'loss') else None
-                    
-                    return (loss, outputs) if return_outputs else loss
-            
-            trainer = RegressionTrainer(
-                model=self.model,
-                args=training_args,
-                train_dataset=tokenized_dataset,
-            )
-            
-            train_result = trainer.train()
+            print(f"❌ Error en entrenamiento: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'error': str(e)}
+
+    def _fix_dataset_columns(self, example):
+        """Corrige columnas faltantes en el dataset."""
+        fixed = {}
         
-        # 9. GUARDAR RESULTADOS
-        training_time = time.time() - start_time
+        # Asegurar query
+        if 'query' not in example:
+            fixed['query'] = example.get('question', '') or example.get('text', '')
+        else:
+            fixed['query'] = example['query']
         
-        print("💾 Guardando modelo...")
-        trainer.save_model(str(save_dir))
-        self.tokenizer.save_pretrained(str(save_dir))
+        # Asegurar response
+        if 'response' not in example:
+            fixed['response'] = example.get('answer', '') or example.get('generation', '')
+        else:
+            fixed['response'] = example['response']
         
-        print(f"✅ Entrenamiento completado en {training_time:.2f} segundos")
-        print(f"📉 Pérdida final: {train_result.training_loss:.4f}")
+        # Asegurar labels
+        if 'labels' not in example:
+            # Intentar extraer de feedback
+            feedback = example.get('feedback', 3)
+            if isinstance(feedback, (int, float)):
+                # Normalizar a 0-1
+                fixed['labels'] = min(1.0, max(0.0, feedback / 5.0))
+            else:
+                fixed['labels'] = 0.5  # Neutral
+        else:
+            fixed['labels'] = example['labels']
         
-        return {
-            'training_time': training_time,
-            'train_loss': train_result.training_loss,
-            'model_path': str(save_dir)
-        }
+        return fixed

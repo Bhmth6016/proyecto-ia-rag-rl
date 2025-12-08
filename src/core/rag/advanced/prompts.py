@@ -1,8 +1,8 @@
-# src/core/rag/advanced/prompts.py
-from langchain_core.prompts import ChatPromptTemplate
+# src/core/rag/advanced/prompts.py (VERSIÓN FINAL CONSOLIDADA)
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 
 # ============================================================================
-# PROMPTS COMPATIBLES CON evaluator.py - FORMATO EXACTO REQUERIDO
+# PROMPTS PARA EVALUACIÓN - FORMATO EXACTO REQUERIDO POR evaluator.py
 # ============================================================================
 
 RELEVANCE_PROMPT = ChatPromptTemplate.from_template("""Evalúa si el documento es relevante para responder la pregunta.
@@ -60,7 +60,7 @@ Mejoras: Podría incluir más detalles sobre precios
 Tu evaluación:""")
 
 # ============================================================================
-# PROMPTS ADICIONALES PARA RAG (opcionales)
+# PROMPTS PARA GENERACIÓN RAG
 # ============================================================================
 
 RAG_RESPONSE_PROMPT = ChatPromptTemplate.from_template("""Eres un asistente especializado en recomendaciones de productos de Amazon. 
@@ -79,3 +79,29 @@ Formato de respuesta:
 - Explicación breve de por qué son relevantes
 
 Mantén un tono amigable y profesional.""")
+
+# Opcional: Agregar algunos prompts útiles del __init__.py
+NO_RESULTS_TEMPLATE = PromptTemplate.from_template(
+    "❌ No encontré productos exactos para '{query}'. "
+    "¿Te interesaría ver estas alternativas?\n"
+    "{suggestions}"
+)
+
+PARTIAL_RESULTS_TEMPLATE = PromptTemplate.from_template(
+    "📦 Encontré estas opciones para '{query}':\n"
+    "{products}\n\n"
+    "¿Necesitas más información sobre alguno?"
+)
+
+# ============================================================================
+# EXPORTACIÓN
+# ============================================================================
+
+__all__ = [
+    "RELEVANCE_PROMPT",
+    "HALLUCINATION_PROMPT", 
+    "ANSWER_QUALITY_PROMPT",
+    "RAG_RESPONSE_PROMPT",
+    "NO_RESULTS_TEMPLATE",
+    "PARTIAL_RESULTS_TEMPLATE",
+]

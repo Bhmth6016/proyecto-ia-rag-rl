@@ -1,41 +1,25 @@
-# src/core/__init__.py
+# src/core/__init__.py - MÍNIMO
 """
-Core module exports.
+Package initialization for core modules.
 """
-from typing import List
 
-# Define __all__ first
-__all__: List[str] = []
+# Exportar configuración
+from src.core.config import settings, get_settings
 
-# ProductReference should be available
-try:
-    from .data.product_reference import ProductReference
-    __all__.append('ProductReference')
-except ImportError:
-    ProductReference = None  # Define as None if not available
-    pass
+# Exportar componentes principales
+from src.core.data.product import Product
+from src.core.data.ml_processor import ProductDataPreprocessor
+from src.core.data.product_reference import ProductReference
 
-# You might also want to export other core components
-try:
-    from .retriever import Retriever
-    __all__.append('Retriever')
-except ImportError:
-    Retriever = None
-    pass
+# Versión
+__version__ = "1.0.0"
+__author__ = "Amazon Recommendation System"
 
-try:
-    from .working_rag_agent import WorkingRAGAgent
-    __all__.append('WorkingRAGAgent')
-except ImportError:
-    WorkingRAGAgent = None
-    pass
-
-try:
-    from .collaborative_filter import CollaborativeFilter
-    __all__.append('CollaborativeFilter')
-except ImportError:
-    CollaborativeFilter = None
-    pass
-
-# Optionally, define what gets imported with "from src.core import *"
-__all__ = list(set(__all__))  # Remove duplicates
+# Lista de exports
+__all__ = [
+    "settings",
+    "get_settings",
+    "Product",
+    "ProductDataPreprocessor", 
+    "ProductReference"
+]

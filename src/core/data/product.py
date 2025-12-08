@@ -1,59 +1,35 @@
 from __future__ import annotations
-# src/core/data/product.py
+# src/core/data/product.py - VERSIÓN MEJORADA
+
 import hashlib
 import re
-from typing import Optional, Dict, List, Any, ClassVar, Union
-from pydantic import BaseModel, Field, model_validator
-import uuid
-import logging
-from functools import lru_cache
 import json
+import uuid
+import time
+import threading
+from typing import Optional, Dict, List, Any, ClassVar
 from urllib.parse import urlparse, urlunparse
-import numpy as np
+from functools import lru_cache
+import logging
+
+from pydantic import BaseModel, Field, model_validator
+
+from src.core.config import settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------
-# Constants and configuration
-# ------------------------------------------------------------------
-class AutoProductConfig:
-    """Configuración para automatización de productos"""
-    
-    # Límites y configuraciones
-    MAX_TITLE_LENGTH = 200
-    MAX_DESCRIPTION_LENGTH = 1000
-    DEFAULT_RATING = 0.0
-    DEFAULT_PRICE = 0.0
-    CACHE_SIZE = 1000
-    
-    # Configuraciones ML - se configurarán dinámicamente
-    ML_ENABLED = False  # Se configura después
-    DEFAULT_EMBEDDING_MODEL = 'sentence-transformers/all-mpnet-base-v2'
-    DEFAULT_CATEGORIES = [
-        "Electronics", "Home & Kitchen", "Clothing & Accessories", 
-        "Sports & Outdoors", "Books", "Health & Beauty", 
-        "Toys & Games", "Automotive", "Office Supplies", "Food & Beverages"
-    ]
-
-# ------------------------------------------------------------------
-# Nested models simplificados
-# ------------------------------------------------------------------
 class ProductImage(BaseModel):
-    """Modelo para imágenes de productos"""
     large: Optional[str] = None
     medium: Optional[str] = None
     small: Optional[str] = None
     
-    # Cache para URLs validadas
     _validated_urls: ClassVar[Dict[str, bool]] = {}
     
     @classmethod
     def safe_create(cls, image_data: Optional[Dict]) -> "ProductImage":
-        """Crea instancia con validación automática"""
         if not image_data or not isinstance(image_data, dict):
             return cls()
         
-        # Validar URLs automáticamente
         validated_data = {}
         for size, url in image_data.items():
             if url and cls._validate_url_automated(url):
@@ -63,18 +39,15 @@ class ProductImage(BaseModel):
     
     @classmethod
     def _validate_url_automated(cls, url: str) -> bool:
-        """Valida URL automáticamente"""
         if url in cls._validated_urls:
             return cls._validated_urls[url]
         
         try:
-            # Validación básica de formato
             parsed = urlparse(url)
             if not all([parsed.scheme, parsed.netloc]):
                 cls._validated_urls[url] = False
                 return False
             
-            # Verificar dominios comunes de imágenes
             valid_domains = {
                 'images.amazon.com', 'm.media-amazon.com', 'example.com',
                 'cdn.shopify.com', 'i.ebayimg.com', 'target.scene7.com',
@@ -85,7 +58,6 @@ class ProductImage(BaseModel):
                 cls._validated_urls[url] = True
                 return True
             
-            # Por defecto, aceptar URLs que pasen validación básica
             cls._validated_urls[url] = True
             return True
             
@@ -94,7 +66,6 @@ class ProductImage(BaseModel):
             return False
     
     def clean_urls_automated(self) -> None:
-        """Limpia URLs usando técnicas automatizadas"""
         for field in ['large', 'medium', 'small']:
             url = getattr(self, field)
             if url:
@@ -104,22 +75,17 @@ class ProductImage(BaseModel):
     @staticmethod
     @lru_cache(maxsize=1000)
     def _clean_single_url_advanced(url_str: str) -> str:
-        """Limpia URL con técnicas avanzadas"""
         try:
-            # Parsear URL
             parsed = urlparse(url_str)
             
-            # Remover parámetros no esenciales
             query_params = {}
             if parsed.query:
                 for param in parsed.query.split('&'):
                     if '=' in param:
                         key, value = param.split('=', 1)
-                        # Mantener solo parámetros importantes
                         if key in ['id', 'image', 'img', 'photo', 'pic']:
                             query_params[key] = value
             
-            # Reconstruir URL limpia
             clean_query = '&'.join(f"{k}={v}" for k, v in query_params.items())
             clean_url = urlunparse((
                 parsed.scheme,
@@ -137,18 +103,20 @@ class ProductImage(BaseModel):
 
 
 class ProductDetails(BaseModel):
-    """Modelo para detalles de productos"""
     features: List[str] = Field(default_factory=list)
     specifications: Dict[str, Any] = Field(default_factory=dict)
+    nlp_processed: bool = Field(default=False, description="Indica si el producto fue procesado por NLP")
+    has_ner: bool = Field(default=False, description="Tiene entidades NER extraídas")
+    has_zero_shot: bool = Field(default=False, description="Tiene clasificación Zero-Shot")
+    ner_entities: Optional[Dict[str, Any]] = Field(default=None, description="Entidades NER extraídas")
+    zero_shot_classification: Optional[Dict[str, float]] = Field(default=None, description="Clasificación Zero-Shot")
     
     @classmethod
     def safe_create(cls, details_data: Optional[Dict]) -> "ProductDetails":
-        """Crea instancia con extracción automática de atributos"""
         if not details_data or not isinstance(details_data, dict):
             return cls()
         
         try:
-            # Procesar datos con extracción automática
             processed_data = cls._auto_extract_attributes(details_data)
             return cls(**processed_data)
             
@@ -158,10 +126,8 @@ class ProductDetails(BaseModel):
 
     @classmethod
     def _auto_extract_attributes(cls, data: Dict) -> Dict:
-        """Extrae atributos automáticamente"""
         processed = data.copy()
         
-        # Asegurar que features sea una lista
         if 'features' in processed:
             if isinstance(processed['features'], str):
                 processed['features'] = [processed['features']]
@@ -170,22 +136,18 @@ class ProductDetails(BaseModel):
         else:
             processed['features'] = []
         
-        # Asegurar que specifications sea un diccionario
         if 'specifications' not in processed or not isinstance(processed['specifications'], dict):
             processed['specifications'] = {}
         
-        # Extraer campos adicionales si existen
         additional_fields = ['brand', 'model', 'color', 'weight', 'dimensions', 'material']
         for field in additional_fields:
             if field in processed and processed[field]:
-                # Agregar a specifications si no existe en features
                 if field not in processed['specifications']:
                     processed['specifications'][field] = processed[field]
         
         return processed
 
     def get_auto_dimensions(self) -> Optional[str]:
-        """Extrae dimensiones automáticamente de las especificaciones"""
         dimension_patterns = [
             r'(\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?\s*(?:cm|in|inch|"))',
             r'(\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?\s*(?:cm|in|inch|"))',
@@ -199,264 +161,244 @@ class ProductDetails(BaseModel):
                 return match.group(1)
         
         return None
+class MLProductProcessor:
+    
+    _embedding_model = None
+    _model_lock = threading.Lock()
+    
+    @classmethod
+    def _get_embedding_model(cls, model_name: str = None):
+        if model_name is None:
+            from src.core.config import get_settings
+            settings = get_settings()
+            model_name = settings.ML_EMBEDDING_MODEL
+        
+        if cls._embedding_model is None:
+            with cls._model_lock:
+                if cls._embedding_model is None:
+                    try:
+                        from sentence_transformers import SentenceTransformer
+                        logger.info(f"🔧 Cargando modelo de embeddings para ML: {model_name}")
+                        cls._embedding_model = SentenceTransformer(model_name)
+                        logger.info(f"✅ Modelo de embeddings cargado")
+                    except ImportError:
+                        logger.warning("⚠️ SentenceTransformer no disponible")
+                    except Exception as e:
+                        logger.error(f"❌ Error cargando modelo: {e}")
+        
+        return cls._embedding_model
+    
+    @classmethod
+    def enrich_product(cls, data: Dict) -> Dict:
+        if not data:
+            return data
+        
+        settings = get_settings()
+        
+        if not settings.ML_ENABLED:
+            data['ml_processed'] = False
+            return data
+        
+        try:
+            enriched = data.copy()
+            text = f"{enriched.get('title', '')} {enriched.get('description', '')}".strip()
+            if 'embedding' in settings.ML_FEATURES and text:
+                model = cls._get_embedding_model()
+                if model:
+                    embedding = model.encode(text[:1000], normalize_embeddings=True)
+                    enriched['embedding'] = embedding.tolist()
+                    enriched['embedding_model'] = settings.ML_EMBEDDING_MODEL
+            
+            if 'category' in settings.ML_FEATURES and text:
+                category = cls._predict_category(text, settings.ML_CATEGORIES)
+                if category:
+                    enriched['predicted_category'] = category
+                    enriched.setdefault('main_category', category)
 
-
-# ------------------------------------------------------------------
-# ML Processor wrapper (compatible con sistema existente)
-# ------------------------------------------------------------------
-class MLProductEnricher:
-    """Wrapper para enriquecimiento ML que se integra con el sistema Product existente"""
-    
-    _instance = None
-    _preprocessor = None
-    _preprocessor_class = None  # 🔥 NUEVO: Referencia a la clase
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    @classmethod
-    def _load_ml_processor(cls, config: Dict[str, Any] = None) -> Optional[Any]:
-        """Carga el preprocesador ML dinámicamente para evitar importación circular"""
-        if not AutoProductConfig.ML_ENABLED:
-            return None
-        
-        try:
-            # 🔥 SOLUCIÓN: Importación diferida con sys.modules check
-            import sys
-            import importlib
-            
-            module_name = 'src.core.data.ml_processor'
-            
-            if module_name not in sys.modules:
-                # Intentar importar el módulo
-                try:
-                    # 🔥 IMPORTANTE: Usar importlib para evitar dependencias circulares
-                    module = importlib.import_module(module_name)
-                    ProductDataPreprocessor = getattr(module, 'ProductDataPreprocessor')
-                    cls._preprocessor_class = ProductDataPreprocessor
-                except (ImportError, AttributeError) as e:
-                    logger.warning(f"No se pudo importar {module_name}: {e}")
-                    return None
-            else:
-                # El módulo ya está cargado, obtener la clase
-                module = sys.modules[module_name]
-                ProductDataPreprocessor = getattr(module, 'ProductDataPreprocessor', None)
-                if not ProductDataPreprocessor:
-                    logger.warning(f"ProductDataPreprocessor no encontrado en {module_name}")
-                    return None
-                cls._preprocessor_class = ProductDataPreprocessor
-            
-            config = config or {}
-            
-            processor = cls._preprocessor_class(
-                categories=config.get('categories', AutoProductConfig.DEFAULT_CATEGORIES),
-                use_gpu=config.get('use_gpu', False),
-                embedding_model=config.get('embedding_model', AutoProductConfig.DEFAULT_EMBEDDING_MODEL)
-            )
-            logger.info("ML ProductEnricher inicializado exitosamente")
-            return processor
-            
-        except Exception as e:
-            logger.error(f"Error inicializando ML preprocessor: {e}")
-            return None
-    
-    @classmethod
-    def get_preprocessor(cls, config: Dict[str, Any] = None) -> Optional[Any]:
-        """Obtiene el preprocesador ML (singleton con lazy loading)"""
-        if not AutoProductConfig.ML_ENABLED:
-            return None
-        
-        if cls._preprocessor is None:
-            cls._preprocessor = cls._load_ml_processor(config)
-        
-        return cls._preprocessor
-    
-    @classmethod
-    def _safe_preprocessor_call(cls, method_name: str, *args, **kwargs) -> Any:
-        """Llama a un método del preprocesador de manera segura"""
-        preprocessor = cls.get_preprocessor()
-        if not preprocessor:
-            return None
-        
-        method = getattr(preprocessor, method_name, None)
-        if not method:
-            logger.warning(f"Método {method_name} no encontrado en preprocessor")
-            return None
-        
-        try:
-            return method(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Error llamando a {method_name}: {e}")
-            return None
-    
-    @classmethod
-    def enrich_product(
-        cls, 
-        product_data: Dict[str, Any],
-        enable_features: List[str] = None,
-        config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Enriquece datos de producto con capacidades ML.
-        
-        Args:
-            product_data: Datos del producto
-            enable_features: Lista de features ML a habilitar
-            config: Configuración para el preprocesador
-            
-        Returns:
-            Datos enriquecidos
-        """
-        if not AutoProductConfig.ML_ENABLED:
-            return product_data
-        
-        preprocessor = cls.get_preprocessor(config)
-        if not preprocessor:
-            return product_data
-        
-        try:
-            # Configurar features a habilitar
-            if enable_features is None:
-                enable_features = ['category', 'entities', 'tags', 'embedding']
-            
-            # Extraer texto para procesamiento
-            title = product_data.get('title', '')
-            description = product_data.get('description', '')
-            
-            # Si no hay texto suficiente, saltar procesamiento ML
-            if not title and not description:
-                return product_data
-            
-            enriched_data = product_data.copy()
-            full_text = f"{title}. {description}".strip()
-            
-            # 🔥 SOLUCIÓN: Usar métodos internos si los métodos del preprocesador fallan
-            if 'category' in enable_features and title:
-                predicted_category = None
-                
-                # Intentar usar el método del preprocesador
-                if hasattr(preprocessor, '_predict_category_zero_shot'):
-                    predicted_category = cls._safe_preprocessor_call(
-                        '_predict_category_zero_shot', full_text
-                    )
-                
-                # Fallback: usar método interno simple
-                if not predicted_category:
-                    predicted_category = cls._predict_simple_category(full_text)
-                
-                if predicted_category:
-                    enriched_data['predicted_category'] = predicted_category
-                    if 'main_category' not in enriched_data or not enriched_data['main_category']:
-                        enriched_data['main_category'] = predicted_category
-            
-            if 'entities' in enable_features:
-                entities = None
-                
-                # Intentar usar el método del preprocesador
-                if hasattr(preprocessor, '_extract_entities_ner'):
-                    entities = cls._safe_preprocessor_call('_extract_entities_ner', full_text)
-                
-                # Fallback: extracción simple
-                if not entities:
-                    entities = cls._extract_simple_entities(full_text)
-                
+            if 'entities' in settings.ML_FEATURES and text:
+                entities = cls._extract_entities(text)
                 if entities:
-                    enriched_data['extracted_entities'] = entities
-                    if 'ORG' in entities and entities['ORG']:
-                        enriched_data.setdefault('attributes', {})['brand'] = entities['ORG'][0]
-                    if 'PRODUCT' in entities and entities['PRODUCT']:
-                        enriched_data.setdefault('attributes', {})['model'] = entities['PRODUCT'][0]
+                    enriched['extracted_entities'] = entities
             
-            if 'tags' in enable_features:
-                tags = None
-                
-                # Solo usar TF-IDF si está entrenado
-                if hasattr(preprocessor, '_tfidf_fitted') and preprocessor._tfidf_fitted:
-                    tags = cls._safe_preprocessor_call('_generate_tags_tfidf', full_text)
-                
-                # Fallback: tags simples basados en palabras clave
-                if not tags:
-                    tags = cls._generate_simple_tags(full_text)
-                
+            if 'tags' in settings.ML_FEATURES and text:
+                tags = cls._generate_tags(text)
                 if tags:
-                    enriched_data['ml_tags'] = tags
-                    existing_tags = set(enriched_data.get('tags', []))
-                    new_tags = [tag for tag in tags if tag not in existing_tags]
-                    if new_tags:
-                        enriched_data.setdefault('tags', []).extend(new_tags[:5])
-            
-            if 'embedding' in enable_features:
-                embedding = None
-                
-                # Intentar usar el método del preprocesador
-                if hasattr(preprocessor, '_generate_embedding'):
-                    embedding = cls._safe_preprocessor_call('_generate_embedding', full_text)
-                
-                if embedding is not None:
-                    enriched_data['embedding'] = embedding
-                    enriched_data['embedding_model'] = getattr(preprocessor, 'embedding_model_name', 'unknown')
-            
-            return enriched_data
-            
+                    enriched['ml_tags'] = tags
+
+            enriched['ml_processed'] = True
+            return enriched
+        
         except Exception as e:
-            logger.error(f"Error en enriquecimiento ML: {e}")
-            return product_data
+            logger.warning(f"ML processing failed: {e}")
+            data['ml_processed'] = False
+            return data
     
-    @classmethod
-    def _predict_simple_category(cls, text: str) -> Optional[str]:
-        """Predicción simple de categoría usando palabras clave"""
+    @staticmethod
+    def _predict_category(text: str, categories: List[str]) -> Optional[str]:
+        if not text:
+            return None
+        
         text_lower = text.lower()
-        
-        category_keywords = {
-            'electronics': ['electronic', 'computer', 'laptop', 'phone', 'tablet', 'camera', 'tv', 'headphone'],
-            'books': ['book', 'novel', 'reading', 'author', 'publish', 'chapter', 'page'],
-            'clothing': ['shirt', 'dress', 'pants', 'jacket', 'shoe', 'wear', 'fashion', 'clothing'],
-            'home': ['furniture', 'home', 'kitchen', 'bed', 'chair', 'table', 'sofa', 'decor'],
-            'sports': ['sport', 'exercise', 'fitness', 'outdoor', 'running', 'gym', 'training'],
-            'toys': ['toy', 'game', 'play', 'children', 'kids', 'fun', 'doll'],
+
+        keyword_expansion = {
+            'video games': [
+                'game', 'gaming', 'play', 'player', 'console', 'controller',
+                'nintendo', 'playstation', 'xbox', 'switch', 'ps4', 'ps5',
+                'retro', 'arcade', 'emulator', 'rom', 'cartridge', 'disc'
+            ],
+            'electronics': [
+                'electronic', 'device', 'gadget', 'tech', 'technology',
+                'smart', 'digital', 'wireless', 'bluetooth', 'usb', 'hdmi',
+                'battery', 'charger', 'cable', 'adapter', 'screen', 'display'
+            ],
+            'books': [
+                'read', 'reading', 'literature', 'story', 'tale', 'novel',
+                'author', 'publisher', 'publish', 'chapter', 'page', 'cover',
+                'binding'
+            ],
+            'clothing': [
+                'wear', 'wearing', 'fashion', 'style', 'outfit', 'garment',
+                'fabric', 'textile', 'size', 'color', 'cotton', 'polyester'
+            ],
+            'home': [
+                'kitchen', 'cook', 'cookware', 'appliance', 'house', 'home',
+                'decor', 'sofa', 'bed', 'chair', 'table', 'furniture'
+            ],
+            'sports': [
+                'sport', 'sports', 'fitness', 'exercise', 'training', 'gym',
+                'running', 'yoga', 'cycling', 'outdoor', 'camping', 'hiking'
+            ],
+            'beauty': [
+                'makeup', 'beauty', 'skincare', 'lipstick', 'eyeliner',
+                'cream', 'serum', 'lotion', 'shampoo', 'conditioner', 'hair'
+            ],
+            'toys': [
+                'toy', 'lego', 'puzzle', 'doll', 'kids', 'children',
+                'action figure', 'playset', 'board game'
+            ],
+            'automotive': [
+                'car', 'motor', 'engine', 'automotive', 'battery', 'tire',
+                'accessory', 'vehicle', 'oil', 'spark plug'
+            ],
+            'office': [
+                'office', 'stationery', 'paper', 'pen', 'pencil', 'notebook',
+                'printer', 'scanner', 'desk'
+            ]
         }
-        
-        for category, keywords in category_keywords.items():
+
+        found_categories = {}
+
+        for category, keywords in keyword_expansion.items():
             for keyword in keywords:
                 if keyword in text_lower:
-                    return category
+                    found_categories[category] = found_categories.get(category, 0) + 1
+
+        if found_categories:
+            best_category = max(found_categories.items(), key=lambda x: x[1])[0]
+
+            category_mapping = {
+                'video games': 'Video Games',
+                'electronics': 'Electronics', 
+                'books': 'Books',
+                'clothing': 'Clothing',
+                'home': 'Home & Kitchen',
+                'sports': 'Sports',
+                'beauty': 'Beauty',
+                'toys': 'Toys',
+                'automotive': 'Automotive',
+                'office': 'Office'
+            }
+
+            return category_mapping.get(best_category, best_category.title())
         
         return None
-    
+
     @classmethod
-    def _extract_simple_entities(cls, text: str) -> Dict[str, List[str]]:
-        """Extracción simple de entidades usando regex"""
+    def get_embedding_model_singleton(cls, model_name: str = None):
+        if not hasattr(cls, '_global_embedding_model'):
+            cls._global_embedding_model = None
+        
+        if cls._global_embedding_model is None:
+            with cls._model_lock:
+                if cls._global_embedding_model is None:
+                    try:
+                        from sentence_transformers import SentenceTransformer
+                        model_name = model_name or settings.ML_EMBEDDING_MODEL
+                        logger.info(f"🔧 [SINGLETON] Cargando modelo de embeddings: {model_name}")
+                        cls._global_embedding_model = SentenceTransformer(model_name)
+                        logger.info("✅ [SINGLETON] Modelo cargado")
+                    except Exception as e:
+                        logger.error(f"❌ [SINGLETON] Error cargando modelo: {e}")
+                        cls._global_embedding_model = None
+        
+        return cls._global_embedding_model
+
+    @classmethod
+    def enrich_product_with_embeddings(cls, data: Dict, force_recompute: bool = False) -> Dict:
+        if not data:
+            return data
+        
+        settings = get_settings()
+        
+        if not settings.ML_ENABLED or 'embedding' not in settings.ML_FEATURES:
+            data['ml_processed'] = False
+            return data
+        
+        try:
+            enriched = data.copy()
+            text = f"{enriched.get('title', '')} {enriched.get('description', '')}".strip()
+            
+            if not text:
+                return enriched
+            
+            existing_embedding = enriched.get('embedding')
+            if (not force_recompute and existing_embedding and 
+                isinstance(existing_embedding, list) and 
+                len(existing_embedding) > 10):  
+                logger.debug("✅ Usando embedding existente")
+                enriched['embedding_model'] = enriched.get('embedding_model', 'existing')
+                return enriched
+            
+            model = cls.get_embedding_model_singleton()
+            if model:
+                text_limited = text[:1000]
+                embedding = model.encode(text_limited, normalize_embeddings=True)
+                
+                enriched['embedding'] = embedding.tolist()
+                enriched['embedding_model'] = settings.ML_EMBEDDING_MODEL
+                enriched['embedding_timestamp'] = time.time()
+                
+                logger.debug(f"🔧 Embedding generado: {len(embedding)} dimensiones")
+            
+            return enriched
+            
+        except Exception as e:
+            logger.warning(f"ML embedding failed: {e}")
+            return data
+    @staticmethod
+    def _extract_entities(text: str) -> Dict[str, List[str]]:
         entities = {
             'ORG': [],
-            'PRODUCT': [],
-            'LOC': []
+            'PRODUCT': []
         }
         
-        # Patrones simples
-        patterns = {
-            'ORG': [r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b(?=\s+(Inc|Corp|LLC|Ltd))'],
-            'PRODUCT': [r'\b[A-Z][A-Za-z0-9]+\b'],
-        }
-        
-        for entity_type, pattern_list in patterns.items():
-            for pattern in pattern_list:
-                matches = re.findall(pattern, text)
-                if matches:
-                    entities[entity_type].extend(matches[:3])
+        # Patrón simple para nombres propios
+        words = re.findall(r'\b[A-Z][a-z]+\b', text)
+        for word in words:
+            if len(word) > 3:
+                entities['PRODUCT'].append(word)
         
         return entities
     
-    @classmethod
-    def _generate_simple_tags(cls, text: str) -> List[str]:
-        """Generación simple de tags usando palabras más frecuentes"""
-        words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+    @staticmethod
+    def _generate_tags(text: str) -> List[str]:
+        """Generación básica de tags"""
+        words = re.findall(r'\b[a-z]{4,}\b', text.lower())
         
-        # Palabras de stop (inglesas/españolas)
+        # Palabras de stop
         stop_words = {
-            'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'has', 'was',
-            'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'con', 'por', 'para'
+            'this', 'that', 'with', 'from', 'have', 'they', 'what',
+            'were', 'when', 'will', 'your', 'there', 'their', 'about'
         }
         
         # Contar frecuencia
@@ -465,114 +407,63 @@ class MLProductEnricher:
             if word not in stop_words:
                 word_counts[word] = word_counts.get(word, 0) + 1
         
-        # Obtener las palabras más frecuentes
+        # Top 5 palabras más frecuentes
         sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
-        tags = [word for word, count in sorted_words[:5]]
-        
-        return tags
-    
-    @classmethod
-    def enrich_batch(
-        cls,
-        products_data: List[Dict[str, Any]],
-        enable_features: List[str] = None,
-        config: Dict[str, Any] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Enriquece un lote de productos de manera eficiente.
-        
-        Args:
-            products_data: Lista de datos de productos
-            enable_features: Features ML a habilitar
-            config: Configuración del preprocesador
-            
-        Returns:
-            Lista de productos enriquecidos
-        """
-        if not AutoProductConfig.ML_ENABLED or not products_data:
-            return products_data
-        
-        preprocessor = cls.get_preprocessor(config)
-        if not preprocessor:
-            return products_data
-        
-        try:
-            # Si el preprocesador tiene método de batch, usarlo
-            if hasattr(preprocessor, 'preprocess_batch'):
-                enriched_batch = preprocessor.preprocess_batch(products_data)
-                return enriched_batch
-            else:
-                # Fallback: procesar individualmente
-                logger.info("No batch method available, processing individually")
-                enriched_products = []
-                for product_data in products_data:
-                    enriched = cls.enrich_product(product_data, enable_features, config)
-                    enriched_products.append(enriched)
-                return enriched_products
-            
-        except Exception as e:
-            logger.error(f"Error en batch ML enrichment: {e}")
-            return products_data
-    
-    @classmethod
-    def fit_tfidf(cls, descriptions: List[str]) -> bool:
-        """Entrena el modelo TF-IDF con descripciones."""
-        if not AutoProductConfig.ML_ENABLED:
-            return False
-        
-        preprocessor = cls.get_preprocessor()
-        if not preprocessor:
-            return False
-        
-        try:
-            if hasattr(preprocessor, 'fit_tfidf'):
-                preprocessor.fit_tfidf(descriptions)
-                return True
-            else:
-                logger.warning("Preprocessor no tiene método fit_tfidf")
-                return False
-        except Exception as e:
-            logger.error(f"Error entrenando TF-IDF: {e}")
-            return False
-    
-    @classmethod
-    def get_metrics(cls) -> Dict[str, Any]:
-        """Obtiene métricas del sistema ML."""
-        if not AutoProductConfig.ML_ENABLED:
-            return {"ml_enabled": False}
-        
-        preprocessor = cls.get_preprocessor()
-        if not preprocessor:
-            return {"ml_enabled": False, "preprocessor_loaded": False}
-        
-        try:
-            metrics = {
-                "ml_enabled": True,
-                "preprocessor_loaded": True,
-                "preprocessor_class": cls._preprocessor_class.__name__ if cls._preprocessor_class else None,
-                "embedding_cache_size": len(getattr(preprocessor, '_embedding_cache', {})),
-                "tfidf_fitted": getattr(preprocessor, '_tfidf_fitted', False)
-            }
-            
-            # Obtener información de modelos si está disponible
-            if hasattr(preprocessor, 'get_model_info'):
-                metrics.update(preprocessor.get_model_info())
-                
-            return metrics
-        except Exception as e:
-            logger.error(f"Error obteniendo métricas ML: {e}")
-            return {"ml_enabled": True, "error": str(e)}
+        return [word for word, _ in sorted_words[:5]]
 
-
+class ProductAttributeHelper:
+    """Helper para manejar atributos de productos de forma segura."""
+    
+    @staticmethod
+    def safe_get_float(obj, attr_name: str, default: float = 0.0) -> float:
+        """Obtiene un atributo float de forma segura."""
+        try:
+            value = getattr(obj, attr_name, default)
+            if value is None:
+                return default
+            return float(value)
+        except (ValueError, TypeError, AttributeError):
+            return default
+    
+    @staticmethod
+    def safe_get_int(obj, attr_name: str, default: int = 0) -> int:
+        """Obtiene un atributo int de forma segura."""
+        try:
+            value = getattr(obj, attr_name, default)
+            if value is None:
+                return default
+            return int(value)
+        except (ValueError, TypeError, AttributeError):
+            return default
+    
+    @staticmethod
+    def safe_get_str(obj, attr_name: str, default: str = "") -> str:
+        """Obtiene un atributo string de forma segura."""
+        try:
+            value = getattr(obj, attr_name, default)
+            if value is None:
+                return default
+            return str(value)
+        except (AttributeError):
+            return default
 # ------------------------------------------------------------------
-# Main product entity simplificada
+# Main Product entity - MEJORADA
 # ------------------------------------------------------------------
 class Product(BaseModel):
-    """Modelo principal de producto con procesamiento automático y ML opcional"""
+    """
+    Modelo principal de producto con configuración centralizada.
+    Eliminada la clase AutoProductConfig.
+    """
     
-    # Campos principales (existentes)
+    # 🔥 CONSTANTES LOCALES (no configuración global)
+    _MAX_TITLE_LENGTH: ClassVar[int] = 200
+    _MAX_DESCRIPTION_LENGTH: ClassVar[int] = 1000
+    _DEFAULT_RATING: ClassVar[float] = 0.0
+    _DEFAULT_PRICE: ClassVar[float] = 0.0
+    
+    # Campos principales
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    title: str = Field("Unknown Product", min_length=1, max_length=AutoProductConfig.MAX_TITLE_LENGTH)
+    title: str = Field("Unknown Product", min_length=1, max_length=_MAX_TITLE_LENGTH)
     main_category: Optional[str] = None
     categories: List[str] = Field(default_factory=list)
     price: Optional[float] = Field(None, ge=0)
@@ -584,29 +475,20 @@ class Product(BaseModel):
     compatible_devices: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     attributes: Dict[str, str] = Field(default_factory=dict)
-    description: Optional[str] = Field(None, max_length=AutoProductConfig.MAX_DESCRIPTION_LENGTH)
+    description: Optional[str] = Field(None, max_length=_MAX_DESCRIPTION_LENGTH)
     
     # Campos calculados automáticamente
     content_hash: Optional[str] = None
     
-    # Nuevos campos ML (opcionales)
+    # Campos ML (opcionales)
     predicted_category: Optional[str] = None
     extracted_entities: Dict[str, List[str]] = Field(default_factory=dict)
-    ml_tags: List[str] = Field(default_factory=list)  # Tags generados por ML
+    ml_tags: List[str] = Field(default_factory=list)
+    ml_processed: bool = Field(default=False)
+    
+    # Campos embeddings (nuevo - PROBLEMA 3)
     embedding: Optional[List[float]] = None
     embedding_model: Optional[str] = None
-    similar_products: List[Dict[str, Any]] = Field(default_factory=list)
-    ml_processed: bool = Field(default=False)  # Flag para indicar si se procesó con ML
-    
-    # Configuración de ML
-    _ml_config: ClassVar[Dict[str, Any]] = {
-        'enabled': AutoProductConfig.ML_ENABLED,
-        'features': ['category', 'entities', 'tags', 'embedding'],
-        'categories': AutoProductConfig.DEFAULT_CATEGORIES
-    }
-    
-    # Flag para evitar reconfiguración múltiple
-    _ml_configured: ClassVar[bool] = False
     
     # --------------------------------------------------
     # Validators simplificados
@@ -614,59 +496,209 @@ class Product(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def auto_process_data(cls, data: Any) -> Any:
-        """Procesamiento automático completo de datos (incluye ML si está habilitado)"""
+        """Procesamiento automático completo de datos"""
         if not isinstance(data, dict):
             return data
         
-        processed = data.copy()
+        # Obtener configuración actual
+        current_settings = get_settings()
+        
+        # 🔥 CORRECCIÓN PROBLEMA 4: Limpiar datos primero
+        processed = cls._clean_raw_data(data)
         
         # Procesamiento automático base
         processed = cls._auto_enrich_data(processed)
         processed = cls._auto_clean_data(processed)
         
-        # Procesamiento ML (opcional)
-        if cls._ml_config['enabled']:
-            processed = cls._apply_ml_processing(processed)
+        # 🔥 IMPORTANTE: Procesamiento ML si está habilitado en settings
+        if current_settings.ML_ENABLED:
+            processed = MLProductProcessor.enrich_product(processed)
         
         return processed
 
     @classmethod
+    def _clean_raw_data(cls, raw: Dict) -> Dict:
+        """Limpia datos crudos de forma robusta - SOLUCIÓN PROBLEMA 4"""
+        cleaned = {}
+        
+        # 🔥 Mapeo de campos con limpieza específica
+        field_cleaners = {
+            'title': lambda x: str(x).strip()[:200] if x else 'Unknown Product',
+            'description': lambda x: str(x).strip()[:1000] if x else '',
+            'main_category': lambda x: str(x).strip() if x else 'General',
+            'categories': cls._clean_categories,
+            'price': cls._clean_price,
+            'brand': lambda x: str(x).strip() if x else '',
+            'product_type': lambda x: str(x).strip() if x else ''
+        }
+        
+        for field, cleaner in field_cleaners.items():
+            if field in raw:
+                try:
+                    cleaned[field] = cleaner(raw[field])
+                except Exception as e:
+                    logger.debug(f"Error limpiando campo {field}: {e}")
+                    cleaned[field] = field_cleaners[field](None)  # Valor por defecto
+        
+        # Campos adicionales con limpieza segura
+        cleaned['id'] = raw.get('id', str(uuid.uuid4()))
+        
+        # Copiar otros campos sin procesar (serán procesados después)
+        for key, value in raw.items():
+            if key not in cleaned:
+                cleaned[key] = value
+        
+        return cleaned
+    
+    @classmethod
+    def _clean_categories(cls, categories: Any) -> List[str]:
+        """Limpia categorías - SOLUCIÓN PROBLEMA 4"""
+        if not categories:
+            return []
+        
+        if isinstance(categories, str):
+            # Separar por comas, puntos, etc.
+            split_categories = re.split(r'[,;|]', categories)
+            return [c.strip() for c in split_categories if c.strip()]
+        
+        if isinstance(categories, list):
+            cleaned = []
+            for cat in categories:
+                if cat and isinstance(cat, str):
+                    cleaned.append(cat.strip())
+            return cleaned
+        
+        return []
+    
+    @classmethod
+    def _clean_price(cls, price: Any) -> Optional[float]:
+        """Limpia precio de forma robusta"""
+        return cls._auto_parse_price(price)
+
+    @classmethod
     def _auto_enrich_data(cls, data: Dict) -> Dict:
-        """Enriquece datos automáticamente"""
+        """Enriquece datos automáticamente con mejora de categorización."""
         processed = data.copy()
         
-        # Generar ID si no existe
+        # ============================
+        # ✔ Tu código original
+        # ============================
         if not processed.get('id'):
             processed['id'] = str(uuid.uuid4())
         
-        # Enriquecer título
         if processed.get('title'):
             processed['title'] = cls._auto_clean_title(processed['title'])
-        
-        # Enriquecer descripción
+            
         processed['description'] = cls._auto_clean_description(processed.get('description'))
         
-        # Procesar detalles automáticamente
         details_data = processed.get('details', {})
         processed['details'] = ProductDetails.safe_create(details_data).dict()
-        
-        # Procesar imágenes automáticamente
+
         images_data = processed.get('images', {})
         processed['images'] = ProductImage.safe_create(images_data).dict()
-        
-        # Generar hash de contenido
-        processed['content_hash'] = cls._generate_content_hash(processed)
-        
-        return processed
 
+        processed['content_hash'] = cls._generate_content_hash(processed)
+
+        # =======================================================
+        # 🔥 A) NUEVO — Mejorar categorización automática
+        # =======================================================
+        if not processed.get("main_category") or processed.get("main_category") in [None, "", "General"]:
+
+            title = processed.get("title", "")
+            category = cls._extract_category_from_title(title)
+            if category:
+                processed["main_category"] = category
+
+            # Si no encontró en el título, probar en descripción
+            if not processed.get("main_category") or processed.get("main_category") == "General":
+                description = processed.get("description", "")
+                category = cls._extract_category_from_description(description)
+                if category:
+                    processed["main_category"] = category
+        
+        # Si aún queda como General → se manejará después en la etapa ML
+        return processed
+    
+    @staticmethod
+    def _extract_category_from_title(title: str) -> Optional[str]:
+        """Extrae categoría del título usando palabras clave mejoradas."""
+        if not title:
+            return None
+        
+        title_lower = title.lower()
+        
+        # 🔥 DICCIONARIO EXPANDIDO PARA JUEGOS Y ENTRETENIMIENTO
+        category_keywords = {
+            'Video Games': [
+                'nintendo', 'playstation', 'xbox', 'switch', 'wii', 'gamecube',
+                'ps4', 'ps5', 'xbox one', 'game', 'video game', 'videogame',
+                'switch', 'nes', 'snes', 'n64', 'gameboy', '3ds', 'ds',
+                'wolverine', 'star wars', 'destruction derby', 'lethal enforcers',
+                'sports', 'fighting', 'combat', 'fight', 'battle', 'war'
+            ],
+            'Electronics': [
+                'iphone', 'samsung', 'android', 'smartphone', 'phone', 'tablet',
+                'laptop', 'computer', 'pc', 'macbook', 'electronic', 'device'
+            ],
+            'Books': ['libro','book','novel','author','edition','paperback','hardcover','fiction','non-fiction'],
+            'Clothing': ['shirt','pants','jeans','dress','hoodie','sweater','tshirt','clothing','apparel'],
+            'Home & Kitchen': ['kitchen','cookware','appliance','furniture','bed','chair','table','sofa'],
+            'Sports': ['fitness','exercise','gym','yoga','outdoor','camping','running','training'],
+            'Beauty': ['makeup','cosmetic','skincare','perfume','serum','lotion','shampoo','hair'],
+            'Toys': ['toy','lego','doll','action figure','board game','kids','children','toddler'],
+            'Automotive': ['car','auto','vehicle','engine','tire','motor','battery','oil'],
+            'Office': ['office','stationery','notebook','desk','printer','scanner','supplies']
+        }
+
+        for category, keywords in category_keywords.items():
+            if any(kw in title_lower for kw in keywords):
+                return category
+        return None
+
+
+
+    @staticmethod
+    def _extract_category_from_description(description: str) -> Optional[str]:
+        if not description:
+            return None
+        
+        desc_lower = description.lower()
+
+        category_keywords = {   # ← el mismo diccionario que arriba
+            'Video Games': ['nintendo','playstation','xbox','switch','ps5','videogame','console'],
+            'Electronics': ['iphone','samsung','android','tablet','laptop','pc','macbook'],
+            'Books': ['book','novel','author','paperback','kindle','fiction'],
+            'Clothing': ['shirt','jeans','dress','hoodie','apparel'],
+            'Home & Kitchen': ['kitchen','cookware','appliance','furniture'],
+            'Sports': ['fitness','gym','camping','running','training'],
+            'Beauty': ['makeup','cosmetic','skincare','serum','hair'],
+            'Toys': ['toy','lego','board game','kids','children'],
+            'Automotive': ['car','vehicle','engine','battery'],
+            'Office': ['office','stationery','desk','supplies']
+        }
+
+        scores = {
+            cat: sum(1 for kw in words if kw in desc_lower)
+            for cat, words in category_keywords.items()
+        }
+
+        return max(scores, key=scores.get) if max(scores.values()) > 0 else None
+
+    
+
+    
     @classmethod
     def _auto_clean_data(cls, data: Dict) -> Dict:
         """Limpia datos automáticamente"""
         processed = data.copy()
         
-        # Limpiar precio automáticamente
-        if 'price' in processed:
-            processed['price'] = cls._auto_parse_price(processed['price'])
+        # Limpiar precio automáticamente (ya se hizo en _clean_price)
+        # Pero asegurar que esté como float
+        if 'price' in processed and processed['price'] is not None:
+            try:
+                processed['price'] = float(processed['price'])
+            except (ValueError, TypeError):
+                processed['price'] = None
         
         # Limpiar y normalizar categorías
         if 'categories' in processed:
@@ -680,100 +712,28 @@ class Product(BaseModel):
         if 'rating_count' in processed:
             processed['rating_count'] = cls._auto_clean_rating_count(processed['rating_count'])
         
-        # Asegurar que tags sea una lista
-        if 'tags' in processed:
-            if isinstance(processed['tags'], str):
-                processed['tags'] = [processed['tags']]
-            elif not isinstance(processed['tags'], list):
-                processed['tags'] = []
-        
-        # Asegurar que compatible_devices sea una lista
-        if 'compatible_devices' in processed:
-            if isinstance(processed['compatible_devices'], str):
-                processed['compatible_devices'] = [processed['compatible_devices']]
-            elif not isinstance(processed['compatible_devices'], list):
-                processed['compatible_devices'] = []
+        # 🔥 Asegurar que todos los campos de lista estén inicializados correctamente
+        list_fields = ['tags', 'compatible_devices', 'ml_tags']
+        for field in list_fields:
+            if field in processed:
+                if isinstance(processed[field], str):
+                    processed[field] = [processed[field]]
+                elif not isinstance(processed[field], list):
+                    processed[field] = []
+                # 🔥 CORRECCIÓN PROBLEMA 4: Filtrar valores None de las listas
+                processed[field] = [item for item in processed[field] if item is not None]
+            else:
+                processed[field] = []
         
         # Asegurar que attributes sea un diccionario
         if 'attributes' not in processed or not isinstance(processed['attributes'], dict):
             processed['attributes'] = {}
         
-        # Asegurar que ml_tags sea una lista
-        if 'ml_tags' in processed:
-            if isinstance(processed['ml_tags'], str):
-                processed['ml_tags'] = [processed['ml_tags']]
-            elif not isinstance(processed['ml_tags'], list):
-                processed['ml_tags'] = []
+        # 🔥 CORRECCIÓN PROBLEMA 4: Asegurar que main_category tenga valor por defecto
+        if not processed.get('main_category'):
+            processed['main_category'] = 'General'
         
         return processed
-    
-    @classmethod
-    def _apply_ml_processing(cls, data: Dict) -> Dict:
-        """Aplica procesamiento ML a los datos del producto"""
-        if not cls._ml_config['enabled']:
-            return data
-        
-        try:
-            # Usar el enriquecedor ML
-            ml_enriched = MLProductEnricher.enrich_product(
-                product_data=data,
-                enable_features=cls._ml_config['features'],
-                config={'categories': cls._ml_config['categories']}
-            )
-            
-            # Marcar como procesado con ML
-            ml_enriched['ml_processed'] = True
-            
-            return ml_enriched
-            
-        except Exception as e:
-            logger.warning(f"ML processing failed, falling back to basic processing: {e}")
-            data['ml_processed'] = False
-            return data
-    
-    @classmethod
-    def configure_ml(cls, enabled: bool = False, features: Optional[List[str]] = None, 
-                    categories: Optional[List[str]] = None):
-        """Configura ML una sola vez"""
-        # Verificar si ya está configurado
-        if hasattr(cls, '_ml_configured') and cls._ml_configured:
-            return
-        
-        # Actualizar configuración global
-        AutoProductConfig.ML_ENABLED = enabled
-        
-        cls._ml_config = {
-            'enabled': enabled,
-            'features': features or ["category", "entities"],
-            'categories': categories or AutoProductConfig.DEFAULT_CATEGORIES
-        }
-        
-        # Marcar como configurado
-        cls._ml_configured = True
-        
-        # Loggear solo una vez
-        if enabled:
-            logger.info(f"✅ ML configuration: {cls._ml_config}")
-        else:
-            logger.debug(f"ML configuration (disabled): {cls._ml_config}")
-    
-    @property
-    def product_id(self) -> str:
-        """
-        ID universal del producto, usado por el sistema RAG y RL.
-        Busca en varios campos típicos (asin, id, productId, product_type, code)
-        y usa el título como último fallback.
-        """
-        for key in ["asin", "id", "productId", "product_type", "code"]:
-            if hasattr(self, key):
-                value = getattr(self, key)
-                if value:
-                    return str(value)
-        return self.title or "unknown"
-    
-    # --------------------------------------------------
-    # Métodos estáticos de utilidad (mantenidos del original)
-    # --------------------------------------------------
     
     @classmethod
     def _auto_clean_title(cls, title: str) -> str:
@@ -800,8 +760,8 @@ class Product(BaseModel):
             cleaned = cleaned.capitalize()
         
         # Truncar si es necesario
-        if len(cleaned) > AutoProductConfig.MAX_TITLE_LENGTH:
-            cleaned = cleaned[:AutoProductConfig.MAX_TITLE_LENGTH - 3] + "..."
+        if len(cleaned) > cls._MAX_TITLE_LENGTH:
+            cleaned = cleaned[:cls._MAX_TITLE_LENGTH - 3] + "..."
         
         return cleaned
 
@@ -819,15 +779,14 @@ class Product(BaseModel):
         
         # Limpiar y truncar
         cleaned = re.sub(r'\s+', ' ', description).strip()
-        if len(cleaned) > AutoProductConfig.MAX_DESCRIPTION_LENGTH:
-            cleaned = cleaned[:AutoProductConfig.MAX_DESCRIPTION_LENGTH - 3] + "..."
+        if len(cleaned) > cls._MAX_DESCRIPTION_LENGTH:
+            cleaned = cleaned[:cls._MAX_DESCRIPTION_LENGTH - 3] + "..."
         
         return cleaned
     
     @classmethod
     def _auto_parse_price(cls, price: Any) -> Optional[float]:
-        """Extractor de precios altamente robusto para datos reales de ecommerce."""
-        # Mantener la implementación original
+        """Extractor de precios altamente robusto"""
         if isinstance(price, list):
             for item in price:
                 if isinstance(item, (str, int, float)):
@@ -968,7 +927,7 @@ class Product(BaseModel):
 
     @classmethod
     def _generate_content_hash(cls, data: Dict) -> str:
-        """Genera hash del contenido para detección de duplicados"""
+        """Genera hash del contenido para detección de duplicados."""
         content_parts = [
             data.get('title', ''),
             data.get('description', ''),
@@ -977,184 +936,94 @@ class Product(BaseModel):
             ' '.join(data.get('categories', [])),
             data.get('product_type', '')
         ]
-        content_str = '|'.join(content_parts)
+        
+        # 🔥 CORRECCIÓN: Asegurar que todos sean strings
+        safe_parts = []
+        for part in content_parts:
+            if part is None:
+                part = ''
+            elif isinstance(part, list):
+                # Filtrar elementos None de la lista
+                part = ' '.join(str(p) for p in part if p is not None)
+            elif not isinstance(part, str):
+                part = str(part)
+            safe_parts.append(part)
+        
+        content_str = '|'.join(safe_parts)
         return hashlib.md5(content_str.encode()).hexdigest()
 
     # --------------------------------------------------
     # Métodos de instancia
     # --------------------------------------------------
     
+    @property
+    def product_id(self) -> str:
+        """ID universal del producto"""
+        for key in ["asin", "id", "productId", "product_type", "code"]:
+            if hasattr(self, key):
+                value = getattr(self, key)
+                if value:
+                    return str(value)
+        return self.title or "unknown"
+    
     @classmethod
-    def from_dict(
-        cls, 
-        raw: Dict, 
-        ml_enrich: bool = None,
-        ml_features: List[str] = None
-    ) -> "Product":
+    def from_dict(cls, raw: Dict, **kwargs) -> "Product":
         """
-        Constructor automatizado desde diccionario con ML opcional.
-        
-        Args:
-            raw: Datos crudos del producto
-            ml_enrich: Si es True, aplica enriquecimiento ML (usa configuración por defecto si es None)
-            ml_features: Lista de features ML a habilitar (solo si ml_enrich=True)
+        Constructor automatizado desde diccionario.
         """
         try:
-            # Configurar ML si se especifica
-            if ml_enrich is not None:
-                original_ml_config = cls._ml_config.copy()
-                cls.configure_ml(enabled=ml_enrich)
-                if ml_features:
-                    cls.configure_ml(features=ml_features)
-            
-            # Crear producto
-            product = cls(**raw)
-            
-            # Restaurar configuración ML original
-            if ml_enrich is not None:
-                cls._ml_config = original_ml_config
-            
-            return product
+            # 🔥 CORRECCIÓN: Limpiar datos antes de procesar (ya se hace en auto_process_data)
+            # Solo crear el objeto, la limpieza se hará en el validator
+            return cls(**raw)
             
         except Exception as e:
             logger.warning(f"Error creating Product from dict: {e}")
-            # Crear producto mínimo con valores por defecto
+            # 🔥 CORRECCIÓN MEJORADA: Crear producto mínimo con valores seguros
+            return cls._create_minimal_product(raw)
+
+    @classmethod
+    def _create_minimal_product(cls, raw: Dict) -> "Product":
+        """Crea producto mínimo cuando falla la creación normal."""
+        try:
+            # Extraer datos mínimos
+            title = raw.get('title')
+            if not title or not isinstance(title, str):
+                title = 'Unknown Product'
+            
+            # Crear producto básico
             return cls(
-                title=raw.get('title', 'Unknown Product'),
-                id=raw.get('id', str(uuid.uuid4()))
+                title=title[:200],
+                id=raw.get('id', str(uuid.uuid4())),
+                description=raw.get('description', '')[:5000] if raw.get('description') else '',
+                price=cls._auto_parse_price(raw.get('price')),
+                main_category=raw.get('main_category', 'General'),
+                ml_processed=False  # Marcar como no procesado por ML
             )
+        except Exception as e:
+            logger.error(f"Error creating minimal product: {e}")
+            # Último recurso
+            return cls(title='Error Product')
     
     @classmethod
-    def batch_create(
-        cls,
-        raw_list: List[Dict],
-        ml_enrich: bool = False,
-        batch_size: int = 32
-    ) -> List["Product"]:
+    def batch_create(cls, raw_list: List[Dict]) -> List["Product"]:
         """
         Crea múltiples productos con procesamiento optimizado.
-        
-        Args:
-            raw_list: Lista de diccionarios con datos de productos
-            ml_enrich: Si es True, aplica enriquecimiento ML por lotes
-            batch_size: Tamaño del lote para procesamiento ML
-            
-        Returns:
-            Lista de productos creados
         """
         products = []
-        
-        # Si ML está habilitado, procesar por lotes
-        if ml_enrich and AutoProductConfig.ML_ENABLED:
+        for data in raw_list:
             try:
-                # Enriquecer datos con ML
-                enriched_data = MLProductEnricher.enrich_batch(
-                    raw_list,
-                    enable_features=cls._ml_config['features'],
-                    config={'categories': cls._ml_config['categories']}
-                )
-                
-                # Crear productos desde datos enriquecidos
-                for data in enriched_data:
-                    try:
-                        product = cls(**data)
-                        products.append(product)
-                    except Exception as e:
-                        logger.warning(f"Error creating product from enriched data: {e}")
-                        # Fallback: crear sin ML
-                        product = cls(**data)
-                        products.append(product)
-                
+                product = cls.from_dict(data)
+                products.append(product)
             except Exception as e:
-                logger.error(f"Batch ML enrichment failed: {e}")
-                # Fallback: procesamiento individual sin ML
-                ml_enrich = False
-        
-        # Procesamiento sin ML o fallback
-        if not ml_enrich or not products:
-            for data in raw_list:
-                try:
-                    product = cls.from_dict(data, ml_enrich=False)
-                    products.append(product)
-                except Exception as e:
-                    logger.warning(f"Error creating product: {e}")
-                    # Crear producto mínimo
-                    product = cls(
-                        title=data.get('title', 'Unknown Product'),
-                        id=data.get('id', str(uuid.uuid4()))
-                    )
-                    products.append(product)
+                logger.warning(f"Error creating product: {e}")
+                # Crear producto mínimo
+                product = cls(
+                    title=data.get('title', 'Unknown Product'),
+                    id=data.get('id', str(uuid.uuid4()))
+                )
+                products.append(product)
         
         return products
-    
-    def get_similarity_score(self, other_product: "Product") -> Optional[float]:
-        """
-        Calcula similitud coseno entre embeddings de dos productos.
-        
-        Args:
-            other_product: Otro producto para comparar
-            
-        Returns:
-            Score de similitud (0-1) o None si no hay embeddings
-        """
-        if not self.embedding or not other_product.embedding:
-            return None
-        
-        # Verificar que los embeddings sean del mismo modelo
-        if self.embedding_model != other_product.embedding_model:
-            logger.warning("Embeddings from different models, similarity may not be accurate")
-        
-        try:
-            # Convertir a arrays numpy
-            vec1 = np.array(self.embedding)
-            vec2 = np.array(other_product.embedding)
-            
-            # Normalizar vectores
-            vec1_norm = vec1 / np.linalg.norm(vec1)
-            vec2_norm = vec2 / np.linalg.norm(vec2)
-            
-            # Calcular similitud coseno
-            similarity = np.dot(vec1_norm, vec2_norm)
-            
-            # Asegurar que esté en rango [0, 1]
-            return max(0.0, min(1.0, float(similarity)))
-        
-        except Exception as e:
-            logger.warning(f"Similarity calculation failed: {e}")
-            return None
-    
-    def enrich_with_ml(self, features: List[str] = None) -> "Product":
-        """
-        Aplica enriquecimiento ML a un producto existente.
-        
-        Args:
-            features: Lista de features ML a aplicar (None para usar configuración)
-            
-        Returns:
-            Producto enriquecido (nueva instancia)
-        """
-        if not AutoProductConfig.ML_ENABLED:
-            logger.warning("ML features are disabled")
-            return self
-        
-        try:
-            # Convertir producto a dict
-            product_dict = self.model_dump()
-            
-            # Aplicar enriquecimiento ML
-            enriched_dict = MLProductEnricher.enrich_product(
-                product_dict,
-                enable_features=features or self._ml_config['features'],
-                config={'categories': self._ml_config['categories']}
-            )
-            
-            # Crear nuevo producto enriquecido
-            enriched_product = self.__class__(**enriched_dict)
-            return enriched_product
-            
-        except Exception as e:
-            logger.error(f"ML enrichment failed: {e}")
-            return self
     
     def clean_image_urls(self) -> None:
         """Limpia URLs de imágenes automáticamente"""
@@ -1209,15 +1078,15 @@ class Product(BaseModel):
         return ", ".join(all_tags[:8]) if all_tags else "No tags"
     
     def to_metadata(self) -> dict:
-        """Metadata enriquecida con información automática y ML"""
+        """Metadata enriquecida - versión final corregida."""
         try:
             metadata = {
                 "id": self.id,
-                "title": self.title[:100],
-                "main_category": self.main_category or "Uncategorized",
+                "title": self.title[:100] if self.title else "Untitled Product",
+                "main_category": self.main_category or "General",
                 "categories": json.dumps(self.categories, ensure_ascii=False) if self.categories else "[]",
-                "price": float(self.price) if self.price is not None else AutoProductConfig.DEFAULT_PRICE,
-                "average_rating": float(self.average_rating) if self.average_rating else AutoProductConfig.DEFAULT_RATING,
+                "price": float(self.price) if self.price is not None else self._DEFAULT_PRICE,
+                "average_rating": float(self.average_rating) if self.average_rating else self._DEFAULT_RATING,
                 "rating_count": self.rating_count or 0,
                 "description": (self.description or "")[:200],
                 "product_type": self.product_type or "",
@@ -1226,38 +1095,61 @@ class Product(BaseModel):
                 "tags": json.dumps(self.tags[:5], ensure_ascii=False) if self.tags else "[]",
                 "ml_tags": json.dumps(self.ml_tags[:5], ensure_ascii=False) if self.ml_tags else "[]",
                 "compatible_devices": json.dumps(self.compatible_devices[:5], ensure_ascii=False) if self.compatible_devices else "[]",
-                "ml_processed": self.ml_processed,
+                "ml_processed": self.ml_processed,  # ok
                 "has_embedding": bool(self.embedding),
-                "embedding_model": self.embedding_model or "",
-                "embedding_dim": len(self.embedding) if self.embedding else 0
             }
+
+            # === 🔥 AGREGAR CAMPOS NLP SOLO SI EXISTEN (como pidieron) ===
+            metadata["nlp_processed"] = getattr(self, "nlp_processed", False)
+            metadata["has_ner"] = getattr(self, "has_ner", False)
+            metadata["has_zero_shot"] = getattr(self, "has_zero_shot", False)
+
+            # ======== SERIALIZACIONES OPCIONALES ==========
+            if getattr(self, "ner_entities", None):
+                try:
+                    metadata['ner_entities'] = json.dumps(self.ner_entities, ensure_ascii=False, default=str)
+                except: pass
             
-            # Agregar categoría predicha si existe
-            if self.predicted_category:
-                metadata['predicted_category'] = self.predicted_category
-            
-            # Agregar entidades extraídas si existen
-            if self.extracted_entities:
-                metadata['extracted_entities'] = json.dumps(
-                    {k: v[:3] for k, v in self.extracted_entities.items() if v},
-                    ensure_ascii=False
-                )
-            
+            if getattr(self, "zero_shot_classification", None):
+                try:
+                    metadata['zero_shot_classification'] = json.dumps(self.zero_shot_classification, ensure_ascii=False)
+                except: pass
+
+            if self.embedding and self.embedding_model:
+                try:
+                    metadata["embedding"] = json.dumps(self.embedding, ensure_ascii=False)
+                    metadata["embedding_model"] = self.embedding_model
+                    metadata["has_embedding"] = True
+                except:
+                    metadata["has_embedding"] = False
+
+            if getattr(self,"predicted_category", None):
+                metadata["predicted_category"] = self.predicted_category
+                if not metadata["main_category"] or metadata["main_category"]=="General":
+                    metadata["main_category"]=self.predicted_category
+
+            if getattr(self,"extracted_entities", None):
+                try:
+                    metadata["extracted_entities"]=json.dumps({k:v[:3] for k,v in self.extracted_entities.items() if v},ensure_ascii=False)
+                except: pass
+
+            logger.debug(f"[to_metadata] Producto {self.id}: categoría='{metadata['main_category']}', embedding={metadata.get('has_embedding')}")
             return metadata
-            
+
         except Exception as e:
-            logger.error(f"Error converting to metadata: {e}")
+            logger.error(f"❌ Error converting to metadata: {e}")
+            import traceback; logger.error(traceback.format_exc())
             return self._get_fallback_metadata()
+
     
     def _get_fallback_metadata(self) -> dict:
-        """Metadata de fallback en caso de error"""
         return {
             "id": self.id,
             "title": self.title[:100] if self.title else "Untitled Product",
             "main_category": "Uncategorized",
             "categories": "[]",
-            "price": AutoProductConfig.DEFAULT_PRICE,
-            "average_rating": AutoProductConfig.DEFAULT_RATING,
+            "price": self._DEFAULT_PRICE,
+            "average_rating": self._DEFAULT_RATING,
             "rating_count": 0,
             "description": "",
             "product_type": "",
@@ -1267,19 +1159,16 @@ class Product(BaseModel):
             "ml_tags": "[]",
             "compatible_devices": "[]",
             "ml_processed": False,
-            "has_embedding": False,
-            "embedding_model": "",
-            "embedding_dim": 0
         }
     
     def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
-        """Incluye procesamiento automático en el dump"""
         self.clean_image_urls()
         return super().model_dump(*args, **kwargs)
     
     def get_summary(self) -> Dict[str, Any]:
-        """Resumen del producto para visualización"""
-        return {
+        settings = get_settings()
+        
+        summary = {
             "id": self.id,
             "title": self.title,
             "price": self.price,
@@ -1292,108 +1181,57 @@ class Product(BaseModel):
             "feature_count": len(self.details.features) if self.details else 0,
             "tag_count": len(self.tags),
             "ml_tag_count": len(self.ml_tags),
-            "ml_enriched": self.ml_processed,
-            "has_embedding": bool(self.embedding),
+            "ml_enabled": settings.ML_ENABLED,
+            "ml_processed": self.ml_processed,
             "entity_count": sum(len(v) for v in self.extracted_entities.values())
         }
-    
-    def get_ml_metrics(self) -> Dict[str, Any]:
-        """Obtiene métricas específicas del enriquecimiento ML"""
-        if not self.ml_processed:
-            return {"ml_processed": False}
         
-        return {
-            "ml_processed": True,
-            "predicted_category": self.predicted_category,
-            "entity_groups": list(self.extracted_entities.keys()),
-            "total_entities": sum(len(v) for v in self.extracted_entities.values()),
-            "ml_tags_count": len(self.ml_tags),
-            "has_embedding": bool(self.embedding),
-            "embedding_model": self.embedding_model,
-            "embedding_dim": len(self.embedding) if self.embedding else 0
-        }
+        if self.embedding:
+            summary['has_embedding'] = True
+            summary['embedding_dim'] = len(self.embedding)
+            summary['embedding_model'] = self.embedding_model
+        else:
+            summary['has_embedding'] = False
+        
+        return summary
     
     def __str__(self) -> str:
         ml_info = f", ML: {self.ml_processed}" if hasattr(self, 'ml_processed') else ""
-        return f"Product(title='{self.title}', price={self.price}, category='{self.main_category}'{ml_info})"
+        embedding_info = f", HasEmbedding: {bool(self.embedding)}" if hasattr(self, 'embedding') else ""
+        return f"Product(title='{self.title}', price={self.price}, category='{self.main_category}'{ml_info}{embedding_info})"
     
     def __repr__(self) -> str:
         return f"Product(id='{self.id}', title='{self.title}', ml_processed={self.ml_processed})"
 
-
-# Funciones de utilidad para el sistema completo
-def create_product_pipeline(
-    raw_data: Dict[str, Any],
-    enable_ml: bool = True,
-    ml_features: List[str] = None
-) -> Product:
-    """
-    Pipeline completo para creación de productos.
-    
-    Args:
-        raw_data: Datos crudos del producto
-        enable_ml: Habilitar procesamiento ML
-        ml_features: Features ML específicas a habilitar
-        
-    Returns:
-        Producto procesado
-    """
-    # Configurar ML según parámetros
-    Product.configure_ml(enabled=enable_ml)
-    if ml_features:
-        Product.configure_ml(features=ml_features)
-    
-    # Crear producto
-    product = Product.from_dict(raw_data)
-    
-    return product
+def create_product(raw_data: Dict[str, Any]) -> Product:
+    return Product.from_dict(raw_data)
 
 
-def batch_process_products(
-    raw_data_list: List[Dict[str, Any]],
-    enable_ml: bool = True,
-    batch_size: int = 32
-) -> List[Product]:
-    """
-    Procesa un lote de productos de manera optimizada.
+def batch_create_products(raw_data_list: List[Dict[str, Any]]) -> List[Product]:
     
-    Args:
-        raw_data_list: Lista de datos crudos
-        enable_ml: Habilitar procesamiento ML
-        batch_size: Tamaño del lote para ML
-        
-    Returns:
-        Lista de productos procesados
-    """
-    # Configurar ML
-    Product.configure_ml(enabled=enable_ml)
-    
-    # Procesar por lotes
-    if enable_ml and AutoProductConfig.ML_ENABLED:
-        return Product.batch_create(raw_data_list, ml_enrich=True, batch_size=batch_size)
-    else:
-        return [Product.from_dict(data, ml_enrich=False) for data in raw_data_list]
+    return Product.batch_create(raw_data_list)
 
 
-def get_system_metrics() -> Dict[str, Any]:
-    """Obtiene métricas del sistema completo"""
-    metrics = {
+def get_product_metrics() -> Dict[str, Any]:
+    settings = get_settings()
+    
+    return {
         "product_model": {
-            "ml_enabled": AutoProductConfig.ML_ENABLED,
-            "ml_config": Product._ml_config,
-            "max_title_length": AutoProductConfig.MAX_TITLE_LENGTH,
-            "max_description_length": AutoProductConfig.MAX_DESCRIPTION_LENGTH
+            "ml_enabled": settings.ML_ENABLED,
+            "ml_features": list(settings.ML_FEATURES) if settings.ML_ENABLED else [],
+            "embedding_model": settings.ML_EMBEDDING_MODEL if settings.ML_ENABLED else None,
+            "max_title_length": Product._MAX_TITLE_LENGTH,
+            "max_description_length": Product._MAX_DESCRIPTION_LENGTH
         }
     }
-    
-    # Agregar métricas ML si está disponible
-    if AutoProductConfig.ML_ENABLED:
-        ml_metrics = MLProductEnricher.get_metrics()
-        metrics["ml_system"] = ml_metrics
-    
-    return metrics
 
 
-# Aliases para compatibilidad
-ProductImage = ProductImage
-ProductDetails = ProductDetails
+__all__ = [
+    'Product',
+    'ProductImage', 
+    'ProductDetails',
+    'MLProductProcessor',
+    'create_product',
+    'batch_create_products',
+    'get_product_metrics'
+]

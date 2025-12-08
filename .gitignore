@@ -22,9 +22,10 @@ __pycache__/
 # ======================
 # DIRECTORIOS DE DATOS
 # ======================
-data/
-src/data/
-data/processed/
+data/vector
+data/models
+data/raw
+data/processed
 *.pkl
 *.index
 !src/core/data/
@@ -53,6 +54,6 @@ dist/
 # ======================
 # ARCHIVOS QUE QUIERES IGNORAR
 # ======================
-README.md
+
 models/rl_models/checkpoint-40/config.json
 /models

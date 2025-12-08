@@ -1,1195 +1,740 @@
+#!/usr/bin/env python3
+"""
+ML Processor con gestión de memoria - VERSIÓN CORREGIDA SIN IMPORTACIÓN CIRCULAR
+"""
 # src/core/data/ml_processor.py
-"""
-Módulo separado para el preprocesador ML 100% LOCAL.
-Modelos pequeños que funcionan sin conexión a internet.
-Con sistema de cache para modelos descargados.
-"""
-
 import logging
-from typing import List, Dict, Any, Optional, Union
+import time
+import gc
+import threading
+from typing import Optional, List, Dict, Any, ContextManager
+from pathlib import Path
+from functools import lru_cache
+import psutil
 import numpy as np
-import hashlib
-import re
-from datetime import datetime
-import os
+
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Definir constantes locales para evitar importaciones circulares
-DEFAULT_CATEGORIES = [
-    "Electronics", "Home & Kitchen", "Clothing & Accessories", 
-    "Sports & Outdoors", "Books", "Health & Beauty", 
-    "Toys & Games", "Automotive", "Office Supplies", "Food & Beverages"
-]
+# ------------------------------------------------------------------
+# Helper functions primero para evitar imports circulares
+# ------------------------------------------------------------------
 
-# Modelos locales disponibles
-LOCAL_EMBEDDING_MODELS = [
-    'all-MiniLM-L6-v2',           # 384 dimensiones, rápido, multilingüe
-    'all-MiniLM-L12-v2',          # 384 dimensiones, más preciso
-    'paraphrase-multilingual-MiniLM-L12-v2',  # Especialmente bueno para español
-    'distiluse-base-multilingual-cased-v1',   # Multilingüe, 512 dimensiones
-    'paraphrase-multilingual-mpnet-base-v2',  # 768 dimensiones, muy preciso
-    'LaBSE',                                 # 768 dimensiones, 109 idiomas
-]
+def _get_embedding_model_singleton(model_name: str = None):
+    """Singleton para modelo de embeddings (versión separada)."""
+    if not hasattr(_get_embedding_model_singleton, '_model'):
+        _get_embedding_model_singleton._model = None
+        _get_embedding_model_singleton._lock = threading.Lock()
+    
+    if model_name is None:
+        model_name = settings.ML_EMBEDDING_MODEL
+    
+    if _get_embedding_model_singleton._model is None:
+        with _get_embedding_model_singleton._lock:
+            if _get_embedding_model_singleton._model is None:
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    logger.info(f"🔧 Cargando modelo de embeddings: {model_name}")
+                    _get_embedding_model_singleton._model = SentenceTransformer(model_name)
+                    logger.info(f"✅ Modelo de embeddings cargado")
+                except ImportError:
+                    logger.warning("⚠️ SentenceTransformer no disponible")
+                    _get_embedding_model_singleton._model = None
+                except Exception as e:
+                    logger.error(f"❌ Error cargando modelo: {e}")
+                    _get_embedding_model_singleton._model = None
+    
+    return _get_embedding_model_singleton._model
 
-LOCAL_ZERO_SHOT_MODELS = [
-    "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
-    "facebook/bart-large-mnli",
-    "joeddav/xlm-roberta-large-xnli"  # Modelo multilingüe adicional
-]
+# Helper functions primero para evitar imports circulares
+def _get_nlp_enricher_singleton(enable_nlp: bool = True, device: str = "cpu"):
+    """Singleton para NLP enricher (versión separada)."""
+    if not hasattr(_get_nlp_enricher_singleton, '_enricher'):
+        _get_nlp_enricher_singleton._enricher = None
+        _get_nlp_enricher_singleton._lock = threading.Lock()
+    
+    if not enable_nlp:
+        return None
+    
+    if _get_nlp_enricher_singleton._enricher is None:
+        with _get_nlp_enricher_singleton._lock:
+            if _get_nlp_enricher_singleton._enricher is None:
+                try:
+                    from src.core.nlp.enrichment import NLPEnricher
+                    logger.info(f"🔧 Cargando NLP enricher")
+                    _get_nlp_enricher_singleton._enricher = NLPEnricher(device=device)
+                    _get_nlp_enricher_singleton._enricher.initialize()
+                    logger.info(f"✅ NLP enricher cargado")
+                except ImportError:
+                    logger.warning("⚠️ NLPEnricher no disponible")
+                    _get_nlp_enricher_singleton._enricher = None
+                except Exception as e:
+                    logger.error(f"❌ Error cargando NLP enricher: {e}")
+                    _get_nlp_enricher_singleton._enricher = None
+    
+    return _get_nlp_enricher_singleton._enricher
 
-LOCAL_NER_MODELS = [
-    "Davlan/bert-base-multilingual-cased-ner-hrl",
-    "dslim/bert-base-NER",
-    "Babelscape/wikineural-multilingual-ner"
-]
+def _create_dummy_embedder(dimension: int = 384):
+    """Crea un embedder dummy como fallback."""
+    class DummyEmbedder:
+        def __init__(self, dimension: int = 384):
+            self.dimension = dimension
+            self.model_name = "dummy_embedder"
+        
+        def encode(self, texts: List[str], **kwargs) -> List[List[float]]:
+            import random
+            embeddings = []
+            for text in texts:
+                random.seed(hash(text) % 1000000)
+                embedding = [random.gauss(0, 1) for _ in range(self.dimension)]
+                norm = sum(x**2 for x in embedding) ** 0.5
+                if norm > 0:
+                    embedding = [x / norm for x in embedding]
+                embeddings.append(embedding)
+            return embeddings
+        
+        def embed_documents(self, texts: List[str]) -> List[List[float]]:
+            return self.encode(texts)
+    
+    return DummyEmbedder(dimension)
 
+
+# ------------------------------------------------------------------
+# Clase principal
+# ------------------------------------------------------------------
 
 class ProductDataPreprocessor:
-    """
-    Preprocesador de datos de productos con capacidades ML avanzadas 100% LOCAL.
-    Enriquece productos con categorías, entidades, tags y embeddings.
-    Con sistema de cache para modelos.
+    """Preprocesador de datos de productos con gestión de memoria."""
     
-    NOTA: Este módulo NO importa Product para evitar dependencias circulares.
-    Usa tipos genéricos (Dict[str, Any]) en su lugar.
-    """
-    
-    def __init__(
-        self, 
-        categories: List[str] = None,
-        use_gpu: bool = False,
-        tfidf_max_features: int = 50,
-        embedding_model: str = 'all-MiniLM-L6-v2',
-        zero_shot_model: str = None,
-        ner_model: str = None,
-        verbose: bool = False,
-        max_memory_mb: int = 2048,
-        use_cache: bool = True
-    ):
-        """
-        Inicializa el preprocesador con modelos ML 100% locales.
-        
-        Args:
-            categories: Lista de categorías para clasificación zero-shot
-            use_gpu: Si es True, intenta usar GPU para inferencia
-            tfidf_max_features: Número máximo de features para TF-IDF
-            embedding_model: Modelo de Sentence Transformers a usar
-            zero_shot_model: Modelo específico para zero-shot
-            ner_model: Modelo específico para NER
-            verbose: Si es True, muestra logs detallados
-            max_memory_mb: Límite máximo de memoria en MB
-            use_cache: Si es True, usa sistema de cache para modelos
-        """
-        self.categories = categories or DEFAULT_CATEGORIES
-        self.device = 0 if use_gpu else -1
+    def __init__(self, 
+                 verbose: bool = False,
+                 max_memory_mb: int = 2048,
+                 memory_monitoring: bool = True,
+                enable_nlp: bool = True):
         self.verbose = verbose
-        self.use_cache = use_cache
+        self.max_memory_mb = max_memory_mb
+        self.memory_monitoring = memory_monitoring
         
-        # Configurar cache de modelos
-        self._setup_model_cache()
-        
-        # Configurar modelos
-        self.embedding_model_name = self._validate_model_name(
-            embedding_model, 
-            LOCAL_EMBEDDING_MODELS, 
-            'all-MiniLM-L6-v2'
-        )
-        
-        self.zero_shot_model_name = zero_shot_model or LOCAL_ZERO_SHOT_MODELS[0]
-        self.ner_model_name = ner_model or LOCAL_NER_MODELS[0]
-        
-        if verbose:
-            logger.info(f"✅ Usando modelo local: {self.embedding_model_name}")
-            logger.info(f"📊 Categorías configuradas: {len(self.categories)}")
-            if self.model_cache and use_cache:
-                logger.info("🔄 Sistema de cache de modelos activado")
-        
-        # 🔥 CORRECCIÓN: Importación condicional de librerías ML
-        self._import_ml_libraries()
-        
-        # Inicializar modelos (lazy loading en métodos)
-        self._zero_shot_classifier = None
-        self._ner_pipeline = None
+        # Modelos (lazy loading)
         self._embedding_model = None
-        
-        # Inicializar vectorizador TF-IDF solo si sklearn está disponible
-        if self.sklearn_available:
-            try:
-                from sklearn.feature_extraction.text import TfidfVectorizer
-                # Usar stopwords en español para TF-IDF
-                self.tfidf_vectorizer = TfidfVectorizer(
-                    stop_words=None,  # No usar stopwords predefinidas para español
-                    max_features=tfidf_max_features,
-                    ngram_range=(1, 2),
-                    min_df=2
-                )
-                if verbose:
-                    logger.info("✅ Vectorizador TF-IDF inicializado (con soporte español)")
-            except ImportError:
-                self.tfidf_vectorizer = None
-                logger.warning("scikit-learn import falló, TF-IDF deshabilitado")
-        else:
-            self.tfidf_vectorizer = None
+        self._zero_shot_classifier = None
+        self._model_lock = threading.Lock()
         
         # Cache para embeddings frecuentes
         self._embedding_cache = {}
+        self._cache_lock = threading.Lock()
+        self.enable_nlp = enable_nlp
+        self._nlp_enricher = None
+        # Estadísticas
+        self._stats = {
+            'total_processed': 0,
+            'memory_usage_peak': 0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'start_time': time.time()
+        }
         
-        # Flag para TF-IDF entrenado
-        self._tfidf_fitted = False
-        
-        # Cache de modelos para reutilización
-        self._model_cache = {}
-        
-        # Configuración de memoria
-        self.set_max_memory_usage(max_memory_mb)
-        
-        if verbose:
-            logger.info("✅ ProductDataPreprocessor inicializado (100% LOCAL)")
-            logger.info(f"📦 Dependencias: transformers={self.transformers_available}, "
-                       f"sentence-transformers={self.sentence_transformers_available}, "
-                       f"scikit-learn={self.sklearn_available}")
-
-    def _validate_model_name(
-        self, 
-        model_name: str, 
-        available_models: List[str], 
-        default_model: str
-    ) -> str:
-        """Valida que el modelo esté en la lista de disponibles."""
-        if model_name not in available_models:
-            logger.warning(f"⚠️ Modelo {model_name} no reconocido, usando {default_model}")
-            return default_model
-        return model_name
-
-    def _setup_model_cache(self):
-        """Configura el sistema de cache para modelos."""
-        if not self.use_cache:
-            self.model_cache = None
-            if self.verbose:
-                logger.info("⚠️ Sistema de cache desactivado por configuración")
-            return
-            
-        try:
-            from src.core.utils.model_cache import ModelCache
-            
-            # Intentar inicializar el cache
-            self.model_cache = ModelCache(verbose=self.verbose)
-            
-            # Pre-descargar modelos si es verbose
-            if self.verbose:
-                self.model_cache.pre_download_essential_models()
-            
-        except ImportError as e:
-            self.model_cache = None
-            if self.verbose:
-                logger.warning(f"⚠️ Model cache no disponible: {e}")
-                logger.warning("Usando descarga normal de modelos")
-        except Exception as e:
-            self.model_cache = None
-            logger.error(f"❌ Error inicializando model cache: {e}")
-            if self.verbose:
-                logger.warning("Usando descarga normal de modelos")
-
-    def _import_ml_libraries(self):
-        """Importa librerías ML de forma condicional."""
-        self.transformers_available = False
-        self.sentence_transformers_available = False
-        self.sklearn_available = False
-        
-        # Intentar importar transformers
-        try:
-            import transformers
-            self.transformers_available = True
-        except ImportError:
-            logger.warning("transformers no disponible. Zero-shot y NER deshabilitados.")
-        
-        # Intentar importar sentence-transformers
-        try:
-            import sentence_transformers
-            self.sentence_transformers_available = True
-        except ImportError:
-            logger.warning("sentence-transformers no disponible. Embeddings deshabilitados.")
-        
-        # Intentar importar scikit-learn
-        try:
-            import sklearn
-            self.sklearn_available = True
-        except ImportError:
-            logger.warning("scikit-learn no disponible. TF-IDF deshabilitado.")
-
-    # --------------------------------------------------
-    # Propiedades para lazy loading de modelos con cache
-    # --------------------------------------------------
-    
-    @property
-    def zero_shot_classifier(self):
-        """Obtiene el clasificador zero-shot (lazy loading) con cache"""
-        if self._zero_shot_classifier is None and self.transformers_available:
-            try:
-                from transformers import pipeline
-                
-                model_name = self.zero_shot_model_name
-                
-                # Verificar si ya tenemos un modelo en cache
-                if model_name in self._model_cache:
-                    self._zero_shot_classifier = self._model_cache[model_name]
-                    if self.verbose:
-                        logger.info(f"🔄 Zero-shot cargado desde cache interno: {model_name}")
-                    return self._zero_shot_classifier
-                
-                # Intentar cargar desde cache del sistema
-                model_path = None
-                if self.model_cache:
-                    model_path = self.model_cache.get_model_path("zero_shot", model_name)
-                
-                if model_path and os.path.exists(model_path):
-                    # Cargar desde cache local
-                    if self.verbose:
-                        logger.info(f"📂 Cargando zero-shot desde cache: {model_path}")
-                    self._zero_shot_classifier = pipeline(
-                        "zero-shot-classification", 
-                        model=str(model_path),
-                        device=self.device,
-                        framework="pt"
-                    )
-                else:
-                    # Descargar del hub
-                    if self.verbose:
-                        logger.info(f"⬇️ Descargando zero-shot: {model_name}")
-                    self._zero_shot_classifier = pipeline(
-                        "zero-shot-classification", 
-                        model=model_name,
-                        device=self.device,
-                        framework="pt"
-                    )
-                    
-                    # Guardar en cache si está disponible
-                    if self.model_cache and model_path:
-                        try:
-                            self.model_cache.cache_model("zero_shot", model_name, model_path)
-                        except Exception as e:
-                            logger.warning(f"No se pudo guardar en cache: {e}")
-                
-                # Guardar en cache interno para reutilización
-                self._model_cache[model_name] = self._zero_shot_classifier
-                
-                if self.verbose:
-                    logger.info(f"✅ Zero-shot classifier cargado: {model_name}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error cargando zero-shot classifier: {e}")
-                # Fallback a modelo aún más pequeño
-                try:
-                    from transformers import pipeline
-                    self._zero_shot_classifier = pipeline(
-                        "zero-shot-classification", 
-                        model="facebook/bart-large-mnli",
-                        device=self.device
-                    )
-                    logger.info("✅ Zero-shot classifier fallback cargado")
-                except Exception as e2:
-                    logger.error(f"❌ Fallback también falló: {e2}")
-                    self._zero_shot_classifier = None
-        return self._zero_shot_classifier
-    
-    @property
-    def ner_pipeline(self):
-        """Obtiene el pipeline NER (lazy loading) con cache"""
-        if self._ner_pipeline is None and self.transformers_available:
-            try:
-                from transformers import pipeline
-                
-                model_name = self.ner_model_name
-                
-                # Verificar cache interno
-                if model_name in self._model_cache:
-                    self._ner_pipeline = self._model_cache[model_name]
-                    if self.verbose:
-                        logger.info(f"🔄 NER cargado desde cache interno: {model_name}")
-                    return self._ner_pipeline
-                
-                # Intentar cargar desde cache del sistema
-                model_path = None
-                if self.model_cache:
-                    model_path = self.model_cache.get_model_path("ner", model_name)
-                
-                if model_path and os.path.exists(model_path):
-                    # Cargar desde cache local
-                    if self.verbose:
-                        logger.info(f"📂 Cargando NER desde cache: {model_path}")
-                    self._ner_pipeline = pipeline(
-                        "ner", 
-                        model=str(model_path),
-                        aggregation_strategy="simple",
-                        device=self.device
-                    )
-                else:
-                    # Descargar del hub
-                    if self.verbose:
-                        logger.info(f"⬇️ Descargando NER: {model_name}")
-                    self._ner_pipeline = pipeline(
-                        "ner", 
-                        model=model_name,
-                        aggregation_strategy="simple",
-                        device=self.device
-                    )
-                    
-                    # Guardar en cache si está disponible
-                    if self.model_cache and model_path:
-                        try:
-                            self.model_cache.cache_model("ner", model_name, model_path)
-                        except Exception as e:
-                            logger.warning(f"No se pudo guardar en cache: {e}")
-                
-                # Guardar en cache interno
-                self._model_cache[model_name] = self._ner_pipeline
-                
-                if self.verbose:
-                    logger.info(f"✅ NER pipeline cargado: {model_name}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error cargando NER pipeline: {e}")
-                # Fallback a modelo más pequeño
-                try:
-                    from transformers import pipeline
-                    self._ner_pipeline = pipeline(
-                        "ner", 
-                        model="dslim/bert-base-NER",
-                        aggregation_strategy="simple",
-                        device=self.device
-                    )
-                    logger.info("✅ NER pipeline fallback cargado")
-                except Exception as e2:
-                    logger.error(f"❌ Fallback también falló: {e2}")
-                    self._ner_pipeline = None
-        return self._ner_pipeline
-    
-    @property
-    def embedding_model(self):
-        """Obtiene el modelo de embeddings (lazy loading) con cache"""
-        if self._embedding_model is None and self.sentence_transformers_available:
-            try:
-                from sentence_transformers import SentenceTransformer
-                
-                model_name = self.embedding_model_name
-                
-                # Verificar cache interno
-                if model_name in self._model_cache:
-                    self._embedding_model = self._model_cache[model_name]
-                    if self.verbose:
-                        logger.info(f"🔄 Embedding model cargado desde cache interno: {model_name}")
-                    return self._embedding_model
-                
-                # Intentar cargar desde cache del sistema
-                model_path = None
-                if self.model_cache:
-                    model_path = self.model_cache.get_model_path("embedding", model_name)
-                
-                if model_path and os.path.exists(model_path):
-                    # Cargar desde cache local
-                    if self.verbose:
-                        logger.info(f"📂 Cargando embedding model desde cache: {model_path}")
-                    self._embedding_model = SentenceTransformer(str(model_path))
-                else:
-                    # Descargar del hub
-                    if self.verbose:
-                        logger.info(f"⬇️ Descargando embedding model: {model_name}")
-                    self._embedding_model = SentenceTransformer(model_name)
-                    
-                    # Guardar en cache si está disponible
-                    if self.model_cache and model_path:
-                        try:
-                            self.model_cache.cache_model("embedding", model_name, model_path)
-                        except Exception as e:
-                            logger.warning(f"No se pudo guardar en cache: {e}")
-                
-                # Mover a GPU si está configurado
-                if self.device == 0:
-                    try:
-                        self._embedding_model = self._embedding_model.to('cuda')
-                    except:
-                        logger.warning("⚠️ GPU no disponible, usando CPU")
-                
-                # Guardar en cache interno
-                self._model_cache[model_name] = self._embedding_model
-                
-                if self.verbose:
-                    model_info = self._embedding_model
-                    logger.info(f"✅ Embedding model cargado: {model_name}")
-                    if hasattr(model_info, 'get_sentence_embedding_dimension'):
-                        logger.info(f"📐 Dimensiones: {model_info.get_sentence_embedding_dimension()}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error cargando embedding model {model_name}: {e}")
-                # Fallback a modelo más pequeño
-                try:
-                    from sentence_transformers import SentenceTransformer
-                    self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-                    logger.info("✅ Embedding model fallback cargado: all-MiniLM-L6-v2")
-                except Exception as e2:
-                    logger.error(f"❌ Fallback también falló: {e2}")
-                    self._embedding_model = None
-        return self._embedding_model
-    
-    # --------------------------------------------------
-    # Métodos de utilidad para cache
-    # --------------------------------------------------
-    
-    def clear_internal_cache(self):
-        """Limpia el cache interno de modelos."""
-        self._model_cache.clear()
-        self._embedding_cache.clear()
-        self._zero_shot_classifier = None
-        self._ner_pipeline = None
-        self._embedding_model = None
         if self.verbose:
-            logger.info("🧹 Cache interno limpiado")
+            logger.info(f"🔧 ProductDataPreprocessor inicializado (límite memoria: {max_memory_mb}MB)")
+    def _get_nlp_enricher(self):
+        """Obtiene enriquecedor NLP (lazy loading)"""
+        if self.enable_nlp and self._nlp_enricher is None:
+            try:
+                # Usar singleton para evitar problemas
+                self._nlp_enricher = _get_nlp_enricher_singleton(
+                    enable_nlp=True,
+                    device=self.device if hasattr(self, 'device') else "cpu"
+                )
+                if self._nlp_enricher:
+                    logger.debug("✅ NLP enricher obtenido del singleton")
+            except Exception as e:
+                logger.warning(f"⚠️ NLPEnricher no disponible: {e}")
+                self._nlp_enricher = None
+        return self._nlp_enricher
+    def _log(self, message: str):
+        """Log condicional basado en verbose."""
+        if self.verbose:
+            logger.info(f"[ML Processor] {message}")
     
     def warm_up_models(self):
-        """Pre-calienta los modelos para evitar latencia en primera inferencia."""
-        if self.verbose:
-            logger.info("🔥 Pre-calentando modelos...")
+        """Pre-carga los modelos de ML."""
+        self._log("🔧 Pre-calentando modelos...")
         
-        # Pre-cargar todos los modelos
-        models_to_warm = []
-        
-        if self.transformers_available:
-            models_to_warm.extend(['zero_shot', 'ner'])
-        
-        if self.sentence_transformers_available:
-            models_to_warm.append('embedding')
-        
-        for model_type in models_to_warm:
-            try:
-                if model_type == 'zero_shot':
-                    _ = self.zero_shot_classifier
-                elif model_type == 'ner':
-                    _ = self.ner_pipeline
-                elif model_type == 'embedding':
-                    _ = self.embedding_model
-            except Exception as e:
-                logger.warning(f"⚠️ No se pudo pre-cargar {model_type}: {e}")
-        
-        if self.verbose:
-            logger.info("✅ Modelos pre-calentados")
-            
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """Obtiene estadísticas del cache."""
-        stats = {
-            "internal_cache_size": len(self._model_cache),
-            "embedding_cache_size": len(self._embedding_cache),
-            "use_system_cache": self.model_cache is not None,
-            "models_loaded": list(self._model_cache.keys())
-        }
-        
-        if self.model_cache:
-            stats.update(self.model_cache.get_stats())
-        
-        return stats
-    def preprocess_product(
-        self, 
-        product_data: Dict[str, Any],
-        enable_ml: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Procesa un producto con todas las capacidades ML 100% local.
-        
-        Args:
-            product_data: Diccionario con datos del producto
-            enable_ml: Si es False, solo realiza limpieza básica sin ML
-            
-        Returns:
-            Diccionario con producto enriquecido
-        """
+        # Cargar modelo de embeddings
         try:
-            # Limpieza básica siempre
-            cleaned_data = self._clean_product_data(product_data)
-            
-            if not enable_ml:
-                cleaned_data['ml_processed'] = False
-                return cleaned_data
-            
-            # Extraer texto para procesamiento
-            title = cleaned_data.get('title', '')
-            description = cleaned_data.get('description', '')
-            
-            # Limpiar texto (eliminar caracteres extraños)
-            title = self._clean_text(title)
-            description = self._clean_text(description)
-            
-            full_text = f"{title}. {description}".strip()
-            
-            if not full_text or len(full_text) < 10:
-                if self.verbose:
-                    logger.warning("⚠️ Producto sin texto suficiente para procesamiento ML")
-                cleaned_data['ml_processed'] = False
-                return cleaned_data
-            
-            enriched_data = cleaned_data.copy()
-            
-            # 1. Clasificación Zero-Shot para categorías
-            if self.transformers_available:
-                predicted_category = self._predict_category_zero_shot(full_text)
-                if predicted_category:
-                    enriched_data['predicted_category'] = predicted_category
-                    # Añadir a categorías si no existe
-                    enriched_data.setdefault('categories', [])
-                    if predicted_category not in enriched_data['categories']:
-                        enriched_data['categories'].append(predicted_category)
-            
-            # 2. Extracción de entidades con NER
-            if self.transformers_available:
-                entities = self._extract_entities_ner(full_text)
-                if entities:
-                    enriched_data['extracted_entities'] = entities
-            
-            # 3. Generación de tags con TF-IDF
-            if self.sklearn_available and self._tfidf_fitted:
-                tags = self._generate_tags_tfidf(full_text)
-                if tags:
-                    existing_tags = enriched_data.setdefault('tags', [])
-                    for tag in tags[:5]:
-                        if tag not in existing_tags:
-                            existing_tags.append(tag)
-            
-            # 4. Generación de embedding semántico
-            if self.sentence_transformers_available:
-                embedding = self._generate_embedding(full_text)
-                if embedding is not None:
-                    enriched_data['embedding'] = embedding
-                    enriched_data['embedding_model'] = self.embedding_model_name
-            
-            enriched_data['ml_processed'] = True
-            enriched_data['ml_timestamp'] = datetime.now().isoformat()
-            
-            return enriched_data
-            
+            self._get_embedding_model()
+            self._log("✅ Modelo de embeddings pre-cargado")
         except Exception as e:
-            logger.error(f"❌ Error procesando producto: {e}")
-            # Devolver datos limpios pero sin ML
-            cleaned_data = self._clean_product_data(product_data)
-            cleaned_data['ml_processed'] = False
-            cleaned_data['ml_error'] = str(e)
-            return cleaned_data
-    def process_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Procesa un producto completo con todas las capacidades ML."""
-        enriched = product_data.copy()
+            self._log(f"⚠️ Error pre-cargando modelo de embeddings: {e}")
         
-        # Extraer texto para procesamiento
-        text_fields = []
-        for field in ['name', 'description', 'brand', 'category']:
-            if field in product_data and product_data[field]:
-                text_fields.append(str(product_data[field]))
-        
-        if not text_fields:
-            return enriched
-        
-        combined_text = " ".join(text_fields)
-        
-        # 1. Clasificación de categoría
-        classification = self.classify_product(combined_text)
-        if classification["labels"]:
-            enriched["predicted_category"] = classification["labels"][0]
-            enriched["category_confidence"] = float(classification["scores"][0])
-        
-        # 2. Extracción de entidades
-        entities = self.extract_entities(combined_text)
-        if entities:
-            enriched["entities"] = [
-                {"entity": e["word"], "type": e["entity_group"], "score": float(e["score"])}
-                for e in entities
-            ]
-        
-        # 3. Generar embedding
-        try:
-            embedding = self.generate_embeddings(combined_text)
-            if embedding.size > 0:
-                enriched["embedding"] = embedding[0].tolist()
-        except Exception as e:
-            logger.warning(f"No se pudo generar embedding: {e}")
-        
-        # 4. Extraer keywords usando TF-IDF si está disponible
-        if self.tfidf_vectorizer and not self._tfidf_fitted:
-            # Entrenar TF-IDF con datos disponibles
-            try:
-                self.tfidf_vectorizer.fit([combined_text])
-                self._tfidf_fitted = True
-            except:
-                pass
-        
-        if self._tfidf_fitted:
-            try:
-                tfidf_result = self.tfidf_vectorizer.transform([combined_text])
-                feature_names = self.tfidf_vectorizer.get_feature_names_out()
-                scores = tfidf_result.toarray()[0]
-                
-                # Obtener top keywords
-                top_indices = scores.argsort()[-5:][::-1]
-                keywords = [feature_names[i] for i in top_indices if scores[i] > 0]
-                
-                if keywords:
-                    enriched["keywords"] = keywords
-            except:
-                pass
-        
-        return enriched
-    def batch_process(self, products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Procesa múltiples productos en lote de forma eficiente."""
-        results = []
-        
-        for i, product in enumerate(products):
-            if self.verbose and i % 10 == 0:
-                logger.info(f"Procesando producto {i+1}/{len(products)}")
-            
-            try:
-                enriched = self.process_product(product)
-                results.append(enriched)
-            except Exception as e:
-                logger.error(f"Error procesando producto {i}: {e}")
-                results.append(product.copy())  # Mantener datos originales
-        
-        return results
-    def classify_product(self, product_text: str) -> Dict[str, Any]:
-        """Clasifica un producto en categorías usando zero-shot learning."""
-        if not self.zero_shot_classifier or not product_text:
-            return {"labels": [], "scores": []}
-        
-        try:
-            result = self.zero_shot_classifier(
-                product_text, 
-                self.categories,
-                multi_label=False
-            )
-            return {
-                "labels": result["labels"],
-                "scores": result["scores"]
-            }
-        except Exception as e:
-            logger.error(f"Error en clasificación zero-shot: {e}")
-            return {"labels": [], "scores": []}
-    def generate_embeddings(self, texts: Union[str, List[str]]) -> np.ndarray:
-        """Genera embeddings para uno o más textos."""
-        if not self.embedding_model:
-            raise ValueError("Embedding model no disponible")
-        
-        if isinstance(texts, str):
-            texts = [texts]
-        
-        # Verificar cache
-        cached_embeddings = []
-        texts_to_process = []
-        
-        for text in texts:
-            text_hash = hashlib.md5(text.encode()).hexdigest()
-            if text_hash in self._embedding_cache:
-                cached_embeddings.append(self._embedding_cache[text_hash])
-            else:
-                texts_to_process.append(text)
-        
-        # Procesar textos no cacheados
-        if texts_to_process:
-            new_embeddings = self.embedding_model.encode(texts_to_process)
-            
-            # Almacenar en cache
-            for text, embedding in zip(texts_to_process, new_embeddings):
-                text_hash = hashlib.md5(text.encode()).hexdigest()
-                self._embedding_cache[text_hash] = embedding
-        else:
-            new_embeddings = []
-        
-        # Combinar resultados
-        if cached_embeddings and new_embeddings.size > 0:
-            all_embeddings = np.vstack([np.array(cached_embeddings), new_embeddings])
-        elif cached_embeddings:
-            all_embeddings = np.array(cached_embeddings)
-        else:
-            all_embeddings = new_embeddings
-        
-        return all_embeddings
-    def _clean_product_data(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Limpia los datos básicos del producto."""
-        cleaned = product_data.copy()
-        
-        # Limpiar campos de texto
-        text_fields = ['title', 'description', 'brand', 'model']
-        for field in text_fields:
-            if field in cleaned and isinstance(cleaned[field], str):
-                cleaned[field] = self._clean_text(cleaned[field]).strip()
-        
-        # Asegurar tipos correctos para listas
-        for list_field in ['categories', 'tags', 'images']:
-            if list_field in cleaned and not isinstance(cleaned[list_field], list):
-                if isinstance(cleaned[list_field], str):
-                    # Intentar convertir string separado por comas a lista
-                    cleaned[list_field] = [
-                        item.strip() 
-                        for item in cleaned[list_field].split(',') 
-                        if item.strip()
-                    ]
-                else:
-                    cleaned[list_field] = []
-        
-        return cleaned
-
-    def _clean_text(self, text: str) -> str:
-        """Limpia texto eliminando caracteres extraños."""
-        if not isinstance(text, str):
-            return ""
-        
-        # Remover múltiples espacios
-        cleaned = re.sub(r'\s+', ' ', text)
-        # Mantener solo caracteres alfanuméricos y puntuación básica
-        cleaned = re.sub(r'[^\w\s.,;:!?¿¡()-]', ' ', cleaned)
-        # Remover espacios al inicio y final
-        return cleaned.strip()
+        # Podrías agregar más modelos aquí
+        self._log("✅ Pre-calentamiento completado")
     
-    def _predict_category_zero_shot(self, text: str) -> Optional[str]:
-        """Predice categoría usando zero-shot classification local."""
-        if not self.zero_shot_classifier or not text.strip():
-            return None
-        
-        try:
-            # Limitar texto para evitar problemas de memoria
-            max_length = 500
-            truncated_text = text[:max_length] if len(text) > max_length else text
-            
-            result = self.zero_shot_classifier(
-                truncated_text, 
-                candidate_labels=self.categories, 
-                multi_label=False
-            )
-            
-            if result["labels"] and result["scores"]:
-                best_idx = np.argmax(result["scores"])
-                best_score = result["scores"][best_idx]
-                best_label = result["labels"][best_idx]
-                
-                # Solo devolver si la confianza es razonable
-                if best_score > 0.3:
-                    return best_label
-                else:
-                    if self.verbose:
-                        logger.debug(f"🔍 Confianza baja para categoría: {best_label} ({best_score:.2f})")
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Error en zero-shot classification: {e}")
-            return None
-    
-    def _extract_entities_ner(self, text: str) -> Dict[str, List[str]]:
-        """Extrae entidades nombradas usando NER local."""
-        if not self.ner_pipeline or not text.strip():
-            return {}
-        
-        try:
-            # Limitar texto para NER
-            max_length = 1000
-            truncated_text = text[:max_length] if len(text) > max_length else text
-            
-            entities = self.ner_pipeline(truncated_text)
-            entity_dict = {}
-            
-            for entity in entities:
-                entity_group = entity['entity_group']
-                word = entity['word']
-                
-                # Limpiar palabra
-                cleaned_word = word.strip()
-                if not cleaned_word or len(cleaned_word) < 2:
-                    continue
-                
-                if entity_group not in entity_dict:
-                    entity_dict[entity_group] = []
-                
-                if cleaned_word not in entity_dict[entity_group]:
-                    entity_dict[entity_group].append(cleaned_word)
-            
-            # Solo mantener grupos relevantes para productos
-            relevant_groups = ['ORG', 'PRODUCT', 'MISC', 'PER', 'LOC']
-            filtered_dict = {
-                group: entity_dict[group] 
-                for group in relevant_groups 
-                if group in entity_dict
-            }
-            
-            return filtered_dict
-            
-        except Exception as e:
-            logger.error(f"❌ Error en NER extraction: {e}")
-            return {}
-    
-    def fit_tfidf(self, descriptions: List[str]) -> None:
-        """Entrena el vectorizador TF-IDF con descripciones de productos."""
-        if not self.sklearn_available or self.tfidf_vectorizer is None:
-            logger.warning("⚠️ TF-IDF no disponible (scikit-learn no instalado)")
-            return
-        
-        try:
-            valid_descriptions = [
-                desc for desc in descriptions 
-                if desc and isinstance(desc, str) and len(desc.strip()) > 10
-            ]
-            
-            if not valid_descriptions:
-                logger.warning("⚠️ No hay descripciones válidas para entrenar TF-IDF")
-                return
-            
-            # Limitar tamaño para entrenamiento eficiente
-            if len(valid_descriptions) > 10000:
-                valid_descriptions = valid_descriptions[:10000]
-                logger.info(f"📊 Limitando TF-IDF a 10,000 descripciones")
-            
-            self.tfidf_vectorizer.fit(valid_descriptions)
-            self._tfidf_fitted = True
-            
-            if self.verbose:
-                vocab_size = len(self.tfidf_vectorizer.get_feature_names_out())
-                logger.info(f"✅ TF-IDF entrenado con {len(valid_descriptions)} descripciones")
-                logger.info(f"📚 Vocabulario: {vocab_size} palabras")
-            
-        except Exception as e:
-            logger.error(f"❌ Error entrenando TF-IDF: {e}")
-            self._tfidf_fitted = False
-    
-    def _generate_tags_tfidf(self, text: str) -> List[str]:
-        """Genera tags usando TF-IDF."""
-        if (not self.sklearn_available or 
-            self.tfidf_vectorizer is None or 
-            not self._tfidf_fitted):
-            return []
-        
-        try:
-            vector = self.tfidf_vectorizer.transform([text])
-            feature_names = self.tfidf_vectorizer.get_feature_names_out()
-            tfidf_scores = vector.toarray()[0]
-            
-            # Obtener top 10 scores
-            top_indices = tfidf_scores.argsort()[-10:][::-1]
-            
-            tags = []
-            for idx in top_indices:
-                score = tfidf_scores[idx]
-                if score > 0.01:  # Umbral mínimo
-                    tags.append(feature_names[idx])
-            
-            return tags[:5]  # Limitar a 5 tags
-            
-        except Exception as e:
-            logger.error(f"❌ Error generando tags TF-IDF: {e}")
-            return []
-    
-    def _generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Genera embedding semántico para el texto."""
-        if not self.embedding_model or not text.strip():
-            return None
-        
-        # Usar hash como clave de cache
-        cache_key = hashlib.md5(text.encode('utf-8')).hexdigest()
-        
-        if cache_key in self._embedding_cache:
-            if self.verbose:
-                logger.debug(f"🔍 Embedding encontrado en cache para texto de {len(text)} chars")
-            return self._embedding_cache[cache_key].copy()
-        
-        try:
-            # Limitar texto para embeddings
-            max_length = 512
-            truncated_text = text[:max_length] if len(text) > max_length else text
-            
-            embedding = self.embedding_model.encode([truncated_text])[0]
-            
-            # Normalizar embedding
-            embedding_norm = embedding / (np.linalg.norm(embedding) + 1e-10)
-            
-            # Guardar en cache (con límite de tamaño)
-            embedding_list = embedding_norm.tolist()
-            self._embedding_cache[cache_key] = embedding_list
-            
-            # Limitar tamaño de cache según configuración de memoria
-            if len(self._embedding_cache) > self.max_cache_size:
-                oldest_key = next(iter(self._embedding_cache))
-                del self._embedding_cache[oldest_key]
-            
-            return embedding_list
-            
-        except Exception as e:
-            logger.error(f"❌ Error generando embedding: {e}")
-            return None
-    
-    def preprocess_batch(
-        self, 
-        products: List[Dict[str, Any]], 
-        batch_size: int = None,
-        enable_ml: bool = True
-    ) -> List[Dict[str, Any]]:
-        """Procesa un lote de productos de manera eficiente."""
-        if not products:
-            logger.warning("⚠️ Lista de productos vacía")
-            return []
-        
-        # Usar batch size configurado o calcular basado en memoria
-        if batch_size is None:
-            batch_size = self.max_batch_size
-        
-        total_products = len(products)
-        if self.verbose:
-            logger.info(f"🚀 Procesando lote de {total_products} productos")
-        
-        # Entrenar TF-IDF si es necesario
-        if enable_ml and self.sklearn_available and not self._tfidf_fitted:
-            self._prepare_tfidf(products)
-        
-        # Procesar en batches para manejar memoria
-        processed_products = []
-        for i in range(0, total_products, batch_size):
-            batch = products[i:i + batch_size]
-            
-            try:
-                for product in batch:
-                    processed = self.preprocess_product(product, enable_ml=enable_ml)
-                    processed_products.append(processed)
-                    
-                    if self.verbose and len(processed_products) % 100 == 0:
-                        logger.info(
-                            f"📦 Procesados {len(processed_products)}/{total_products} "
-                            f"({(len(processed_products)/total_products)*100:.1f}%)"
-                        )
-                        
-            except Exception as e:
-                logger.error(f"❌ Error procesando batch {i//batch_size}: {e}")
-                # Procesar individualmente en caso de error
-                for product in batch:
+    def _get_embedding_model(self):
+        """Obtiene el modelo de embeddings con lazy loading."""
+        if self._embedding_model is None:
+            with self._model_lock:
+                if self._embedding_model is None:
                     try:
-                        processed = self.preprocess_product(product, enable_ml=False)
-                        processed_products.append(processed)
-                    except:
-                        processed_products.append(product)
+                        # Intentar con singleton primero
+                        model = _get_embedding_model_singleton()
+                        if model is not None:
+                            self._embedding_model = model
+                            self._log(f"✅ Modelo de embeddings obtenido del singleton")
+                            return self._embedding_model
+                        
+                        # Fallback a carga directa
+                        from sentence_transformers import SentenceTransformer
+                        model_name = settings.ML_EMBEDDING_MODEL
+                        self._log(f"🔧 Cargando modelo de embeddings: {model_name}")
+                        self._embedding_model = SentenceTransformer(model_name)
+                        self._log(f"✅ Modelo de embeddings cargado directamente")
+                    except ImportError:
+                        self._log("⚠️ SentenceTransformer no disponible, usando dummy")
+                        self._embedding_model = _create_dummy_embedder()
+                    except Exception as e:
+                        self._log(f"❌ Error cargando modelo: {e}, usando dummy")
+                        self._embedding_model = _create_dummy_embedder()
         
-        return self._generate_statistics(processed_products)
-
-    def _prepare_tfidf(self, products: List[Dict[str, Any]]) -> None:
-        """Prepara descripciones para TF-IDF."""
-        descriptions = []
-        for product in products:
-            title = product.get('title', '')
-            desc = product.get('description', '')
-            full_text = f"{title}. {desc}".strip()
-            if full_text and len(full_text) > 10:
-                descriptions.append(full_text)
-        
-        if descriptions:
-            if self.verbose:
-                logger.info(f"📊 Entrenando TF-IDF con {len(descriptions)} descripciones")
-            self.fit_tfidf(descriptions)
-
-    def _generate_statistics(self, processed_products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Genera estadísticas del procesamiento y retorna productos procesados."""
-        if self.verbose and processed_products:
-            # Estadísticas del procesamiento
-            ml_processed = sum(1 for p in processed_products if p.get('ml_processed', False))
-            embeddings = sum(1 for p in processed_products if 'embedding' in p)
-            categories = sum(1 for p in processed_products if 'predicted_category' in p)
-            
-            logger.info(f"✅ Procesamiento completado:")
-            logger.info(f"   • ML procesados: {ml_processed}/{len(processed_products)}")
-            logger.info(f"   • Con embeddings: {embeddings}")
-            logger.info(f"   • Con categorías: {categories}")
-        
-        return processed_products
+        return self._embedding_model
     
-    # --------------------------------------------------
-    # Métodos de utilidad y configuración
-    # --------------------------------------------------
-    
-    def set_max_memory_usage(self, max_mb: int = 2048) -> None:
-        """Configura límites de memoria para procesamiento."""
-        self.max_cache_size = max_mb // 4  # 25% para cache (en número de embeddings)
-        self.max_batch_size = max_mb // 20  # Tamaño de batch basado en memoria
+    def preprocess_product(self, 
+                          product_data: Dict[str, Any], 
+                          enable_ml: bool = True) -> Dict[str, Any]:
+        """Preprocesa un producto individual."""
+        self._stats['total_processed'] += 1
         
-        if self.verbose:
-            logger.info(f"💾 Configurado límite de memoria: {max_mb}MB")
-            logger.info(f"   • Max cache: {self.max_cache_size} embeddings")
-            logger.info(f"   • Max batch size: {self.max_batch_size} productos")
-    
-    def get_model_info(self) -> Dict[str, Any]:
-        """Obtiene información sobre los modelos cargados."""
-        info = {
-            'transformers_available': self.transformers_available,
-            'sentence_transformers_available': self.sentence_transformers_available,
-            'sklearn_available': self.sklearn_available,
-            'zero_shot_classifier_loaded': self._zero_shot_classifier is not None,
-            'ner_pipeline_loaded': self._ner_pipeline is not None,
-            'embedding_model_loaded': self._embedding_model is not None,
-            'tfidf_fitted': self._tfidf_fitted,
-            'embedding_model_name': self.embedding_model_name,
-            'zero_shot_model_name': self.zero_shot_model_name,
-            'ner_model_name': self.ner_model_name,
-            'categories_count': len(self.categories),
-            'embedding_cache_size': len(self._embedding_cache),
-            'verbose_mode': self.verbose,
-            'device': 'GPU' if self.device == 0 else 'CPU',
-            'max_cache_size': self.max_cache_size,
-            'max_batch_size': self.max_batch_size
-        }
+        # Copiar datos para no modificar el original
+        processed = product_data.copy()
         
-        # Añadir información específica del embedding model si está cargado
-        if self._embedding_model is not None:
+        # Procesamiento básico
+        processed = self._basic_preprocessing(processed)
+        
+        # Procesamiento ML si está habilitado
+        if enable_ml and settings.ML_ENABLED:
             try:
-                info['embedding_dimensions'] = self._embedding_model.get_sentence_embedding_dimension()
-            except:
-                info['embedding_dimensions'] = 'unknown'
+                processed = self._ml_processing(processed)
+                processed['ml_processed'] = True
+            except Exception as e:
+                self._log(f"⚠️ Error en procesamiento ML: {e}")
+                processed['ml_processed'] = False
         
-        return info
+        # Monitorear memoria periódicamente
+        if self.memory_monitoring and self._stats['total_processed'] % 100 == 0:
+            self._check_memory_usage()
+        
+        return processed
     
-    def clear_cache(self) -> None:
-        """Limpia la cache de embeddings."""
-        self._embedding_cache.clear()
-        logger.info("✅ Cache de embeddings limpiado")
+    def _basic_preprocessing(self, product_data: Dict) -> Dict:
+        """Preprocesamiento básico del producto."""
+        processed = product_data.copy()
+        
+        # Limpieza de texto básica
+        if 'title' in processed and processed['title']:
+            processed['title'] = str(processed['title']).strip()[:200]
+        
+        if 'description' in processed and processed['description']:
+            processed['description'] = str(processed['description']).strip()[:1000]
+        
+        # Normalizar precio
+        if 'price' in processed:
+            try:
+                if isinstance(processed['price'], str):
+                    # Extraer números de strings como "$29.99"
+                    import re
+                    match = re.search(r'(\d+\.?\d*)', processed['price'])
+                    if match:
+                        processed['price'] = float(match.group(1))
+                else:
+                    processed['price'] = float(processed['price'])
+            except (ValueError, TypeError):
+                processed['price'] = 0.0
+        
+        return processed
     
-    def check_dependencies(self) -> Dict[str, bool]:
-        """
-        Verifica si todas las dependencias ML están instaladas.
+    def _ml_processing(self, product_data: Dict) -> Dict:
+        """Procesamiento ML del producto con NLP."""
+        processed = product_data.copy()
         
-        Returns:
-            Dict con estado de cada dependencia
-        """
-        dependencies = {
-            'transformers': self.transformers_available,
-            'sentence_transformers': self.sentence_transformers_available,
-            'scikit_learn': self.sklearn_available,
-            'numpy': True,  # Ya importado al inicio
-            'models_loaded': self._embedding_model is not None
-        }
+        # 🔥 NUEVO: Procesamiento NLP si está habilitado
+        if self.enable_nlp and settings.NLP_ENABLED:
+            nlp_enricher = self._get_nlp_enricher()
+            if nlp_enricher:
+                # Usar categorías del sistema
+                categories = settings.ML_CATEGORIES if hasattr(settings, 'ML_CATEGORIES') else None
+                
+                processed = nlp_enricher.enrich_product(processed, categories)
+                processed['nlp_processed'] = True
         
-        return dependencies
+        # Procesamiento ML existente (embedding, etc.)
+        if 'embedding' in settings.ML_FEATURES:
+            text = self._get_text_for_embedding(processed)
+            if text:
+                embedding = self._get_or_create_embedding(text)
+                if embedding is not None:
+                    processed['embedding'] = embedding
+                    processed['embedding_model'] = settings.ML_EMBEDDING_MODEL
+        
+        return processed
     
-    def process_product_object(self, product: Any) -> Optional[Dict[str, Any]]:
-        """
-        Procesa un objeto genérico y devuelve diccionario enriquecido.
+    def _get_text_for_embedding(self, product_data: Dict) -> str:
+        """Obtiene texto para embeddings."""
+        parts = []
         
-        Args:
-            product: Objeto o diccionario con datos de producto
+        if product_data.get('title'):
+            parts.append(str(product_data['title']))
+        
+        if product_data.get('description'):
+            parts.append(str(product_data['description']))
+        
+        if product_data.get('brand'):
+            parts.append(str(product_data['brand']))
+        
+        return " ".join(parts[:3])  # Limitar a 3 partes para eficiencia
+    
+    def _get_text_for_classification(self, product_data: Dict) -> str:
+        """Obtiene texto para clasificación."""
+        parts = []
+        
+        if product_data.get('title'):
+            parts.append(str(product_data['title']))
+        
+        if product_data.get('main_category'):
+            parts.append(str(product_data['main_category']))
+        
+        return " ".join(parts)
+    
+    def _get_or_create_embedding(self, text: str) -> Optional[List[float]]:
+        """Obtiene embedding de cache o lo genera."""
+        # Generar clave de cache
+        cache_key = hash(text) % 1000000
+        
+        with self._cache_lock:
+            # Verificar cache
+            if cache_key in self._embedding_cache:
+                self._stats['cache_hits'] += 1
+                return self._embedding_cache[cache_key]
             
-        Returns:
-            Diccionario enriquecido o None si hay error
-        """
+            self._stats['cache_misses'] += 1
+        
+        # Generar nuevo embedding
         try:
-            if isinstance(product, dict):
-                product_dict = product
-            elif hasattr(product, '__dict__'):
-                # Convertir objeto a diccionario
-                product_dict = product.__dict__
-            elif hasattr(product, 'model_dump'):
-                # Si es Pydantic model
-                product_dict = product.model_dump()
-            else:
-                logger.error(f"❌ Tipo de producto no soportado: {type(product)}")
+            model = self._get_embedding_model()
+            if model is None:
                 return None
             
-            return self.preprocess_product(product_dict)
+            if hasattr(model, 'encode'):
+                embedding = model.encode([text], convert_to_numpy=True)[0]
+            else:
+                embedding = model.embed_documents([text])[0]
+            
+            # Normalizar
+            embedding = embedding / np.linalg.norm(embedding)
+            
+            # Almacenar en cache (si hay espacio)
+            with self._cache_lock:
+                if len(self._embedding_cache) < 1000:  # Límite de cache
+                    self._embedding_cache[cache_key] = embedding.tolist()
+            
+            return embedding.tolist()
             
         except Exception as e:
-            logger.error(f"❌ Error procesando objeto producto: {e}")
+            self._log(f"⚠️ Error generando embedding: {e}")
             return None
     
-    def get_available_models(self) -> Dict[str, List[str]]:
-        """Devuelve diccionario con modelos locales disponibles por tipo."""
-        return {
-            'embedding_models': LOCAL_EMBEDDING_MODELS,
-            'zero_shot_models': LOCAL_ZERO_SHOT_MODELS,
-            'ner_models': LOCAL_NER_MODELS
+    def _predict_category(self, text: str) -> Optional[str]:
+        """Predice categoría mejorada."""
+        text_lower = text.lower()
+        
+        # Diccionario mejorado con prioridades
+        category_keywords = {
+            'Electronics': [
+                'laptop', 'computer', 'pc', 'macbook', 'notebook',
+                'desktop', 'tablet', 'smartphone', 'phone', 'mobile',
+                'monitor', 'keyboard', 'mouse', 'printer', 'scanner',
+                'camera', 'headphones', 'earphones', 'speaker',
+                'electronic', 'device', 'gadget', 'tech', 'technology'
+            ],
+            'Video Games': [
+                'gaming', 'game', 'nintendo', 'playstation', 'xbox',
+                'switch', 'ps4', 'ps5', 'console', 'controller',
+                'steam', 'epic', 'gog', 'retro', 'arcade'
+            ],
+            'Computers & Accessories': [
+                'laptop', 'computer', 'pc', 'macbook', 'desktop',
+                'workstation', 'server', 'cpu', 'gpu', 'ram',
+                'ssd', 'hard drive', 'motherboard', 'processor'
+            ],
+            # ... otras categorías
         }
-    
-    def validate_model_availability(self) -> Dict[str, bool]:
-        """
-        Valida que los modelos locales estén disponibles para descargar/ejecutar.
         
-        Returns:
-            Dict con estado de disponibilidad de cada componente
-        """
-        status = {
-            'embedding_model': False,
-            'zero_shot_model': False,
-            'ner_model': False
-        }
-        
-        # Verificar embedding model
-        if self.sentence_transformers_available:
-            try:
-                from sentence_transformers import SentenceTransformer
-                test_model = SentenceTransformer('all-MiniLM-L6-v2')
-                status['embedding_model'] = True
-                del test_model
-            except Exception as e:
-                logger.warning(f"⚠️ Embedding model no disponible: {e}")
-        
-        # Verificar transformers models
-        if self.transformers_available:
-            try:
-                from transformers import pipeline
-                # Probar modelo pequeño
-                test_pipeline = pipeline("zero-shot-classification", model="MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
-                status['zero_shot_model'] = True
-                del test_pipeline
-            except Exception as e:
-                logger.warning(f"⚠️ Zero-shot model no disponible: {e}")
+        # Sistema de scoring mejorado
+        scores = {}
+        for category, keywords in category_keywords.items():
+            score = 0
+            for keyword in keywords:
+                if keyword in text_lower:
+                    score += 2 if keyword in ['laptop', 'computer', 'gaming'] else 1
             
-            try:
-                from transformers import pipeline
-                test_pipeline = pipeline("ner", model="Davlan/bert-base-multilingual-cased-ner-hrl")
-                status['ner_model'] = True
-                del test_pipeline
-            except Exception as e:
-                logger.warning(f"⚠️ NER model no disponible: {e}")
+            # Bonus por palabras clave muy específicas
+            if any(word in text_lower for word in ['asus', 'rog', 'rtx', 'gaming laptop']):
+                if category == 'Computers & Accessories':
+                    score += 3
+                elif category == 'Electronics':
+                    score += 2
+                elif category == 'Video Games':
+                    score += 1
+            
+            if score > 0:
+                scores[category] = score
         
-        return status
-    
-    def export_configuration(self) -> Dict[str, Any]:
-        """Exporta la configuración actual del preprocesador."""
-        config = {
-            'embedding_model': self.embedding_model_name,
-            'zero_shot_model': self.zero_shot_model_name,
-            'ner_model': self.ner_model_name,
-            'categories': self.categories,
-            'categories_count': len(self.categories),
-            'device': 'GPU' if self.device == 0 else 'CPU',
-            'tfidf_max_features': self.tfidf_vectorizer.max_features 
-                if self.tfidf_vectorizer else None,
-            'tfidf_fitted': self._tfidf_fitted,
-            'cache_size': len(self._embedding_cache),
-            'max_cache_size': self.max_cache_size,
-            'max_batch_size': self.max_batch_size,
-            'verbose': self.verbose,
-            'dependencies': self.check_dependencies(),
-            'version': '1.0.0',
-            'timestamp': datetime.now().isoformat()
+        if not scores:
+            return None
+        
+        # Devolver categoría con mayor score
+        best_category = max(scores.items(), key=lambda x: x[1])[0]
+        
+        # Mapeo final para consistencia
+        category_mapping = {
+            'Computers & Accessories': 'Electronics',
+            'Video Games': 'Video Games',
+            'Electronics': 'Electronics'
         }
         
-        return config
+        return category_mapping.get(best_category, best_category)
     
+    def preprocess_batch(self, 
+                    products_data: List[Dict[str, Any]], 
+                    enable_ml: bool = True,
+                    batch_size: int = 100) -> List[Dict[str, Any]]:
+        """Preprocesa un batch de productos - VERSIÓN SIN RECURSIÓN"""
+        self._log(f"🔧 Procesando batch de {len(products_data)} productos")
+        
+        results = []
+        
+        # 🔥 EVITAR LLAMADAS RECURSIVAS: Procesar directamente
+        for i in range(0, len(products_data), batch_size):
+            batch = products_data[i:i + batch_size]
+            batch_results = []
+            
+            for product_data in batch:
+                try:
+                    # Usar el método de instancia directamente
+                    result = self.preprocess_product(product_data, enable_ml)
+                    batch_results.append(result)
+                except RecursionError as e:
+                    self._log(f"❌ Recursión detectada en producto: {e}")
+                    # Fallback: procesamiento simple
+                    processed = product_data.copy()
+                    if enable_ml:
+                        processed['ml_processed'] = False
+                    batch_results.append(processed)
+                except Exception as e:
+                    self._log(f"⚠️ Error procesando producto: {e}")
+                    batch_results.append(product_data)
+            
+            results.extend(batch_results)
+            
+            # Limpieza periódica
+            if self.memory_monitoring and i % (batch_size * 5) == 0:
+                self._cleanup_resources()
+        
+        self._log(f"✅ Batch procesado: {len(results)} productos")
+        return results
     
-# Función de conveniencia para crear preprocesador
-def create_ml_preprocessor(
-    use_gpu: bool = False,
-    verbose: bool = True,
-    use_cache: bool = True
-) -> ProductDataPreprocessor:
-    """
-    Crea un preprocesador ML con configuración por defecto.
+    def _check_memory_usage(self) -> Dict[str, float]:
+        """Verifica el uso de memoria."""
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        
+        rss_mb = memory_info.rss / 1024 / 1024
+        vms_mb = memory_info.vms / 1024 / 1024
+        
+        self._stats['memory_usage_peak'] = max(
+            self._stats['memory_usage_peak'], rss_mb
+        )
+        
+        if rss_mb > self.max_memory_mb * 0.9:  # 90% del límite
+            self._log(f"⚠️  Memoria alta: {rss_mb:.1f}MB, limpiando...")
+            self._cleanup_resources()
+        
+        return {
+            'rss_mb': rss_mb,
+            'vms_mb': vms_mb,
+            'peak_mb': self._stats['memory_usage_peak']
+        }
     
-    Args:
-        use_gpu: Si es True, intenta usar GPU
-        verbose: Si es True, muestra logs detallados
-        use_cache: Si es True, usa sistema de cache para modelos
+    def _cleanup_resources(self):
+        """Limpia recursos para liberar memoria."""
+        self._log("🧹 Limpiando recursos...")
+        
+        # Limpiar cache de embeddings
+        with self._cache_lock:
+            self._embedding_cache.clear()
+        
+        # Forzar garbage collection
+        gc.collect()
+        
+        # Verificar memoria después de limpiar
+        memory = self._check_memory_usage()
+        self._log(f"📊 Memoria después de limpieza: {memory['rss_mb']:.1f}MB")
     
-    Returns:
-        ProductDataPreprocessor configurado
-    """
-    return ProductDataPreprocessor(
-        use_gpu=use_gpu,
-        verbose=verbose,
-        use_cache=use_cache,
-        embedding_model='all-MiniLM-L6-v2'
-    )
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Obtiene estadísticas del cache."""
+        with self._cache_lock:
+            cache_size = len(self._embedding_cache)
+        
+        uptime = time.time() - self._stats['start_time']
+        
+        return {
+            'total_processed': self._stats['total_processed'],
+            'cache_size': cache_size,
+            'cache_hits': self._stats['cache_hits'],
+            'cache_misses': self._stats['cache_misses'],
+            'cache_hit_ratio': (
+                self._stats['cache_hits'] / max(1, self._stats['cache_hits'] + self._stats['cache_misses'])
+            ),
+            'memory_usage_peak_mb': self._stats['memory_usage_peak'],
+            'uptime_seconds': uptime,
+            'processing_rate': self._stats['total_processed'] / max(1, uptime)
+        }
+    
+    def check_memory_usage(self) -> Dict[str, float]:
+        """Interfaz pública para verificar memoria."""
+        return self._check_memory_usage()
+    
+    def cleanup_memory(self):
+        """⚠️ IMPORTANTE: Método para liberar memoria - SOLUCIÓN PROBLEMA 4"""
+        self._log("🧹 Liberando memoria de modelos grandes...")
+        
+        with self._model_lock:
+            if self._embedding_model is not None:
+                del self._embedding_model
+                self._embedding_model = None
+                self._log("✅ Modelo de embeddings liberado")
+        
+        # Limpiar cache
+        with self._cache_lock:
+            self._embedding_cache.clear()
+            self._log("✅ Cache de embeddings limpiado")
+        
+        # Forzar garbage collection
+        gc.collect()
+        
+        self._log("✅ Memoria liberada")
+    
+    def diagnose_memory_leaks(self) -> Dict[str, Any]:
+        """Diagnostica posibles memory leaks."""
+        memory = self.check_memory_usage()
+        cache_stats = self.get_cache_stats()
+        
+        diagnosis = {
+            'current_memory_mb': memory['rss_mb'],
+            'peak_memory_mb': memory['peak_mb'],
+            'cache_size': cache_stats['cache_size'],
+            'total_processed': cache_stats['total_processed'],
+            'potential_leaks': []
+        }
+        
+        # Detectar posibles leaks
+        if memory['rss_mb'] > self.max_memory_mb * 0.8:
+            diagnosis['potential_leaks'].append(
+                f"Alto uso de memoria ({memory['rss_mb']:.1f}MB > {self.max_memory_mb * 0.8:.1f}MB)"
+            )
+        
+        if cache_stats['cache_size'] > 500:
+            diagnosis['potential_leaks'].append(
+                f"Cache muy grande ({cache_stats['cache_size']} > 500)"
+            )
+        
+        # Recomendaciones
+        diagnosis['recommendations'] = [
+            "Ejecutar cleanup_memory() periódicamente",
+            "Reducir batch_size si se procesan muchos productos",
+            "Limitar cache_size a 500 elementos"
+        ]
+        
+        return diagnosis
+    
+    def auto_cleanup_if_needed(self) -> bool:
+        """Limpia automáticamente si es necesario."""
+        memory = self.check_memory_usage()
+        
+        if memory['rss_mb'] > self.max_memory_mb * 0.8:
+            self._log("⚡ Limpieza automática activada por alto uso de memoria")
+            self._cleanup_resources()
+            return True
+        
+        return False
+    
+    def reset_to_initial_state(self):
+        """Reinicia al estado inicial."""
+        self._log("🔄 Reiniciando a estado inicial...")
+        
+        self.cleanup_memory()
+        
+        # Reiniciar estadísticas
+        self._stats = {
+            'total_processed': 0,
+            'memory_usage_peak': 0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'start_time': time.time()
+        }
+        
+        self._log("✅ Reinicio completado")
+
+
+# ------------------------------------------------------------------
+# Context Managers y funciones utilitarias
+# ------------------------------------------------------------------
+
+class MLProcessorContextManager:
+    """Context manager para ProductDataPreprocessor."""
+    
+    def __init__(self, verbose: bool = False, **kwargs):
+        self.verbose = verbose
+        self.kwargs = kwargs
+        self.preprocessor = None
+    
+    def __enter__(self):
+        self.preprocessor = ProductDataPreprocessor(
+            verbose=self.verbose,
+            **self.kwargs
+        )
+        return self.preprocessor
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.preprocessor is not None:
+            self.preprocessor.cleanup_memory()
+            if self.verbose:
+                logger.info("[Context Manager] Recursos liberados automáticamente")
+
+
+def create_ml_preprocessor_with_context(verbose: bool = False, **kwargs):
+    """Crea un ProductDataPreprocessor con context manager."""
+    return MLProcessorContextManager(verbose=verbose, **kwargs)
+
+
+def process_with_memory_management(products_data: List[Dict[str, Any]], 
+                                 use_gpu: bool = False,
+                                 batch_size: int = 100,
+                                 verbose: bool = True) -> List[Dict[str, Any]]:
+    """Función de alto nivel con gestión automática de memoria - VERSIÓN SIN RECURSIÓN"""
+    logger.info(f"🚀 Procesando {len(products_data)} productos con gestión de memoria")
+    
+    results = []
+    
+    # 🔥 NUEVO: Evitar recursión usando una implementación directa
+    try:
+        # Crear preprocessor directamente
+        preprocessor = ProductDataPreprocessor(
+            verbose=verbose,
+            max_memory_mb=2048,
+            memory_monitoring=True,
+            enable_nlp=True
+        )
+        
+        # Pre-calentar modelos
+        if verbose:
+            logger.info("🔧 Pre-calentando modelos...")
+        preprocessor.warm_up_models()
+        
+        # Procesar en batches MANUALMENTE para evitar recursión
+        total_batches = (len(products_data) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min((batch_idx + 1) * batch_size, len(products_data))
+            batch = products_data[start_idx:end_idx]
+            
+            if verbose and batch_idx % 10 == 0:
+                logger.info(f"📦 Procesando batch {batch_idx + 1}/{total_batches}")
+            
+            # Procesar cada producto individualmente
+            batch_results = []
+            for product_data in batch:
+                try:
+                    result = preprocessor.preprocess_product(product_data, enable_ml=True)
+                    batch_results.append(result)
+                except Exception as e:
+                    logger.warning(f"⚠️ Error procesando producto: {e}")
+                    batch_results.append(product_data)  # Mantener original
+            
+            results.extend(batch_results)
+            
+            # Limpiar periódicamente
+            if batch_idx % 5 == 0:
+                preprocessor.auto_cleanup_if_needed()
+    
+    except Exception as e:
+        logger.error(f"❌ Error en procesamiento: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        # Asegurar limpieza
+        if 'preprocessor' in locals():
+            preprocessor.cleanup_memory()
+    
+    logger.info(f"✅ Procesamiento completado: {len(results)} productos")
+    return results
+
+
+class BatchProcessorWithMemoryManagement:
+    """Procesador de batches con gestión optimizada de memoria."""
+    
+    def __init__(self, max_batch_size: int = 1000, verbose: bool = True):
+        self.max_batch_size = max_batch_size
+        self.verbose = verbose
+        self.preprocessor = None
+    
+    def process(self, products_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Procesa datos con gestión de memoria optimizada."""
+        return process_with_memory_management(
+            products_data,
+            batch_size=self.max_batch_size,
+            verbose=self.verbose
+        )
+
+
+# ------------------------------------------------------------------
+# Funciones de conveniencia para importación
+# ------------------------------------------------------------------
+
+def get_ml_preprocessor(verbose: bool = False, **kwargs) -> ProductDataPreprocessor:
+    """Obtiene un preprocesador ML."""
+    return ProductDataPreprocessor(verbose=verbose, **kwargs)
+
+
+def cleanup_global_resources():
+    """Limpia recursos globales del módulo."""
+    logger.info("🧹 Limpiando recursos globales ML...")
+    
+    # Limpiar singleton
+    if hasattr(_get_embedding_model_singleton, '_model'):
+        _get_embedding_model_singleton._model = None
+    
+    # Forzar garbage collection
+    gc.collect()
+    
+    logger.info("✅ Recursos globales liberados")
+
+
+# ------------------------------------------------------------------
+# Exportaciones
+# ------------------------------------------------------------------
+
+__all__ = [
+    'ProductDataPreprocessor',
+    'create_ml_preprocessor_with_context',
+    'process_with_memory_management',
+    'BatchProcessorWithMemoryManagement',
+    'get_ml_preprocessor',
+    'cleanup_global_resources',
+    'cleanup_memory'  # Para compatibilidad
+]
+
+# Alias para compatibilidad
+cleanup_memory = cleanup_global_resources
