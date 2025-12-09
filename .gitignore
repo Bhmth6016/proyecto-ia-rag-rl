@@ -7,11 +7,6 @@ env/
 myenv/
 
 # ======================
-# VARIABLES SECRETAS
-# ======================
-.env
-
-# ======================
 # CACHE Y BYTES COMPILADOS
 # ======================
 __pycache__/
