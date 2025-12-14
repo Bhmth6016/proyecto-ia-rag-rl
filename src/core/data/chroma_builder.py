@@ -165,11 +165,11 @@ class ChromaBuilderConfig:
     
     # Configuración de embeddings
     EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-    EMBEDDING_DEVICE = "cpu"
+    EMBEDDING_DEVICE = "cuda"
     
     # Límites de memoria
-    MAX_DOCUMENTS_PER_BATCH = 5000
-    MEMORY_CHECK_INTERVAL = 10000
+    MAX_DOCUMENTS_PER_BATCH = 500000
+    MEMORY_CHECK_INTERVAL = 1000000
     
     # Configuración ML unificada
     @staticmethod
@@ -1348,9 +1348,9 @@ def test_embedding_system():
     print("🧪 Probando sistema de embeddings...")
     
     test_configs = [
-        {"model": "all-MiniLM-L6-v2", "device": "cpu", "name": "Modelo estándar"},
-        {"model": "sentence-transformers/all-MiniLM-L6-v2", "device": "cpu", "name": "Modelo HF"},
-        {"model": "invalid-model-name", "device": "cpu", "name": "Modelo inválido (test fallback)"},
+        {"model": "all-MiniLM-L6-v2", "device": "cuda", "name": "Modelo estándar"},
+        {"model": "sentence-transformers/all-MiniLM-L6-v2", "device": "cuda", "name": "Modelo HF"},
+        {"model": "invalid-model-name", "device": "cuda", "name": "Modelo inválido (test fallback)"},
     ]
     
     for config in test_configs:
@@ -1461,7 +1461,7 @@ def build_chroma_from_cli():
     parser.add_argument("--input", type=Path, help="Ruta al JSON procesado")
     parser.add_argument("--output", type=Path, help="Ruta para guardar ChromaDB")
     parser.add_argument("--model", type=str, help="Modelo de embeddings")
-    parser.add_argument("--device", type=str, help="Dispositivo (cpu/cuda)")
+    parser.add_argument("--device", type=str, help="Dispositivo (cuda/cuda)")
     parser.add_argument("--batch-size", type=int, default=ChromaBuilderConfig.DEFAULT_BATCH_SIZE)
     parser.add_argument("--workers", type=int, default=ChromaBuilderConfig.MAX_CONCURRENT_WORKERS)
     parser.add_argument("--no-cache", action="store_true", help="Deshabilitar cache")

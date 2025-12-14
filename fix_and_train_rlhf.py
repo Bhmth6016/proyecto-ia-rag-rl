@@ -108,7 +108,7 @@ logger = logging.getLogger(__name__)
 class SimpleRLHFTrainer:
     """Trainer RLHF simplificado y funcional"""
     
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cuda"):
         self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
         if not self.tokenizer.pad_token:
@@ -341,7 +341,7 @@ def run_training_with_fix():
                 return False
         
         # Crear trainer y entrenar
-        trainer = trainer_class(device="cpu")
+        trainer = trainer_class(device="cuda")
         
         print("📚 Preparando dataset...")
         dataset = trainer.prepare_rlhf_dataset_from_logs(failed_log, success_log)

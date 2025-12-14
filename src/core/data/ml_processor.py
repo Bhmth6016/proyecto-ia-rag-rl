@@ -48,7 +48,7 @@ def _get_embedding_model_singleton(model_name: str = None):
     return _get_embedding_model_singleton._model
 
 # Helper functions primero para evitar imports circulares
-def _get_nlp_enricher_singleton(enable_nlp: bool = True, device: str = "cpu"):
+def _get_nlp_enricher_singleton(enable_nlp: bool = True, device: str = "cuda"):
     """Singleton para NLP enricher (versión separada)."""
     if not hasattr(_get_nlp_enricher_singleton, '_enricher'):
         _get_nlp_enricher_singleton._enricher = None
@@ -144,7 +144,7 @@ class ProductDataPreprocessor:
                 # Usar singleton para evitar problemas
                 self._nlp_enricher = _get_nlp_enricher_singleton(
                     enable_nlp=True,
-                    device=self.device if hasattr(self, 'device') else "cpu"
+                    device=self.device if hasattr(self, 'device') else "cuda"
                 )
                 if self._nlp_enricher:
                     logger.debug("✅ NLP enricher obtenido del singleton")
@@ -363,7 +363,7 @@ class ProductDataPreprocessor:
             ],
             'Computers & Accessories': [
                 'laptop', 'computer', 'pc', 'macbook', 'desktop',
-                'workstation', 'server', 'cpu', 'gpu', 'ram',
+                'workstation', 'server', 'cuda', 'gpu', 'ram',
                 'ssd', 'hard drive', 'motherboard', 'processor'
             ],
             # ... otras categorías

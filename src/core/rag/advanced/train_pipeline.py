@@ -75,7 +75,7 @@ class RLHFTrainingPipeline:
             try:
                 trainer.model.load_state_dict(
                     torch.load(self.model_dir / "pytorch_model.bin", 
-                            map_location=torch.device('cpu'))
+                            map_location=torch.device('cuda'))
                 )
                 trainer.model.eval()
                 logger.info("✅ Modelo RLHF cargado exitosamente")

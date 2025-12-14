@@ -80,8 +80,8 @@ class GlobalSettings(BaseModel):
     )
     
     LOCAL_EMBEDDING_DEVICE: str = Field(
-        default="cpu",
-        description="Dispositivo para embeddings (cpu/cuda/mps)"
+        default="cuda",
+        description="Dispositivo para embeddings (cuda/cuda/mps)"
     )
     
     # ======================
@@ -203,7 +203,7 @@ class GlobalSettings(BaseModel):
     )
     
     DEVICE: str = Field(
-        default="cpu",
+        default="cuda",
         description="Dispositivo para cómputos"
     )
     
@@ -316,7 +316,7 @@ class GlobalSettings(BaseModel):
     )
     
     BATCH_SIZE: int = Field(
-        default=5000,
+        default=500000,
         ge=1,
         le=10000,
         description="Tamaño de batch"

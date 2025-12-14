@@ -21,7 +21,7 @@ class FastDataLoader:
         raw_dir: Optional[Path] = None,
         processed_dir: Optional[Path] = None,
         cache_enabled: bool = False,
-        max_products_per_file: int = 5000,
+        max_products_per_file: int = 500000,
         use_progress_bar: bool = True,
         # 🔥 ELIMINADO: Parámetros ML redundantes
         # La configuración ML viene de settings automáticamente
@@ -127,7 +127,7 @@ class FastDataLoader:
         # Ordenar por tamaño (más grandes primero)
         valid_files.sort(key=lambda x: x.stat().st_size, reverse=True)
         
-        return valid_files[:5]  # Limitar a 5 archivos
+        return valid_files[:25]  # Limitar a 5 archivos
     
     def _process_file(self, file_path: Path) -> List[Any]:
         """Procesa un archivo individual"""
@@ -409,7 +409,7 @@ DataLoader = FastDataLoader
 def load_products(
     raw_dir: Optional[Path] = None,
     processed_dir: Optional[Path] = None,
-    max_products: int = 5000
+    max_products: int = 500000
 ) -> List[Any]:
     """
     Función de conveniencia para cargar productos.

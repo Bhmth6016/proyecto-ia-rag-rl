@@ -98,7 +98,7 @@ def _normalize(text: str) -> str:
 class LocalEmbedder:
     """Embedder local que no requiere conexión a internet"""
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cpu"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cuda"):
         self.model_name = model_name
         self.device = device
         self.model = None
@@ -164,7 +164,7 @@ class Retriever:
         self,
         index_path: Union[str, Path] = settings.VECTOR_INDEX_PATH,
         embedding_model: str = "all-MiniLM-L6-v2",  # Siempre local
-        device: str = getattr(settings, "DEVICE", "cpu"),
+        device: str = getattr(settings, "DEVICE", "cuda"),
         # 🔥 Ahora configurable globalmente — toma ML si está habilitado
         use_product_embeddings: bool = settings.ML_ENABLED
     ):
@@ -289,8 +289,8 @@ class Retriever:
                 self.store = None
     
     def _get_langchain_embedding_function(self):
-        """Crea una función de embedding compatible con LangChain"""
-        class CustomEmbeddingFunction:
+        """Retorna una función de embedding compatible con LangChain"""
+        class LangChainCompatibleEmbedding:
             def __init__(self, embedder):
                 self.embedder = embedder
             
@@ -300,7 +300,8 @@ class Retriever:
             def embed_documents(self, texts: List[str]) -> List[List[float]]:
                 return self.embedder.embed_documents(texts)
         
-        return CustomEmbeddingFunction(self.embedder)
+        return LangChainCompatibleEmbedding(self.embedder)
+
 
     def _check_ml_capabilities(self):
         """Verifica si el índice Chroma tiene capacidades ML"""
@@ -805,10 +806,10 @@ class Retriever:
 
             logger.info(f"Building index with {len(products)} products")
 
-            # 🔥 NUEVO: Cerrar conexión existente si hay
+            # Cerrar conexión existente
             self.close()
 
-            # Limpiar directorio existente con manejo seguro
+            # Limpiar directorio existente
             if self.index_path.exists():
                 self._safe_clear_index()
                 logger.info("🗑️  Existing index cleared")
@@ -822,28 +823,55 @@ class Retriever:
 
             logger.info(f"📝 Creating {len(documents)} documents")
 
-            # 🔥 NUEVO: Crear Chroma en un contexto separado
+            # 🔥 CORRECIÓN: Manejar correctamente ambas versiones de Chroma
             if CHROMA_NEW:
-                # Versión nueva: NO usa embedding_function aquí
+                # Versión nueva (langchain_chroma)
                 self.store = Chroma.from_documents(
                     documents=documents,
                     persist_directory=str(self.index_path),
                     collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
                 )
             else:
-                # Versión vieja: usar embedding function personalizada
-                self.store = Chroma.from_documents(
-                    documents=documents,
-                    embedding_function=self._get_langchain_embedding_function(),
-                    persist_directory=str(self.index_path),
-                    collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
-                )
+                # 🔥 CORRECIÓN: Versión vieja (langchain_community)
+                # La versión antigua usa embedding_function (singular)
+                embedding_func = self._get_langchain_embedding_function()
+                
+                # IMPORTANTE: Asegurar que sea una función válida
+                if hasattr(embedding_func, 'embed_documents'):
+                    # Si ya tiene el método embed_documents, usarlo directamente
+                    self.store = Chroma.from_documents(
+                        documents=documents,
+                        embedding=embedding_func,  # 🔥 NOTA: 'embedding' no 'embedding_function'
+                        persist_directory=str(self.index_path),
+                        collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
+                    )
+                else:
+                    # Fallback: crear una función wrapper simple
+                    class SimpleEmbeddingFunction:
+                        def __init__(self, embedder):
+                            self.embedder = embedder
+                        
+                        def embed_documents(self, texts: List[str]) -> List[List[float]]:
+                            return self.embedder.embed_documents(texts)
+                        
+                        def embed_query(self, text: str) -> List[float]:
+                            return self.embedder.embed_query(text)
+                    
+                    simple_func = SimpleEmbeddingFunction(self.embedder)
+                    
+                    self.store = Chroma.from_documents(
+                        documents=documents,
+                        embedding=simple_func,  # 🔥 CORRECTO: 'embedding'
+                        persist_directory=str(self.index_path),
+                        collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
+                    )
 
             logger.info("✅ Index built successfully")
 
         except Exception as e:
             logger.error(f"❌ Index build failed: {e}")
-            # Asegurar cierre incluso en error
+            import traceback
+            logger.error(traceback.format_exc())
             self.close()
             raise RuntimeError(f"Index build failed: {e}")
         

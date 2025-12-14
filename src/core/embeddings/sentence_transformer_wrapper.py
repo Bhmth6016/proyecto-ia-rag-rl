@@ -15,7 +15,7 @@ class SentenceTransformerWrapper:
     Wrapper que convierte SentenceTransformer a la interfaz LangChain.
     """
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cpu"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cuda"):
         self.model_name = model_name
         self.device = device
         self.model = None

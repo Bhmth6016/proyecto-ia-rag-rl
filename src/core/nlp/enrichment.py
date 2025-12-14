@@ -12,7 +12,7 @@ class NLPEnricher:
     def __init__(self, 
                 ner_model: str = None,
                 zero_shot_model: str = None,
-                device: str = "cpu",
+                device: str = "cuda",
                 use_small_models: bool = True):  # 🔥 NUEVO
         """Inicializa NLPEnricher con opción de modelos pequeños."""
         

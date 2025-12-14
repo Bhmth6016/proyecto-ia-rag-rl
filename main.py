@@ -128,28 +128,31 @@ Ejemplos con modos:
 # =====================================================
 #  COMANDO INDEX
 # =====================================================
+# COMANDO INDEX - VERSIÓN CORREGIDA
 def run_index(data_dir: Optional[str] = None, verbose: bool = False):
     """Construir índice vectorial."""
     print("\n🔨 CONSTRUYENDO ÍNDICE VECTORIAL")
     print("="*50)
     
     try:
-        # 🔥 Usar FastDataLoader si está disponible
+        # 🔥 CORRECCIÓN: FastDataLoader simplificado no acepta parámetros ML
         try:
             from src.core.data.loader import FastDataLoader
             print("🚀 Usando FastDataLoader optimizado...")
             
             loader = FastDataLoader(
                 use_progress_bar=True,
-                ml_enabled=settings.ML_ENABLED,
-                ml_features=list(settings.ML_FEATURES)
+                # 🔥 ELIMINAR estos parámetros que ya no existen:
+                # ml_enabled=settings.ML_ENABLED,
+                # ml_features=list(settings.ML_FEATURES)
             )
             
             # Ruta para JSON procesado
             processed_json = settings.PROC_DIR / "products.json"
             products = loader.load_data(processed_json)
             
-        except ImportError:
+        except ImportError as e:
+            print(f"⚠️  Error importando FastDataLoader: {e}")
             # Fallback a DataLoader original
             from src.core.data.loader import DataLoader
             print("⚠️  Usando DataLoader original...")
@@ -182,7 +185,7 @@ def run_index(data_dir: Optional[str] = None, verbose: bool = False):
                 chroma_db_path=Path(settings.CHROMA_DB_PATH),
                 embedding_model=settings.ML_EMBEDDING_MODEL,
                 device=settings.DEVICE,
-                use_product_embeddings=settings.ML_ENABLED,
+                use_product_embeddings=settings.ML_ENABLED,  # 🔥 Esto usa ML_ENABLED correctamente
                 ml_logging=verbose
             )
             
@@ -203,7 +206,8 @@ def run_index(data_dir: Optional[str] = None, verbose: bool = False):
             # Limpiar memoria
             builder.cleanup()
             
-        except ImportError:
+        except ImportError as e:
+            print(f"⚠️  OptimizedChromaBuilder no disponible: {e}")
             # Fallback a retriever original
             from src.core.rag.basic.retriever import Retriever
             print("⚠️  Usando Retriever original...")
@@ -296,12 +300,21 @@ def run_rag(data_dir: Optional[str] = None,
         logging.getLogger('src.core.data.product_reference').setLevel(logging.DEBUG)
     
     try:
-        # Cargar productos
+        # Cargar productos - CORRECCIÓN APLICADA
         from src.core.data.loader import DataLoader
         from src.core.data.user_manager import UserManager
         
+        # Definir directorio de datos - usar el parámetro data_dir si se proporciona,
+        # de lo contrario usar RAW_DIR de settings
+        if data_dir:
+            data_path = Path(data_dir)
+        else:
+            data_path = settings.RAW_DIR
+        
+        print(f"📂 Cargando datos desde: {data_path}")
+        
         loader = DataLoader(
-            raw_dir=Path(data_dir) if data_dir else settings.RAW_DIR,
+            raw_dir=data_path,
             processed_dir=settings.PROC_DIR
         )
         
@@ -309,6 +322,8 @@ def run_rag(data_dir: Optional[str] = None,
         
         if not products:
             print("❌ No se pudieron cargar productos")
+            print("   Asegúrate de que el directorio contiene archivos JSON de productos")
+            print(f"   Directorio verificado: {data_path}")
             return
         
         print(f"📦 Productos cargados: {len(products)}")
