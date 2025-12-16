@@ -48,8 +48,9 @@ dist/
 # ARCHIVOS QUE QUIERES IGNORAR
 # ======================
 
-models/rl_models/checkpoint-40/config.json
+# Models
 /models
-data/processed/products.json
-data/processed/products.json
-/data/processed
+models/rl_models/checkpoint-40/config.json
+
+# Processed data
+data/processed/
