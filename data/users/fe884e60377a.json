@@ -1,0 +1,22 @@
+{
+  "user_id": "fe884e60377a",
+  "session_id": "fe884e60377a_1765864682",
+  "age": 25,
+  "gender": "male",
+  "country": "Spain",
+  "language": "es",
+  "preferred_categories": [],
+  "preferred_brands": [],
+  "avoided_categories": [],
+  "price_sensitivity": "medium",
+  "preferred_price_range": {
+    "min": 0,
+    "max": 1000
+  },
+  "search_history": [],
+  "feedback_history": [],
+  "purchase_history": [],
+  "created_at": "2025-12-16T00:58:02.936096",
+  "last_active": "2025-12-16T00:58:02.936096",
+  "total_sessions": 1
+}

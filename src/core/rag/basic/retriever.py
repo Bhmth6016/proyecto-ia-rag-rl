@@ -386,7 +386,7 @@ class Retriever:
         query: str,
         k: int = 5,
         filters: Optional[Dict] = None,
-        min_similarity: float = 0.3,
+        min_similarity: float = 0.15,  # 🔥 Aumentado de 0.1 a 0.15
         top_k: Optional[int] = None,
         use_ml_embeddings: Optional[bool] = None
     ):
@@ -404,11 +404,19 @@ class Retriever:
                 logger.error("❌ Store not available for retrieval")
                 return []
 
+            # 🔥 MEJORA: Extraer categoría esperada de la consulta
+            expected_category = self._extract_expected_category(query)
+            if expected_category:
+                if filters is None:
+                    filters = {}
+                filters['main_category'] = expected_category
+                logger.debug(f"[Retrieve] Filtro por categoría esperada: {expected_category}")
+            
             if filters is None:
                 filters = self._parse_filters_from_query(query)
 
             expanded = self._expand_query(query)
-            docs = self._raw_retrieve(" ".join(expanded), k=k * 2, filters=filters)
+            docs = self._raw_retrieve(" ".join(expanded), k=k * 3, filters=filters)  # 🔥 Buscar más inicialmente
 
             products = []
             seen = set()
@@ -423,22 +431,7 @@ class Retriever:
             if filters:
                 products = [p for p in products if self._matches_all_filters(p, filters)]
 
-            # =================================================================================
-            # 🔥🔥 **A) MEJORA SOLICITADA — DEDUPLICAR USANDO content_hash**
-            # =================================================================================
-            seen_hashes = set()
-            unique_products = []
-
-            for p in products:
-                if hasattr(p, "content_hash") and p.content_hash:
-                    if p.content_hash in seen_hashes:
-                        continue  # ← duplicado → descartar
-                    seen_hashes.add(p.content_hash)
-                unique_products.append(p)
-
-            products = unique_products  # ← nueva lista limpia
-            # =================================================================================
-
+            # 🔥 ORDENAR por relevancia antes de deduplicar
             scored = []
             for p in products:
                 # 🔥 Si hay embeddings ML activos usa similitud vectorial
@@ -452,15 +445,33 @@ class Retriever:
 
                 feedback_boost = self.feedback_weights.get(p.id, 0) * 0.1
                 scored.append((base_score + feedback_boost, p))
-
+            
+            # Ordenar por score
             scored.sort(key=lambda x: x[0], reverse=True)
+            
+            # 🔥 NUEVO: Filtrar duplicados después de ordenar
+            seen_hashes = set()
+            unique_scored = []
+            
+            for score, p in scored:
+                if hasattr(p, "content_hash") and p.content_hash:
+                    if p.content_hash in seen_hashes:
+                        continue
+                    seen_hashes.add(p.content_hash)
+                unique_scored.append((score, p))
+            
+            scored = unique_scored
 
             if scored:
                 method = "ML Embeddings" if use_ml else "Text Similarity"
                 logger.info(f"[Retriever] Returning {min(k,len(scored))} objects using {method}")
 
-                for i, (score, p) in enumerate(scored[:3]):
-                    logger.debug(f" {i+1}. {p.title[:50]}... score={score:.3f}")
+                # 🔥 MEJORA: Logging más informativo
+                for i, (score, p) in enumerate(scored[:5]):
+                    category = getattr(p, 'main_category', 'Unknown')
+                    predicted = getattr(p, 'predicted_category', 'None')
+                    logger.debug(f" {i+1}. {p.title[:50]}... score={score:.3f}, "
+                            f"cat={category}, pred={predicted}")
 
                 return [p for _, p in scored[:k]]
 
@@ -472,6 +483,89 @@ class Retriever:
             import traceback
             logger.error(traceback.format_exc())
             return []
+
+    # 🔥 AÑADIR NUEVO MÉTODO PARA EXTRACCIÓN DE CATEGORÍA
+    def _extract_expected_category(self, query: str) -> Optional[str]:
+        """Extrae la categoría esperada basada en palabras clave en la consulta"""
+        query_lower = query.lower()
+        
+        # Mapeo de palabras clave a categorías
+        keyword_to_category = {
+            # Video Games
+            'juego': 'Video Games',
+            'nintendo': 'Video Games',
+            'playstation': 'Video Games',
+            'xbox': 'Video Games',
+            'consola': 'Video Games',
+            'videojuego': 'Video Games',
+            
+            # Electronics
+            'laptop': 'Electronics',
+            'computador': 'Electronics',
+            'auricular': 'Electronics',
+            'auriculares': 'Electronics',
+            'altavoz': 'Electronics',
+            'cámara': 'Electronics',
+            'smartphone': 'Electronics',
+            'teléfono': 'Electronics',
+            
+            # Clothing
+            'zapato': 'Clothing',
+            'ropa': 'Clothing',
+            'vestido': 'Clothing',
+            'camisa': 'Clothing',
+            'pantalón': 'Clothing',
+            
+            # Home & Kitchen
+            'sofá': 'Home & Kitchen',
+            'mueble': 'Home & Kitchen',
+            'cocina': 'Home & Kitchen',
+            'electrodoméstico': 'Home & Kitchen',
+            'nevera': 'Home & Kitchen',
+            
+            # Books
+            'libro': 'Books',
+            'novela': 'Books',
+            'cuento': 'Books',
+            
+            # Beauty
+            'crema': 'Beauty',
+            'maquillaje': 'Beauty',
+            'cosmético': 'Beauty',
+            'perfume': 'Beauty',
+            
+            # Sports & Outdoors
+            'bicicleta': 'Sports & Outdoors',
+            'balón': 'Sports & Outdoors',
+            'deporte': 'Sports & Outdoors',
+            'gimnasio': 'Sports & Outdoors',
+            
+            # Toys & Games
+            'juguete': 'Toys & Games',
+            'juego de mesa': 'Toys & Games',
+            
+            # Office Products
+            'impresora': 'Office Products',
+            'papel': 'Office Products',
+            'oficina': 'Office Products',
+            
+            # Automotive
+            'herramienta': 'Automotive',
+            'coche': 'Automotive',
+            'auto': 'Automotive',
+            
+            # Health
+            'vitamina': 'Health & Personal Care',
+            'medicina': 'Health & Personal Care',
+            'suplemento': 'Health & Personal Care'
+        }
+        
+        # Buscar palabras clave
+        for keyword, category in keyword_to_category.items():
+            if keyword in query_lower:
+                return category
+        
+        return None
 
 
     # ------------------------------------------------------------
@@ -603,29 +697,101 @@ class Retriever:
 
     def _score(self, query: str, product: Product) -> float:
         try:
-            # VERIFICA que product tenga los atributos necesarios
             if not hasattr(product, 'title') or not product.title:
-                logger.debug(f"[_score] Product {getattr(product, 'id', 'unknown')} no tiene título")
                 return 0.1
             
-            # Verificar que realmente sea un Product
-            product_type = type(product).__name__
-            if product_type != 'Product':
-                logger.warning(f"[_score] Object is not Product but {product_type}")
+            query_lower = query.lower()
+            title_lower = product.title.lower()
+            desc_lower = (product.description or "").lower()
             
-            text_sim = SequenceMatcher(None, query.lower(), product.title.lower()).ratio()
+            # 🔥 MEJORA: Ponderaciones para diferentes factores
+            weights = {
+                'title_match': 0.6,
+                'category_match': 0.3,
+                'description_match': 0.1
+            }
             
-            rating_boost = 1.0
+            # 1. Similitud en título
+            title_score = SequenceMatcher(None, query_lower, title_lower).ratio()
+            
+            # Bonus por palabras exactas en título
+            exact_title_bonus = 0
+            query_words = query_lower.split()
+            for word in query_words:
+                if len(word) > 3 and word in title_lower:
+                    exact_title_bonus += 0.2
+            
+            # 2. Coincidencia de categoría
+            category_score = 0
+            if hasattr(product, 'main_category') and product.main_category:
+                category_lower = product.main_category.lower()
+                # Verificar si palabras de la consulta están en la categoría
+                category_words = set(category_lower.split())
+                query_words_set = set(query_words)
+                common_words = category_words.intersection(query_words_set)
+                if common_words:
+                    category_score = len(common_words) / len(query_words_set)
+            
+            # 3. Similitud en descripción (limitada)
+            desc_score = 0
+            if desc_lower and len(desc_lower) > 50:
+                desc_match = SequenceMatcher(None, query_lower, desc_lower[:200]).ratio()
+                desc_score = min(desc_match, 0.5)  # Limitar influencia
+            
+            # 🔥 NUEVO: Bonus por categorías específicas
+            category_bonus = 1.0
+            if hasattr(product, 'predicted_category') and product.predicted_category:
+                pred_cat = product.predicted_category.lower()
+                # Mapeo de consultas a categorías esperadas
+                query_to_category = {
+                    'juego': ['video games', 'toys & games'],
+                    'consola': ['video games', 'electronics'],
+                    'laptop': ['electronics', 'computers'],
+                    'zapato': ['clothing', 'fashion'],
+                    'libro': ['books'],
+                    'crema': ['beauty', 'health & personal care'],
+                    'sofá': ['home & kitchen'],
+                    'bicicleta': ['sports & outdoors'],
+                    'herramienta': ['tools & home improvement', 'automotive'],
+                    'impresora': ['office products', 'electronics'],
+                    'vitamina': ['health & personal care', 'health'],
+                    'auricular': ['electronics'],
+                    'vestido': ['clothing', 'fashion'],
+                    'cocina': ['home & kitchen'],
+                    'balón': ['sports & outdoors']
+                }
+                
+                for keyword, expected_categories in query_to_category.items():
+                    if keyword in query_lower:
+                        expected_lower = [ec.lower() for ec in expected_categories]
+                        if pred_cat in expected_lower:
+                            category_bonus += 0.5
+                        break
+            
+            # Calcular puntuación final
+            base_score = (
+                (title_score + min(exact_title_bonus, 0.5)) * weights['title_match'] +
+                category_score * weights['category_match'] +
+                desc_score * weights['description_match']
+            )
+            
+            final_score = base_score * category_bonus
+            
+            # Bonus por rating
             if hasattr(product, "average_rating") and product.average_rating:
-                rating_boost += product.average_rating / 10.0
-
-            final_score = float(text_sim * rating_boost)
-            logger.debug(f"[_score] Score for '{product.id}': {final_score:.3f} (text_sim: {text_sim:.3f})")
+                rating_boost = 1.0 + (product.average_rating * 0.1)
+                final_score *= rating_boost
+            
+            # Asegurar que esté entre 0 y 1
+            final_score = max(0.0, min(1.0, final_score))
+            
+            logger.debug(f"[_score] {product.title[:30]}...: title={title_score:.3f}, "
+                    f"category={category_score:.3f}, final={final_score:.3f}")
             
             return final_score
 
         except Exception as e:
-            logger.error(f"[_score] Error scoring product: {e}")
+            logger.debug(f"[_score] Error: {e}")
             return 0.1
 
     def _text_similarity(self, q, t):

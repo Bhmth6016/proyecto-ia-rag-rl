@@ -50,3 +50,6 @@ dist/
 
 models/rl_models/checkpoint-40/config.json
 /models
+data/processed/products.json
+data/processed/products.json
+/data/processed

@@ -701,13 +701,13 @@ class Product(BaseModel):
     
     @staticmethod
     def _extract_category_from_title(title: str) -> Optional[str]:
-        """Extrae categoría del título usando palabras clave generales para e-commerce."""
+        """Extrae categoría del título usando palabras clave generales para e-commerce - MEJORADO"""
         if not title:
             return None
         
         title_lower = title.lower()
         
-        # 🔥 DICCIONARIO GENERALIZADO PARA E-COMMERCE (mejorado)
+        # 🔥 DICCIONARIO MEJORADO CON SINÓNIMOS EN ESPAÑOL
         category_keywords = {
             'Electronics': [
                 'laptop', 'computer', 'pc', 'macbook', 'notebook', 'desktop',
@@ -715,58 +715,124 @@ class Product(BaseModel):
                 'mouse', 'printer', 'scanner', 'camera', 'headphones', 'earphones',
                 'speaker', 'tv', 'television', 'electronic', 'device', 'gadget',
                 'usb', 'hdmi', 'cable', 'charger', 'battery', 'router', 'modem',
-                'smartwatch', 'fitness tracker', 'drone', 'projector'
+                'smartwatch', 'fitness tracker', 'drone', 'projector', 'auricular',
+                'audífono', 'teclado', 'ratón', 'impresora', 'escáner'
             ],
             'Clothing': [
                 'shirt', 't-shirt', 'pants', 'jeans', 'dress', 'jacket', 'hoodie',
                 'sweater', 'sweatshirt', 'shorts', 'skirt', 'blouse', 'coat',
                 'underwear', 'socks', 'shoes', 'sneakers', 'boots', 'sandals',
-                'hat', 'cap', 'gloves', 'scarf', 'belt', 'tie', 'suit', 'uniform'
+                'hat', 'cap', 'gloves', 'scarf', 'belt', 'tie', 'suit', 'uniform',
+                'camisa', 'pantalón', 'vestido', 'chaqueta', 'sudader', 'falda',
+                'blusa', 'abrigo', 'calcetines', 'zapatos', 'zapatillas', 'botas',
+                'sombrero', 'gorra', 'guantes', 'bufanda', 'cinturón', 'corbata'
             ],
             'Home & Kitchen': [
                 'kitchen', 'cookware', 'appliance', 'furniture', 'sofa', 'bed',
                 'chair', 'table', 'desk', 'lamp', 'light', 'rug', 'carpet',
-                'curtain', 'blanket', 'pillow', 'mattress', 'cabinet', 'shelf'
+                'curtain', 'blanket', 'pillow', 'mattress', 'cabinet', 'shelf',
+                'refrigerator', 'oven', 'microwave', 'blender', 'toaster',
+                'dishwasher', 'vacuum', 'mop', 'broom', 'detergent', 'cleaner',
+                'cocina', 'mueble', 'sofá', 'cama', 'silla', 'mesa', 'escritorio',
+                'lámpara', 'alfombra', 'cortina', 'manta', 'almohada', 'colchón',
+                'armario', 'estante', 'nevera', 'horno', 'microondas', 'batidora',
+                'tostadora', 'lavavajillas', 'aspiradora', 'fregona', 'escoba'
             ],
             'Books': [
                 'book', 'novel', 'author', 'edition', 'hardcover', 'paperback',
-                'kindle', 'ebook', 'textbook', 'magazine', 'comic', 'biography'
+                'kindle', 'ebook', 'textbook', 'magazine', 'comic', 'biography',
+                'fiction', 'non-fiction', 'science', 'history', 'cookbook', 'manual',
+                'libro', 'novela', 'autor', 'edición', 'tapa dura', 'tapa blanda',
+                'revista', 'cómic', 'biografía', 'ficción', 'no ficción', 'ciencia',
+                'historia', 'libro de cocina', 'manual'
             ],
             'Sports & Outdoors': [
                 'fitness', 'exercise', 'gym', 'yoga', 'outdoor', 'camping',
                 'hiking', 'running', 'training', 'bike', 'bicycle', 'ball',
-                'soccer', 'basketball', 'tennis', 'golf', 'swimming', 'fishing'
+                'soccer', 'basketball', 'tennis', 'golf', 'swimming', 'fishing',
+                'tent', 'sleeping bag', 'backpack', 'hiking boots', 'kayak',
+                'deporte', 'ejercicio', 'gimnasio', 'camping', 'senderismo',
+                'correr', 'entrenamiento', 'bicicleta', 'pelota', 'fútbol',
+                'baloncesto', 'tenis', 'golf', 'natación', 'pesca', 'tienda',
+                'saco de dormir', 'mochila', 'botas de senderismo'
             ],
             'Beauty': [
                 'makeup', 'cosmetic', 'skincare', 'perfume', 'serum', 'lotion',
                 'shampoo', 'conditioner', 'hair', 'nail', 'lipstick', 'mascara',
-                'brush', 'mirror', 'cream', 'oil', 'soap', 'deodorant'
+                'brush', 'mirror', 'cream', 'oil', 'soap', 'deodorant',
+                'razor', 'shaver', 'trimmer', 'epilator', 'massager',
+                'maquillaje', 'cosmético', 'cuidado de la piel', 'perfume',
+                'champú', 'acondicionador', 'pelo', 'uña', 'labial', 'rimel',
+                'cepillo', 'espejo', 'crema', 'aceite', 'jabón', 'desodorante',
+                'maquinilla', 'afeitadora', 'recortadora'
             ],
             'Toys & Games': [
                 'toy', 'lego', 'puzzle', 'doll', 'kids', 'children', 'toddler',
-                'action figure', 'board game', 'video game', 'game', 'console'
+                'action figure', 'board game', 'video game', 'game', 'console',
+                'playstation', 'xbox', 'nintendo', 'switch', 'ps5', 'controller',
+                'card game', 'dice', 'chess', 'puzzle', 'blocks',
+                'juguete', 'rompecabezas', 'muñeca', 'niños', 'figura de acción',
+                'juego de mesa', 'videojuego', 'consola', 'mando', 'cartas',
+                'dados', 'ajedrez', 'bloques'
             ],
             'Automotive': [
                 'car', 'auto', 'vehicle', 'engine', 'tire', 'motor', 'battery',
-                'oil', 'filter', 'brake', 'light', 'tool', 'accessory', 'parts'
+                'oil', 'filter', 'brake', 'light', 'tool', 'accessory', 'parts',
+                'wiper', 'mirror', 'seat cover', 'steering wheel', 'antenna',
+                'coche', 'automóvil', 'vehículo', 'motor', 'neumático', 'batería',
+                'aceite', 'filtro', 'freno', 'luz', 'herramienta', 'accesorio',
+                'pieza', 'limpiaparabrisas', 'espejo', 'funda de asiento', 'volante'
             ],
             'Office Products': [
                 'office', 'stationery', 'paper', 'pen', 'pencil', 'notebook',
-                'printer', 'scanner', 'desk', 'chair', 'lamp', 'folder', 'binder'
+                'printer', 'scanner', 'desk', 'chair', 'lamp', 'folder', 'binder',
+                'stapler', 'scissors', 'tape', 'envelope', 'clipboard', 'calendar',
+                'oficina', 'papelería', 'papel', 'bolígrafo', 'lápiz', 'cuaderno',
+                'impresora', 'escáner', 'escritorio', 'silla', 'carpeta', 'archivador',
+                'grapadora', 'tijeras', 'cinta', 'sobre', 'portapapeles', 'calendario'
             ],
             'Health': [
                 'vitamin', 'supplement', 'medicine', 'first aid', 'thermometer',
-                'bandage', 'mask', 'sanitizer', 'pill', 'tablet', 'syrup'
+                'bandage', 'mask', 'sanitizer', 'pill', 'tablet', 'syrup',
+                'blood pressure', 'glucometer', 'inhaler', 'wheelchair', 'crutch',
+                'vitamina', 'suplemento', 'medicina', 'primeros auxilios', 'termómetro',
+                'vendaje', 'mascarilla', 'desinfectante', 'píldora', 'comprimido', 'jarabe',
+                'presión arterial', 'glucómetro', 'inhalador', 'silla de ruedas', 'muleta'
             ],
             'Video Games': [
-                'nintendo', 'playstation', 'xbox', 'switch', 'wii', 'gamecube',
-                'ps4', 'ps5', 'xbox one', 'game', 'video game', 'videogame'
+                'video game', 'game', 'gaming', 'play', 'player', 'console', 'controller',
+                'nintendo', 'playstation', 'xbox', 'switch', 'ps4', 'ps5',
+                'retro', 'arcade', 'emulator', 'rom', 'cartridge', 'disc',
+                'steam', 'epic games', 'controller', 'joystick', 'headset',
+                'videojuego', 'juego', 'consola', 'mando', 'mandos', 'retro',
+                'arcade', 'emulador', 'cartucho', 'disco', 'auriculares'
             ]
         }
         
+        # Contador de coincidencias
+        category_scores = {}
+        
         for category, keywords in category_keywords.items():
-            if any(kw in title_lower for kw in keywords):
-                return category
+            score = 0
+            for keyword in keywords:
+                if keyword in title_lower:
+                    score += 1
+            
+            if score > 0:
+                category_scores[category] = score
+        
+        # Si hay categorías con puntuación, devolver la mejor
+        if category_scores:
+            best_category = max(category_scores.items(), key=lambda x: x[1])[0]
+            
+            # Evitar que videojuegos capture todo (requerir más evidencia)
+            if best_category == 'Video Games' and category_scores['Video Games'] < 2:
+                # Buscar segunda mejor categoría
+                category_scores.pop('Video Games', None)
+                if category_scores:
+                    best_category = max(category_scores.items(), key=lambda x: x[1])[0]
+            
+            return best_category
         
         return None
     
