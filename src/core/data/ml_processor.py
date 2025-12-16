@@ -14,9 +14,30 @@ import psutil
 import numpy as np
 
 from src.core.config import settings
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
 
+# Configurar logging para desactivar progress bars
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.WARNING)
+logging.getLogger("tqdm").setLevel(logging.WARNING)
+logging.getLogger("tqdm.auto").setLevel(logging.WARNING)
+logging.getLogger("tqdm.std").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+try:
+    import datasets
+    datasets.disable_progress_bar()
+except ImportError:
+    pass
 
+# Desactivar progress bars de transformers
+try:
+    from transformers import logging as transformers_logging
+    transformers_logging.set_verbosity_error()
+    transformers_logging.disable_progress_bar()
+except ImportError:
+    pass
 # ------------------------------------------------------------------
 # Helper functions primero para evitar imports circulares
 # ------------------------------------------------------------------
@@ -36,7 +57,13 @@ def _get_embedding_model_singleton(model_name: str = None):
                 try:
                     from sentence_transformers import SentenceTransformer
                     logger.info(f"🔧 Cargando modelo de embeddings: {model_name}")
-                    _get_embedding_model_singleton._model = SentenceTransformer(model_name)
+                    
+                    # ✅ DESACTIVAR PROGRESS BAR
+                    _get_embedding_model_singleton._model = SentenceTransformer(
+                        model_name,
+                        show_progress_bar=False,  # ← DESACTIVADO
+                        device='cpu'  # ← OPCIÓN: especificar dispositivo
+                    )
                     logger.info(f"✅ Modelo de embeddings cargado")
                 except ImportError:
                     logger.warning("⚠️ SentenceTransformer no disponible")
@@ -63,7 +90,12 @@ def _get_nlp_enricher_singleton(enable_nlp: bool = True, device: str = "cuda"):
                 try:
                     from src.core.nlp.enrichment import NLPEnricher
                     logger.info(f"🔧 Cargando NLP enricher")
-                    _get_nlp_enricher_singleton._enricher = NLPEnricher(device=device)
+                    
+                    # 🔥 Pasar parámetros para desactivar progress bars
+                    _get_nlp_enricher_singleton._enricher = NLPEnricher(
+                        device=device,
+                        disable_progress_bars=True  # ← Si el NLPEnricher soporta esto
+                    )
                     _get_nlp_enricher_singleton._enricher.initialize()
                     logger.info(f"✅ NLP enricher cargado")
                 except ImportError:
@@ -306,7 +338,6 @@ class ProductDataPreprocessor:
         return " ".join(parts)
     
     def _get_or_create_embedding(self, text: str) -> Optional[List[float]]:
-        """Obtiene embedding de cache o lo genera."""
         # Generar clave de cache
         cache_key = hash(text) % 1000000
         
@@ -325,12 +356,16 @@ class ProductDataPreprocessor:
                 return None
             
             if hasattr(model, 'encode'):
-                embedding = model.encode([text], convert_to_numpy=True)[0]
+                # ✅ DESACTIVAR PROGRESS BAR EN EL ENCODING
+                embedding = model.encode(
+                    [text], 
+                    convert_to_numpy=True,
+                    show_progress_bar=False,  # ← IMPORTANTE
+                    normalize_embeddings=True,  # ← Ya normaliza automáticamente
+                    batch_size=32  # ← Puedes ajustar el tamaño del batch interno
+                )[0]
             else:
                 embedding = model.embed_documents([text])[0]
-            
-            # Normalizar
-            embedding = embedding / np.linalg.norm(embedding)
             
             # Almacenar en cache (si hay espacio)
             with self._cache_lock:

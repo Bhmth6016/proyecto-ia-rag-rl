@@ -977,7 +977,7 @@ class OptimizedChromaBuilder:
                 embeddings = model.encode(
                     contents,
                     batch_size=32,
-                    show_progress_bar=True,
+                    show_progress_bar=False,
                     convert_to_numpy=True,
                     normalize_embeddings=True
                 )

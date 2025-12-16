@@ -1,0 +1,43 @@
+{
+  "ML_ENABLED": true,
+  "ML_FEATURES": ["category", "embedding", "entities", "ner", "zero_shot", "similarity"],
+  "ML_CATEGORIES": [
+    "Electronics", "Clothing", "Home & Kitchen", "Books", 
+    "Sports & Outdoors", "Beauty", "Toys & Games", "Automotive",
+    "Office Products", "Health", "Baby", "Grocery", "Pet Supplies",
+    "Industrial & Scientific", "Movies & TV", "Music", "Software",
+    "Video Games"
+  ],
+  "EMBEDDING_MODEL": "all-MiniLM-L6-v2",
+  "NLP_ENABLED": true,
+  "NER_MODEL": "dslim/distilbert-NER",
+  "ZERO_SHOT_MODEL": "typeform/distilbert-base-uncased-mnli",
+  "SYSTEM_MODES": {
+    "basic": {
+      "name": "Basic Mode",
+      "description": "Búsqueda semántica básica sin ML",
+      "ml_enabled": false,
+      "ner_enabled": false,
+      "zero_shot_enabled": false,
+      "nlp_enabled": false
+    },
+    "balanced": {
+      "name": "Balanced Mode", 
+      "description": "ML básico para categorización",
+      "ml_enabled": true,
+      "ml_features": ["category", "embedding"],
+      "ner_enabled": false,
+      "zero_shot_enabled": false,
+      "nlp_enabled": false
+    },
+    "enhanced": {
+      "name": "Enhanced Mode",
+      "description": "ML completo con NLP y embeddings",
+      "ml_enabled": true,
+      "ml_features": ["category", "embedding", "entities", "similarity", "ner", "zero_shot"],
+      "ner_enabled": true,
+      "zero_shot_enabled": true,
+      "nlp_enabled": true
+    }
+  }
+}

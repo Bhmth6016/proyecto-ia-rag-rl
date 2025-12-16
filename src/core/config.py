@@ -1,4 +1,4 @@
-# src/core/config.py - VERSIÓN COMPLETAMENTE CORREGIDA
+# src/core/config.py
 import os
 import sys
 from pathlib import Path
@@ -15,13 +15,18 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # ============================================================
-# CONFIGURACIÓN GLOBAL SINGLETON - SIN IMPORTS CIRCULARES
+# CONFIGURACIÓN GLOBAL SINGLETON
 # ============================================================
 
 class GlobalSettings(BaseModel):
     """
     Configuración central del sistema con gestión unificada de ML 100% local.
-    Implementa patrón Singleton para asegurar una única instancia.
+    
+    IMPORTANTE: Cuando ML_ENABLED=False:
+      • No se predice categoría automáticamente
+      • No se extraen entidades con NLP
+      • No se generan embeddings ML personalizados
+      • Se usa búsqueda semántica básica estándar
     """
     
     # Configuración Pydantic v2
@@ -33,7 +38,7 @@ class GlobalSettings(BaseModel):
     )
     
     # ======================
-    # CONFIGURACIÓN LOCAL DE LLM
+    # CONFIGURACIÓN LOCAL DE LLM (COMPLETA)
     # ======================
     LOCAL_LLM_ENABLED: bool = Field(
         default=True,
@@ -81,7 +86,7 @@ class GlobalSettings(BaseModel):
     
     LOCAL_EMBEDDING_DEVICE: str = Field(
         default="cuda",
-        description="Dispositivo para embeddings (cuda/cuda/mps)"
+        description="Dispositivo para embeddings (cuda/mps/cpu)"
     )
     
     # ======================
@@ -103,7 +108,7 @@ class GlobalSettings(BaseModel):
     )
     
     # ======================
-    # DIRECTORIOS
+    # DIRECTORIOS (COMPLETOS)
     # ======================
     BASE_DIR: Path = Field(
         default_factory=lambda: Path.cwd().resolve(),
@@ -156,10 +161,10 @@ class GlobalSettings(BaseModel):
     )
     
     # ======================
-    # LÍMITES DEL SISTEMA - CORREGIDO
+    # LÍMITES DEL SISTEMA
     # ======================
     MAX_PRODUCTS_TO_LOAD: int = Field(
-        default=1000,  # Cambiado de 1_000_000 a 1000 para pruebas
+        default=1000,
         ge=100,
         description="Máximo de productos a cargar"
     )
@@ -212,7 +217,7 @@ class GlobalSettings(BaseModel):
         description="Métrica de similitud (cosine/euclidean/dot)"
     )
     
-    # Nuevas rutas para compatibilidad
+    # Rutas de índices
     VECTOR_INDEX_PATH: Path = Field(
         default_factory=lambda: Path.cwd().resolve() / "data" / "vector",
         description="Ruta del índice vectorial"
@@ -224,11 +229,16 @@ class GlobalSettings(BaseModel):
     )
     
     # ======================
-    # CONFIGURACIÓN ML (ÚNICA FUENTE DE VERDAD)
+    # CONFIGURACIÓN ML COMPLETA
     # ======================
     ML_ENABLED: bool = Field(
         default=True,
-        description="Master switch: Habilitar TODAS las características ML"
+        description="""Habilita características ML avanzadas:
+        • Predicción de categorías automática
+        • Extracción de entidades con NLP
+        • Embeddings personalizados por producto
+        • Cálculo de similitud ML mejorado
+        Cuando es False, usa solo búsqueda semántica básica."""
     )
     
     ML_FEATURES: Set[str] = Field(
@@ -248,16 +258,11 @@ class GlobalSettings(BaseModel):
     
     ML_CATEGORIES: List[str] = Field(
         default_factory=lambda: [
-            "Electronics",
-            "Home & Kitchen",
-            "Clothing & Accessories",
-            "Sports & Outdoors",
-            "Books & Media",
-            "Health & Beauty",
-            "Toys & Games",
-            "Automotive",
-            "Office Products",
-            "Other"
+            "Electronics", "Clothing", "Home & Kitchen", "Books", 
+            "Sports & Outdoors", "Beauty", "Toys & Games", "Automotive",
+            "Office Products", "Health", "Baby", "Grocery", "Pet Supplies",
+            "Industrial & Scientific", "Movies & TV", "Music", "Software",
+            "Video Games", "Other"
         ],
         description="Categorías predefinidas para clasificación"
     )
@@ -294,11 +299,22 @@ class GlobalSettings(BaseModel):
         description="Carga diferida de modelos ML"
     )
     
-    # Flag interno para control de propagación
-    ml_propagated: bool = Field(
-        default=False,
-        description="Flag interno: ¿configuración ML propagada?",
-        exclude=True
+    # ======================
+    # CONFIGURACIÓN NLP (MEJORADA)
+    # ======================
+    NLP_ENABLED: bool = Field(
+        default=True,
+        description="Habilitar procesamiento NLP (NER y Zero-Shot)"
+    )
+    
+    NER_MODEL: str = Field(
+        default="dslim/distilbert-NER",
+        description="Modelo para Named Entity Recognition"
+    )
+    
+    ZERO_SHOT_MODEL: str = Field(
+        default="typeform/distilbert-base-uncased-mnli",
+        description="Modelo para Zero-Shot Classification"
     )
     
     # ======================
@@ -319,7 +335,7 @@ class GlobalSettings(BaseModel):
         default=500000,
         ge=1,
         le=10000,
-        description="Tamaño de batch"
+        description="Tamaño de batch para procesamiento"
     )
     
     RLHF_CHECKPOINT: Optional[str] = Field(
@@ -333,6 +349,61 @@ class GlobalSettings(BaseModel):
     ANONYMIZED_TELEMETRY: bool = Field(
         default=False,
         description="Telemetría anonimizada"
+    )
+    
+    # ======================
+    # MODOS DEL SISTEMA (MEJORADOS)
+    # ======================
+    SYSTEM_MODES: Dict[str, Dict[str, Any]] = Field(
+        default_factory=lambda: {
+            "enhanced": {
+                "name": "Enhanced Mode",
+                "description": "Usa NER, Zero-Shot, embeddings ML, filtro colaborativo y RLHF",
+                "features": ["ner", "zero_shot", "ml_embeddings", "collaborative_filter", "rlhf"],
+                "ml_enabled": True,
+                "ner_enabled": True,
+                "zero_shot_enabled": True,
+                "nlp_enabled": True,
+                "rl_enabled": True
+            },
+            "basic": {
+                "name": "Basic Mode",
+                "description": "Búsqueda semántica simple sin ML avanzado",
+                "features": ["semantic_search"],
+                "ml_enabled": False,
+                "ner_enabled": False,
+                "zero_shot_enabled": False,
+                "nlp_enabled": False,
+                "rl_enabled": False
+            },
+            "balanced": {
+                "name": "Balanced Mode",
+                "description": "ML básico sin NLP avanzado",
+                "features": ["ml_embeddings", "collaborative_filter"],
+                "ml_enabled": True,
+                "ner_enabled": False,
+                "zero_shot_enabled": False,
+                "nlp_enabled": False,
+                "rl_enabled": False
+            }
+        }
+    )
+    
+    PRODUCT_REF_ENABLED: bool = Field(
+        default=True,
+        description="Habilitar sistema ProductReference"
+    )
+
+    CURRENT_MODE: str = Field(
+        default="enhanced",
+        description="Modo actual del sistema"
+    )
+    
+    # Flag interno para control de propagación
+    ml_propagated: bool = Field(
+        default=False,
+        description="Flag interno: ¿configuración ML propagada?",
+        exclude=True
     )
     
     # ======================
@@ -417,15 +488,59 @@ class GlobalSettings(BaseModel):
         if self.ml_propagated:
             return self
         
-        # Esta función se llamará después de que todo esté inicializado
-        # La propagación real se hará cuando se necesite
         print(f"🤖 Configuración ML lista: habilitado={self.ML_ENABLED}, características={list(self.ML_FEATURES)}")
         self.ml_propagated = True
         return self
     
     # ======================
-    # MÉTODOS PÚBLICOS
+    # MÉTODOS PÚBLICOS (COMPLETOS)
     # ======================
+    
+    def apply_mode_config(self, mode: str):
+        """
+        Aplica la configuración de un modo específico.
+        
+        Args:
+            mode: Modo a aplicar (basic, balanced, enhanced)
+        """
+        if mode not in self.SYSTEM_MODES:
+            print(f"⚠️ Modo '{mode}' no encontrado, usando 'enhanced'")
+            mode = "enhanced"
+        
+        mode_config = self.SYSTEM_MODES[mode]
+        
+        # Aplicar configuración
+        self.CURRENT_MODE = mode
+        
+        # 🔥 CRÍTICO: Aplicar configuración del modo
+        self.ML_ENABLED = mode_config.get('ml_enabled', True)
+        
+        # Configurar NLP según el modo
+        nlp_enabled = mode_config.get('nlp_enabled', False)
+        if nlp_enabled:
+            self.NLP_ENABLED = True
+            # Añadir características NLP a ML_FEATURES
+            current_features = set(self.ML_FEATURES)
+            current_features.update(['ner', 'zero_shot'])
+            self.ML_FEATURES = current_features
+        else:
+            self.NLP_ENABLED = False
+        
+        # Configurar RL según el modo
+        rl_enabled = mode_config.get('rl_enabled', False)
+        self.RL_ENABLED = rl_enabled
+        
+        # Mantener ProductReference siempre habilitado
+        self.PRODUCT_REF_ENABLED = True
+        
+        print(f"🔧 Modo '{mode}' aplicado:")
+        print(f"   • ML: {'✅ HABILITADO' if self.ML_ENABLED else '❌ DESHABILITADO'}")
+        print(f"   • NLP: {'✅ HABILITADO' if self.NLP_ENABLED else '❌ DESHABILITADO'}")
+        print(f"   • RL: {'✅ HABILITADO' if self.RL_ENABLED else '❌ DESHABILITADO'}")
+        print(f"   • Características ML: {list(self.ML_FEATURES)}")
+        
+        self.ml_propagated = False
+        return self
     
     def update_ml_settings(
         self,
@@ -434,21 +549,9 @@ class GlobalSettings(BaseModel):
         ml_embedding_model: Optional[str] = None,
         ml_categories: Optional[List[str]] = None
     ) -> bool:
-        """
-        Actualizar configuración ML dinámicamente.
-        
-        Args:
-            ml_enabled: Habilitar/deshabilitar ML
-            ml_features: Lista de características ML
-            ml_embedding_model: Modelo de embeddings
-            ml_categories: Categorías para clasificación
-        
-        Returns:
-            True si hubo cambios, False en caso contrario
-        """
+        """Actualizar configuración ML dinámicamente."""
         updates_made = False
         
-        # Actualizar valores
         if ml_enabled is not None and ml_enabled != self.ML_ENABLED:
             self.ML_ENABLED = ml_enabled
             updates_made = True
@@ -471,10 +574,9 @@ class GlobalSettings(BaseModel):
             self.ML_CATEGORIES = ml_categories
             updates_made = True
         
-        # Reprogramar propagación si hubo cambios
         if updates_made:
             self.ml_propagated = False
-            print(f"📡 Configuración ML actualizada: habilitado={self.ML_ENABLED}, características={list(self.ML_FEATURES)}")
+            print(f"📡 Configuración ML actualizada: habilitado={self.ML_ENABLED}")
         
         return updates_made
     
@@ -518,6 +620,17 @@ class GlobalSettings(BaseModel):
             'CHROMA_DB_PATH': str(self.CHROMA_DB_PATH)
         }
     
+    def get_current_mode_config(self) -> Dict[str, Any]:
+        """Obtener configuración del modo actual."""
+        mode_config = self.SYSTEM_MODES.get(self.CURRENT_MODE, {})
+        return {
+            **mode_config,
+            "current_mode": self.CURRENT_MODE,
+            "ml_enabled": self.ML_ENABLED,
+            "nlp_enabled": self.NLP_ENABLED,
+            "rl_enabled": self.RL_ENABLED
+        }
+    
     def is_ml_feature_enabled(self, feature: str) -> bool:
         """Verificar si una característica ML está habilitada."""
         return feature in self.ML_FEATURES
@@ -529,6 +642,14 @@ class GlobalSettings(BaseModel):
     def is_ml_enabled(self) -> bool:
         """Verificar si ML está habilitado."""
         return self.ML_ENABLED
+    
+    def is_nlp_enabled(self) -> bool:
+        """Verificar si NLP está habilitado."""
+        return self.NLP_ENABLED and self.ML_ENABLED
+    
+    def is_rl_enabled(self) -> bool:
+        """Verificar si RL está habilitado."""
+        return self.RL_ENABLED and self.ML_ENABLED
     
     def update_from_env(self) -> None:
         """Actualizar configuración desde variables de entorno."""
@@ -572,8 +693,7 @@ class GlobalSettings(BaseModel):
         max_products_env = os.getenv("MAX_PRODUCTS_TO_LOAD")
         if max_products_env:
             max_products = get_env_int("MAX_PRODUCTS_TO_LOAD", self.MAX_PRODUCTS_TO_LOAD)
-            # Asegurar que cumple con la validación
-            if max_products >= 100:  # Cambiado de 1000 a 100
+            if max_products >= 100:
                 self.MAX_PRODUCTS_TO_LOAD = max_products
             else:
                 print(f"⚠️ MAX_PRODUCTS_TO_LOAD={max_products} es muy pequeño, usando valor por defecto: {self.MAX_PRODUCTS_TO_LOAD}")
@@ -609,6 +729,11 @@ class GlobalSettings(BaseModel):
         self.ML_MIN_SIMILARITY = get_env_float("ML_MIN_SIMILARITY", self.ML_MIN_SIMILARITY)
         self.ML_LAZY_LOAD = get_env_bool("ML_LAZY_LOAD", self.ML_LAZY_LOAD)
         
+        # Configuración NLP
+        self.NLP_ENABLED = get_env_bool("NLP_ENABLED", self.NLP_ENABLED)
+        self.NER_MODEL = os.getenv("NER_MODEL", self.NER_MODEL)
+        self.ZERO_SHOT_MODEL = os.getenv("ZERO_SHOT_MODEL", self.ZERO_SHOT_MODEL)
+        
         # RL/RLHF
         self.RL_ENABLED = get_env_bool("RL_ENABLED", self.RL_ENABLED)
         self.RL_MIN_SAMPLES = get_env_int("RL_MIN_SAMPLES", self.RL_MIN_SAMPLES)
@@ -618,107 +743,25 @@ class GlobalSettings(BaseModel):
         # Telemetría
         self.ANONYMIZED_TELEMETRY = get_env_bool("ANONYMIZED_TELEMETRY", self.ANONYMIZED_TELEMETRY)
         
+        # Modos del Sistema
+        current_mode_env = os.getenv("CURRENT_MODE")
+        if current_mode_env and current_mode_env in self.SYSTEM_MODES:
+            self.CURRENT_MODE = current_mode_env
+        
         # Reprogramar propagación de ML
         self.ml_propagated = False
         
         print("✅ Configuración actualizada desde variables de entorno")
-    SYSTEM_MODES: Dict[str, Dict[str, Any]] = Field(
-        default_factory=lambda: {
-            "enhanced": {
-                "name": "Enhanced Mode",
-                "description": "Usa NER, Zero-Shot, embeddings ML, filtro colaborativo y RLHF",
-                "features": ["ner", "zero_shot", "ml_embeddings", "collaborative_filter", "rlhf"],
-                "ml_enabled": True,
-                "ner_enabled": True,
-                "zero_shot_enabled": True
-            },
-            "basic": {
-                "name": "Basic Mode",
-                "description": "Búsqueda semántica simple sin ML avanzado",
-                "features": ["semantic_search"],
-                "ml_enabled": False,
-                "ner_enabled": False,
-                "zero_shot_enabled": False
-            },
-            "balanced": {
-                "name": "Balanced Mode",
-                "description": "ML básico sin NLP avanzado",
-                "features": ["ml_embeddings", "collaborative_filter"],
-                "ml_enabled": True,
-                "ner_enabled": False,
-                "zero_shot_enabled": False
-            }
-        }
-    )
-    PRODUCT_REF_ENABLED: bool = Field(
-        default=True,
-        description="Habilitar sistema ProductReference"
-    )
-
-    CURRENT_MODE: str = Field(
-        default="enhanced",
-        description="Modo actual del sistema"
-    )
-
-    # 🔥 NUEVO: Configuración NLP
-    NLP_ENABLED: bool = Field(
-        default=True,
-        description="Habilitar procesamiento NLP"
-    )
-
-    NER_MODEL: str = Field(
-        default="dslim/distilbert-NER",
-        description="Modelo para Named Entity Recognition"
-    )
-
-    ZERO_SHOT_MODEL: str = Field(
-        default="typeform/distilbert-base-uncased-mnli",
-        description="Modelo para Zero-Shot Classification"
-    )
-    def apply_mode_config(self, mode: str):
-        """
-        Aplica la configuración de un modo específico.
-        """
-        if mode not in self.SYSTEM_MODES:
-            print(f"⚠️ Modo '{mode}' no encontrado, usando 'enhanced'")
-            mode = "enhanced"
-        
-        mode_config = self.SYSTEM_MODES[mode]
-        
-        # Aplicar configuración
-        self.CURRENT_MODE = mode
-        self.ML_ENABLED = mode_config.get('ml_enabled', True)
-        self.NLP_ENABLED = mode_config.get('ner_enabled', False) and mode_config.get('zero_shot_enabled', False)
-        
-        # 🔥 Mantener ProductReference siempre habilitado (es esencial)
-        self.PRODUCT_REF_ENABLED = True
-        
-        # Actualizar características ML según el modo
-        if mode == "basic":
-            self.ML_FEATURES = set()  # Sin características ML
-        elif mode == "balanced":
-            self.ML_FEATURES = {"embedding", "category"}  # ML básico
-        elif mode == "enhanced":
-            self.ML_FEATURES = {"embedding", "category", "entities", "similarity", "ner", "zero_shot"}
-        
-        print(f"🔧 Modo '{mode}' aplicado:")
-        print(f"   • ML: {'✅' if self.ML_ENABLED else '❌'}")
-        print(f"   • NLP: {'✅' if self.NLP_ENABLED else '❌'}")
-        print(f"   • Características ML: {list(self.ML_FEATURES)}")
-    def get_current_mode_config(self) -> Dict[str, Any]:
-        """Obtener configuración del modo actual."""
-        mode_config = self.SYSTEM_MODES.get(self.CURRENT_MODE, {})
-        return {
-            **mode_config,
-            "current_mode": self.CURRENT_MODE,
-            "nlp_enabled": self.NLP_ENABLED
-        }
+    
     def __str__(self) -> str:
         """Representación legible de la configuración."""
         return (
             f"GlobalSettings(\n"
-            f"  LOCAL_LLM_ENABLED={self.LOCAL_LLM_ENABLED},\n"
+            f"  CURRENT_MODE={self.CURRENT_MODE},\n"
             f"  ML_ENABLED={self.ML_ENABLED},\n"
+            f"  NLP_ENABLED={self.NLP_ENABLED},\n"
+            f"  RL_ENABLED={self.RL_ENABLED},\n"
+            f"  LOCAL_LLM_ENABLED={self.LOCAL_LLM_ENABLED},\n"
             f"  ML_FEATURES={list(self.ML_FEATURES)},\n"
             f"  EMBEDDING_MODEL={self.EMBEDDING_MODEL},\n"
             f"  DEVICE={self.DEVICE},\n"
@@ -729,7 +772,6 @@ class GlobalSettings(BaseModel):
     def __repr__(self) -> str:
         return self.__str__()
 
-
 # ============================================================
 # INSTANCIA GLOBAL SINGLETON
 # ============================================================
@@ -737,11 +779,14 @@ class GlobalSettings(BaseModel):
 # Crear instancia global
 settings = GlobalSettings()
 
-# Actualizar desde entorno (después de crear la instancia)
+# Actualizar desde entorno
 settings.update_from_env()
 
+# Aplicar modo actual
+settings.apply_mode_config(settings.CURRENT_MODE)
+
 # ============================================================
-# FUNCIONES DE CONVENIENCIA
+# FUNCIONES DE CONVENIENCIA (COMPLETAS)
 # ============================================================
 
 def get_settings() -> GlobalSettings:
@@ -785,6 +830,22 @@ def is_ml_feature_enabled(feature: str) -> bool:
     """
     return settings.is_ml_feature_enabled(feature)
 
+def is_ml_enabled() -> bool:
+    """Verificar si ML está habilitado."""
+    return settings.is_ml_enabled()
+
+def is_nlp_enabled() -> bool:
+    """Verificar si NLP está habilitado."""
+    return settings.is_nlp_enabled()
+
+def is_local_llm_enabled() -> bool:
+    """Verificar si LLM local está habilitado."""
+    return settings.is_local_llm_enabled()
+
+def is_rl_enabled() -> bool:
+    """Verificar si RL está habilitado."""
+    return settings.is_rl_enabled()
+
 def get_ml_config() -> Dict[str, Any]:
     """Obtener configuración ML actual."""
     return settings.get_ml_config()
@@ -793,28 +854,27 @@ def get_local_llm_config() -> Dict[str, Any]:
     """Obtener configuración de LLM local."""
     return settings.get_local_llm_config()
 
-# ============================================================
-# INICIALIZACIÓN FINAL
-# ============================================================
-
-# Imprimir configuración cargada usando print para evitar logging circular
-print("=" * 60)
-print("✅ CONFIGURACIÓN LOCAL CARGADA:")
-print(f"   • LLM Local: {settings.LOCAL_LLM_ENABLED} ({settings.LOCAL_LLM_MODEL})")
-print(f"   • ML Habilitado: {settings.ML_ENABLED}")
-print(f"   • Características ML: {list(settings.ML_FEATURES)}")
-print(f"   • Embedding Model: {settings.EMBEDDING_MODEL}")
-print(f"   • Dispositivo: {settings.DEVICE}")
-print(f"   • Log Level: {settings.LOG_LEVEL}")
-print(f"   • Directorio Datos: {settings.DATA_DIR}")
-print("=" * 60)
-
+def get_vector_config() -> Dict[str, Any]:
+    """Obtener configuración de almacenamiento vectorial."""
+    return settings.get_vector_config()
 
 def apply_system_mode(mode: str = "enhanced"):
-    """
-    Función de conveniencia para aplicar un modo del sistema.
-    
-    Args:
-        mode: Modo a aplicar (basic, balanced, enhanced)
-    """
-    settings.apply_mode_config(mode)
+    """Función de conveniencia para aplicar un modo del sistema."""
+    return settings.apply_mode_config(mode)
+
+def get_current_mode_config() -> Dict[str, Any]:
+    """Obtener configuración del modo actual."""
+    return settings.get_current_mode_config()
+
+# Imprimir configuración cargada
+print("=" * 60)
+print("✅ CONFIGURACIÓN E-COMMERCE HÍBRIDA CARGADA:")
+print(f"   • Modo Actual: {settings.CURRENT_MODE}")
+print(f"   • LLM Local: {'✅ HABILITADO' if settings.LOCAL_LLM_ENABLED else '❌ DESHABILITADO'}")
+print(f"   • ML: {'✅ HABILITADO' if settings.ML_ENABLED else '❌ DESHABILITADO'}")
+print(f"   • NLP: {'✅ HABILITADO' if settings.NLP_ENABLED else '❌ DESHABILITADO'}")
+print(f"   • RL: {'✅ HABILITADO' if settings.RL_ENABLED else '❌ DESHABILITADO'}")
+print(f"   • Categorías: {len(settings.ML_CATEGORIES)} categorías")
+print(f"   • Embedding Model: {settings.EMBEDDING_MODEL}")
+print(f"   • Directorios: {len([d for d in dir(settings) if d.endswith('_DIR')])} configurados")
+print("=" * 60)

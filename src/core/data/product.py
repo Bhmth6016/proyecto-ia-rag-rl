@@ -1,6 +1,5 @@
 from __future__ import annotations
-# src/core/data/product.py - VERSIÓN MEJORADA
-
+# src/core/data/product.py
 import hashlib
 import re
 import json
@@ -161,6 +160,8 @@ class ProductDetails(BaseModel):
                 return match.group(1)
         
         return None
+
+
 class MLProductProcessor:
     
     _embedding_model = None
@@ -168,6 +169,7 @@ class MLProductProcessor:
     
     @classmethod
     def _get_embedding_model(cls, model_name: str = None):
+        # ✅ CORRECCIÓN: Importar dentro del método para evitar problemas
         if model_name is None:
             from src.core.config import get_settings
             settings = get_settings()
@@ -182,9 +184,11 @@ class MLProductProcessor:
                         cls._embedding_model = SentenceTransformer(model_name)
                         logger.info(f"✅ Modelo de embeddings cargado")
                     except ImportError:
-                        logger.warning("⚠️ SentenceTransformer no disponible")
+                        logger.warning("⚠️ SentenceTransformer no disponible, embeddings no funcionarán")
+                        cls._embedding_model = None
                     except Exception as e:
                         logger.error(f"❌ Error cargando modelo: {e}")
+                        cls._embedding_model = None
         
         return cls._embedding_model
     
@@ -193,6 +197,8 @@ class MLProductProcessor:
         if not data:
             return data
         
+        # ✅ CORRECCIÓN: Importar dentro del método
+        from src.core.config import get_settings
         settings = get_settings()
         
         if not settings.ML_ENABLED:
@@ -202,6 +208,8 @@ class MLProductProcessor:
         try:
             enriched = data.copy()
             text = f"{enriched.get('title', '')} {enriched.get('description', '')}".strip()
+            
+            # Solo generar embedding si la característica está habilitada
             if 'embedding' in settings.ML_FEATURES and text:
                 model = cls._get_embedding_model()
                 if model:
@@ -209,17 +217,20 @@ class MLProductProcessor:
                     enriched['embedding'] = embedding.tolist()
                     enriched['embedding_model'] = settings.ML_EMBEDDING_MODEL
             
+            # ✅ CORRECCIÓN: Usar _predict_category (no _predict_category_general)
             if 'category' in settings.ML_FEATURES and text:
                 category = cls._predict_category(text, settings.ML_CATEGORIES)
                 if category:
                     enriched['predicted_category'] = category
                     enriched.setdefault('main_category', category)
 
+            # ✅ CORRECCIÓN: Usar _extract_entities (no _extract_entities_general)
             if 'entities' in settings.ML_FEATURES and text:
                 entities = cls._extract_entities(text)
                 if entities:
                     enriched['extracted_entities'] = entities
             
+            # ✅ CORRECCIÓN: Restaurar generación de tags si está habilitado
             if 'tags' in settings.ML_FEATURES and text:
                 tags = cls._generate_tags(text)
                 if tags:
@@ -235,54 +246,78 @@ class MLProductProcessor:
     
     @staticmethod
     def _predict_category(text: str, categories: List[str]) -> Optional[str]:
+        """Predicción de categorías para e-commerce general - FUSIÓN MEJORADA"""
         if not text:
             return None
         
         text_lower = text.lower()
 
+        # ✅ FUSIÓN: Tomar diccionario generalizado de NUEVA versión
         keyword_expansion = {
-            'video games': [
-                'game', 'gaming', 'play', 'player', 'console', 'controller',
-                'nintendo', 'playstation', 'xbox', 'switch', 'ps4', 'ps5',
-                'retro', 'arcade', 'emulator', 'rom', 'cartridge', 'disc'
+            'Electronics': [
+                'laptop', 'computer', 'pc', 'macbook', 'notebook', 'desktop',
+                'tablet', 'smartphone', 'phone', 'mobile', 'monitor', 'keyboard',
+                'mouse', 'printer', 'scanner', 'camera', 'headphones', 'earphones',
+                'speaker', 'tv', 'television', 'electronic', 'device', 'gadget',
+                'usb', 'hdmi', 'cable', 'charger', 'battery', 'router', 'modem',
+                'smartwatch', 'fitness tracker', 'drone', 'projector'
             ],
-            'electronics': [
-                'electronic', 'device', 'gadget', 'tech', 'technology',
-                'smart', 'digital', 'wireless', 'bluetooth', 'usb', 'hdmi',
-                'battery', 'charger', 'cable', 'adapter', 'screen', 'display'
+            'Clothing': [
+                'shirt', 't-shirt', 'pants', 'jeans', 'dress', 'jacket', 'hoodie',
+                'sweater', 'sweatshirt', 'shorts', 'skirt', 'blouse', 'coat',
+                'underwear', 'socks', 'shoes', 'sneakers', 'boots', 'sandals',
+                'hat', 'cap', 'gloves', 'scarf', 'belt', 'tie', 'suit', 'uniform'
             ],
-            'books': [
-                'read', 'reading', 'literature', 'story', 'tale', 'novel',
-                'author', 'publisher', 'publish', 'chapter', 'page', 'cover',
-                'binding'
+            'Home & Kitchen': [
+                'kitchen', 'cookware', 'appliance', 'furniture', 'sofa', 'bed',
+                'chair', 'table', 'desk', 'lamp', 'light', 'rug', 'carpet',
+                'curtain', 'blanket', 'pillow', 'mattress', 'cabinet', 'shelf',
+                'refrigerator', 'oven', 'microwave', 'blender', 'toaster', 'dishwasher',
+                'vacuum', 'mop', 'broom', 'detergent', 'cleaner'
             ],
-            'clothing': [
-                'wear', 'wearing', 'fashion', 'style', 'outfit', 'garment',
-                'fabric', 'textile', 'size', 'color', 'cotton', 'polyester'
+            'Books': [
+                'book', 'novel', 'author', 'edition', 'hardcover', 'paperback',
+                'kindle', 'ebook', 'textbook', 'magazine', 'comic', 'biography',
+                'fiction', 'non-fiction', 'science', 'history', 'cookbook', 'manual'
             ],
-            'home': [
-                'kitchen', 'cook', 'cookware', 'appliance', 'house', 'home',
-                'decor', 'sofa', 'bed', 'chair', 'table', 'furniture'
+            'Sports & Outdoors': [
+                'fitness', 'exercise', 'gym', 'yoga', 'outdoor', 'camping',
+                'hiking', 'running', 'training', 'bike', 'bicycle', 'ball',
+                'soccer', 'basketball', 'tennis', 'golf', 'swimming', 'fishing',
+                'tent', 'sleeping bag', 'backpack', 'hiking boots', 'kayak', 'paddle'
             ],
-            'sports': [
-                'sport', 'sports', 'fitness', 'exercise', 'training', 'gym',
-                'running', 'yoga', 'cycling', 'outdoor', 'camping', 'hiking'
+            'Beauty': [
+                'makeup', 'cosmetic', 'skincare', 'perfume', 'serum', 'lotion',
+                'shampoo', 'conditioner', 'hair', 'nail', 'lipstick', 'mascara',
+                'brush', 'mirror', 'cream', 'oil', 'soap', 'deodorant',
+                'razor', 'shaver', 'trimmer', 'epilator', 'massager'
             ],
-            'beauty': [
-                'makeup', 'beauty', 'skincare', 'lipstick', 'eyeliner',
-                'cream', 'serum', 'lotion', 'shampoo', 'conditioner', 'hair'
+            'Toys & Games': [
+                'toy', 'lego', 'puzzle', 'doll', 'kids', 'children', 'toddler',
+                'action figure', 'board game', 'video game', 'game', 'console',
+                'playstation', 'xbox', 'nintendo', 'switch', 'ps5', 'controller',
+                'card game', 'dice', 'chess', 'puzzle', 'blocks'
             ],
-            'toys': [
-                'toy', 'lego', 'puzzle', 'doll', 'kids', 'children',
-                'action figure', 'playset', 'board game'
+            'Automotive': [
+                'car', 'auto', 'vehicle', 'engine', 'tire', 'motor', 'battery',
+                'oil', 'filter', 'brake', 'light', 'tool', 'accessory', 'parts',
+                'wiper', 'mirror', 'seat cover', 'steering wheel', 'antenna'
             ],
-            'automotive': [
-                'car', 'motor', 'engine', 'automotive', 'battery', 'tire',
-                'accessory', 'vehicle', 'oil', 'spark plug'
-            ],
-            'office': [
+            'Office Products': [
                 'office', 'stationery', 'paper', 'pen', 'pencil', 'notebook',
-                'printer', 'scanner', 'desk'
+                'printer', 'scanner', 'desk', 'chair', 'lamp', 'folder', 'binder',
+                'stapler', 'scissors', 'tape', 'envelope', 'clipboard', 'calendar'
+            ],
+            'Health': [
+                'vitamin', 'supplement', 'medicine', 'first aid', 'thermometer',
+                'bandage', 'mask', 'sanitizer', 'pill', 'tablet', 'syrup',
+                'blood pressure', 'glucometer', 'inhaler', 'wheelchair', 'crutch'
+            ],
+            'Video Games': [
+                'video game', 'game', 'gaming', 'play', 'player', 'console', 'controller',
+                'nintendo', 'playstation', 'xbox', 'switch', 'ps4', 'ps5',
+                'retro', 'arcade', 'emulator', 'rom', 'cartridge', 'disc',
+                'steam', 'epic games', 'controller', 'joystick', 'headset'
             ]
         }
 
@@ -295,21 +330,27 @@ class MLProductProcessor:
 
         if found_categories:
             best_category = max(found_categories.items(), key=lambda x: x[1])[0]
-
+            
+            # ✅ CORRECCIÓN: Mantener mapeo de categorías para normalización
             category_mapping = {
                 'video games': 'Video Games',
-                'electronics': 'Electronics', 
+                'electronics': 'Electronics',
                 'books': 'Books',
                 'clothing': 'Clothing',
                 'home': 'Home & Kitchen',
-                'sports': 'Sports',
+                'sports': 'Sports & Outdoors',
                 'beauty': 'Beauty',
-                'toys': 'Toys',
+                'toys': 'Toys & Games',
                 'automotive': 'Automotive',
-                'office': 'Office'
+                'office': 'Office Products',
+                'health': 'Health'
             }
-
-            return category_mapping.get(best_category, best_category.title())
+            
+            # Convertir a minúscula para el mapeo
+            best_category_lower = best_category.lower()
+            if best_category_lower in category_mapping:
+                return category_mapping[best_category_lower]
+            return best_category.title()
         
         return None
 
@@ -323,6 +364,8 @@ class MLProductProcessor:
                 if cls._global_embedding_model is None:
                     try:
                         from sentence_transformers import SentenceTransformer
+                        from src.core.config import get_settings  # ✅ Importación local
+                        settings = get_settings()
                         model_name = model_name or settings.ML_EMBEDDING_MODEL
                         logger.info(f"🔧 [SINGLETON] Cargando modelo de embeddings: {model_name}")
                         cls._global_embedding_model = SentenceTransformer(model_name)
@@ -338,6 +381,7 @@ class MLProductProcessor:
         if not data:
             return data
         
+        from src.core.config import get_settings
         settings = get_settings()
         
         if not settings.ML_ENABLED or 'embedding' not in settings.ML_FEATURES:
@@ -375,24 +419,51 @@ class MLProductProcessor:
         except Exception as e:
             logger.warning(f"ML embedding failed: {e}")
             return data
+    
     @staticmethod
     def _extract_entities(text: str) -> Dict[str, List[str]]:
+        """Extracción de entidades para e-commerce - FUSIÓN MEJORADA"""
+        # ✅ FUSIÓN: Mantener estructura ORIGINAL para compatibilidad
         entities = {
-            'ORG': [],
-            'PRODUCT': []
+            'ORG': [],      # Marcas y organizaciones
+            'PRODUCT': [],  # Nombres de productos
+            'COLOR': [],    # Colores (agregado de NUEVA versión)
+            'SIZE': []      # Tamaños (agregado de NUEVA versión)
         }
         
-        # Patrón simple para nombres propios
+        # ✅ FUSIÓN: Combinar ambos enfoques
+        
+        # 1. Detección de nombres propios (de ORIGINAL)
         words = re.findall(r'\b[A-Z][a-z]+\b', text)
         for word in words:
-            if len(word) > 3:
+            if len(word) > 3 and word.lower() not in ['The', 'And', 'For', 'With', 'This']:
                 entities['PRODUCT'].append(word)
         
-        return entities
+        # 2. Detección de marcas específicas (de NUEVA versión)
+        text_lower = text.lower()
+        brands = ['apple', 'samsung', 'sony', 'lg', 'nike', 'adidas', 'dell', 'hp', 'lenovo']
+        for brand in brands:
+            if brand in text_lower:
+                entities['ORG'].append(brand.title())
+        
+        # 3. Detección de colores (de NUEVA versión)
+        colors = ['red', 'blue', 'green', 'black', 'white', 'yellow', 'pink', 'purple', 'gray']
+        for color in colors:
+            if color in text_lower:
+                entities['COLOR'].append(color.title())
+        
+        # 4. Detección de tamaños (de NUEVA versión)
+        sizes = ['small', 'medium', 'large', 'xl', 'xxl', 'xs', 's', 'm', 'l']
+        for size in sizes:
+            if f' {size} ' in f' {text_lower} ' or text_lower.endswith(f' {size}'):
+                entities['SIZE'].append(size.upper())
+        
+        # Filtrar diccionarios vacíos
+        return {k: v for k, v in entities.items() if v}
     
     @staticmethod
     def _generate_tags(text: str) -> List[str]:
-        """Generación básica de tags"""
+        """Generación de tags - MANTENER de ORIGINAL"""
         words = re.findall(r'\b[a-z]{4,}\b', text.lower())
         
         # Palabras de stop
@@ -410,6 +481,7 @@ class MLProductProcessor:
         # Top 5 palabras más frecuentes
         sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
         return [word for word, _ in sorted_words[:5]]
+
 
 class ProductAttributeHelper:
     """Helper para manejar atributos de productos de forma segura."""
@@ -446,13 +518,14 @@ class ProductAttributeHelper:
             return str(value)
         except (AttributeError):
             return default
+
+
 # ------------------------------------------------------------------
-# Main Product entity - MEJORADA
+# Main Product entity - MEJORADA PARA E-COMMERCE GENERAL
 # ------------------------------------------------------------------
 class Product(BaseModel):
     """
-    Modelo principal de producto con configuración centralizada.
-    Eliminada la clase AutoProductConfig.
+    Modelo principal de producto para e-commerce general.
     """
     
     # 🔥 CONSTANTES LOCALES (no configuración global)
@@ -486,9 +559,16 @@ class Product(BaseModel):
     ml_tags: List[str] = Field(default_factory=list)
     ml_processed: bool = Field(default=False)
     
-    # Campos embeddings (nuevo - PROBLEMA 3)
+    # Campos embeddings
     embedding: Optional[List[float]] = None
     embedding_model: Optional[str] = None
+    
+    # Campos NLP (para compatibilidad)
+    nlp_processed: bool = Field(default=False)
+    has_ner: bool = Field(default=False)
+    has_zero_shot: bool = Field(default=False)
+    ner_entities: Optional[Dict[str, Any]] = Field(default=None)
+    zero_shot_classification: Optional[Dict[str, float]] = Field(default=None)
     
     # --------------------------------------------------
     # Validators simplificados
@@ -518,7 +598,7 @@ class Product(BaseModel):
 
     @classmethod
     def _clean_raw_data(cls, raw: Dict) -> Dict:
-        """Limpia datos crudos de forma robusta - SOLUCIÓN PROBLEMA 4"""
+        """Limpia datos crudos de forma robusta"""
         cleaned = {}
         
         # 🔥 Mapeo de campos con limpieza específica
@@ -552,7 +632,7 @@ class Product(BaseModel):
     
     @classmethod
     def _clean_categories(cls, categories: Any) -> List[str]:
-        """Limpia categorías - SOLUCIÓN PROBLEMA 4"""
+        """Limpia categorías"""
         if not categories:
             return []
         
@@ -581,7 +661,7 @@ class Product(BaseModel):
         processed = data.copy()
         
         # ============================
-        # ✔ Tu código original
+        # ✔ Código base
         # ============================
         if not processed.get('id'):
             processed['id'] = str(uuid.uuid4())
@@ -621,42 +701,75 @@ class Product(BaseModel):
     
     @staticmethod
     def _extract_category_from_title(title: str) -> Optional[str]:
-        """Extrae categoría del título usando palabras clave mejoradas."""
+        """Extrae categoría del título usando palabras clave generales para e-commerce."""
         if not title:
             return None
         
         title_lower = title.lower()
         
-        # 🔥 DICCIONARIO EXPANDIDO PARA JUEGOS Y ENTRETENIMIENTO
+        # 🔥 DICCIONARIO GENERALIZADO PARA E-COMMERCE (mejorado)
         category_keywords = {
+            'Electronics': [
+                'laptop', 'computer', 'pc', 'macbook', 'notebook', 'desktop',
+                'tablet', 'smartphone', 'phone', 'mobile', 'monitor', 'keyboard',
+                'mouse', 'printer', 'scanner', 'camera', 'headphones', 'earphones',
+                'speaker', 'tv', 'television', 'electronic', 'device', 'gadget',
+                'usb', 'hdmi', 'cable', 'charger', 'battery', 'router', 'modem',
+                'smartwatch', 'fitness tracker', 'drone', 'projector'
+            ],
+            'Clothing': [
+                'shirt', 't-shirt', 'pants', 'jeans', 'dress', 'jacket', 'hoodie',
+                'sweater', 'sweatshirt', 'shorts', 'skirt', 'blouse', 'coat',
+                'underwear', 'socks', 'shoes', 'sneakers', 'boots', 'sandals',
+                'hat', 'cap', 'gloves', 'scarf', 'belt', 'tie', 'suit', 'uniform'
+            ],
+            'Home & Kitchen': [
+                'kitchen', 'cookware', 'appliance', 'furniture', 'sofa', 'bed',
+                'chair', 'table', 'desk', 'lamp', 'light', 'rug', 'carpet',
+                'curtain', 'blanket', 'pillow', 'mattress', 'cabinet', 'shelf'
+            ],
+            'Books': [
+                'book', 'novel', 'author', 'edition', 'hardcover', 'paperback',
+                'kindle', 'ebook', 'textbook', 'magazine', 'comic', 'biography'
+            ],
+            'Sports & Outdoors': [
+                'fitness', 'exercise', 'gym', 'yoga', 'outdoor', 'camping',
+                'hiking', 'running', 'training', 'bike', 'bicycle', 'ball',
+                'soccer', 'basketball', 'tennis', 'golf', 'swimming', 'fishing'
+            ],
+            'Beauty': [
+                'makeup', 'cosmetic', 'skincare', 'perfume', 'serum', 'lotion',
+                'shampoo', 'conditioner', 'hair', 'nail', 'lipstick', 'mascara',
+                'brush', 'mirror', 'cream', 'oil', 'soap', 'deodorant'
+            ],
+            'Toys & Games': [
+                'toy', 'lego', 'puzzle', 'doll', 'kids', 'children', 'toddler',
+                'action figure', 'board game', 'video game', 'game', 'console'
+            ],
+            'Automotive': [
+                'car', 'auto', 'vehicle', 'engine', 'tire', 'motor', 'battery',
+                'oil', 'filter', 'brake', 'light', 'tool', 'accessory', 'parts'
+            ],
+            'Office Products': [
+                'office', 'stationery', 'paper', 'pen', 'pencil', 'notebook',
+                'printer', 'scanner', 'desk', 'chair', 'lamp', 'folder', 'binder'
+            ],
+            'Health': [
+                'vitamin', 'supplement', 'medicine', 'first aid', 'thermometer',
+                'bandage', 'mask', 'sanitizer', 'pill', 'tablet', 'syrup'
+            ],
             'Video Games': [
                 'nintendo', 'playstation', 'xbox', 'switch', 'wii', 'gamecube',
-                'ps4', 'ps5', 'xbox one', 'game', 'video game', 'videogame',
-                'switch', 'nes', 'snes', 'n64', 'gameboy', '3ds', 'ds',
-                'wolverine', 'star wars', 'destruction derby', 'lethal enforcers',
-                'sports', 'fighting', 'combat', 'fight', 'battle', 'war'
-            ],
-            'Electronics': [
-                'iphone', 'samsung', 'android', 'smartphone', 'phone', 'tablet',
-                'laptop', 'computer', 'pc', 'macbook', 'electronic', 'device'
-            ],
-            'Books': ['libro','book','novel','author','edition','paperback','hardcover','fiction','non-fiction'],
-            'Clothing': ['shirt','pants','jeans','dress','hoodie','sweater','tshirt','clothing','apparel'],
-            'Home & Kitchen': ['kitchen','cookware','appliance','furniture','bed','chair','table','sofa'],
-            'Sports': ['fitness','exercise','gym','yoga','outdoor','camping','running','training'],
-            'Beauty': ['makeup','cosmetic','skincare','perfume','serum','lotion','shampoo','hair'],
-            'Toys': ['toy','lego','doll','action figure','board game','kids','children','toddler'],
-            'Automotive': ['car','auto','vehicle','engine','tire','motor','battery','oil'],
-            'Office': ['office','stationery','notebook','desk','printer','scanner','supplies']
+                'ps4', 'ps5', 'xbox one', 'game', 'video game', 'videogame'
+            ]
         }
-
+        
         for category, keywords in category_keywords.items():
             if any(kw in title_lower for kw in keywords):
                 return category
+        
         return None
-
-
-
+    
     @staticmethod
     def _extract_category_from_description(description: str) -> Optional[str]:
         if not description:
@@ -664,17 +777,18 @@ class Product(BaseModel):
         
         desc_lower = description.lower()
 
-        category_keywords = {   # ← el mismo diccionario que arriba
+        category_keywords = {
             'Video Games': ['nintendo','playstation','xbox','switch','ps5','videogame','console'],
             'Electronics': ['iphone','samsung','android','tablet','laptop','pc','macbook'],
             'Books': ['book','novel','author','paperback','kindle','fiction'],
             'Clothing': ['shirt','jeans','dress','hoodie','apparel'],
             'Home & Kitchen': ['kitchen','cookware','appliance','furniture'],
-            'Sports': ['fitness','gym','camping','running','training'],
+            'Sports & Outdoors': ['fitness','gym','camping','running','training'],
             'Beauty': ['makeup','cosmetic','skincare','serum','hair'],
-            'Toys': ['toy','lego','board game','kids','children'],
+            'Toys & Games': ['toy','lego','board game','kids','children'],
             'Automotive': ['car','vehicle','engine','battery'],
-            'Office': ['office','stationery','desk','supplies']
+            'Office Products': ['office','stationery','desk','supplies'],
+            'Health': ['vitamin','supplement','medicine','first aid','thermometer']
         }
 
         scores = {
@@ -684,16 +798,12 @@ class Product(BaseModel):
 
         return max(scores, key=scores.get) if max(scores.values()) > 0 else None
 
-    
-
-    
     @classmethod
     def _auto_clean_data(cls, data: Dict) -> Dict:
         """Limpia datos automáticamente"""
         processed = data.copy()
         
-        # Limpiar precio automáticamente (ya se hizo en _clean_price)
-        # Pero asegurar que esté como float
+        # Limpiar precio automáticamente
         if 'price' in processed and processed['price'] is not None:
             try:
                 processed['price'] = float(processed['price'])
@@ -720,7 +830,7 @@ class Product(BaseModel):
                     processed[field] = [processed[field]]
                 elif not isinstance(processed[field], list):
                     processed[field] = []
-                # 🔥 CORRECCIÓN PROBLEMA 4: Filtrar valores None de las listas
+                # Filtrar valores None de las listas
                 processed[field] = [item for item in processed[field] if item is not None]
             else:
                 processed[field] = []
@@ -729,7 +839,7 @@ class Product(BaseModel):
         if 'attributes' not in processed or not isinstance(processed['attributes'], dict):
             processed['attributes'] = {}
         
-        # 🔥 CORRECCIÓN PROBLEMA 4: Asegurar que main_category tenga valor por defecto
+        # Asegurar que main_category tenga valor por defecto
         if not processed.get('main_category'):
             processed['main_category'] = 'General'
         
@@ -937,7 +1047,7 @@ class Product(BaseModel):
             data.get('product_type', '')
         ]
         
-        # 🔥 CORRECCIÓN: Asegurar que todos sean strings
+        # Asegurar que todos sean strings
         safe_parts = []
         for part in content_parts:
             if part is None:
@@ -968,17 +1078,13 @@ class Product(BaseModel):
     
     @classmethod
     def from_dict(cls, raw: Dict, **kwargs) -> "Product":
-        """
-        Constructor automatizado desde diccionario.
-        """
+        """Constructor automatizado desde diccionario."""
         try:
-            # 🔥 CORRECCIÓN: Limpiar datos antes de procesar (ya se hace en auto_process_data)
-            # Solo crear el objeto, la limpieza se hará en el validator
             return cls(**raw)
             
         except Exception as e:
             logger.warning(f"Error creating Product from dict: {e}")
-            # 🔥 CORRECCIÓN MEJORADA: Crear producto mínimo con valores seguros
+            # Crear producto mínimo con valores seguros
             return cls._create_minimal_product(raw)
 
     @classmethod
@@ -997,18 +1103,15 @@ class Product(BaseModel):
                 description=raw.get('description', '')[:5000] if raw.get('description') else '',
                 price=cls._auto_parse_price(raw.get('price')),
                 main_category=raw.get('main_category', 'General'),
-                ml_processed=False  # Marcar como no procesado por ML
+                ml_processed=False
             )
         except Exception as e:
             logger.error(f"Error creating minimal product: {e}")
-            # Último recurso
             return cls(title='Error Product')
     
     @classmethod
     def batch_create(cls, raw_list: List[Dict]) -> List["Product"]:
-        """
-        Crea múltiples productos con procesamiento optimizado.
-        """
+        """Crea múltiples productos con procesamiento optimizado."""
         products = []
         for data in raw_list:
             try:
@@ -1054,7 +1157,7 @@ class Product(BaseModel):
             features_str = ", ".join(self.details.features[:5])
             parts.append(f"Features: {features_str}")
         
-        # Agregar entidades ML si existen
+        # ✅ CORRECCIÓN: Buscar 'ORG' (no 'BRAND')
         if self.extracted_entities and 'ORG' in self.extracted_entities:
             orgs = ", ".join(self.extracted_entities['ORG'][:3])
             if orgs:
@@ -1078,7 +1181,7 @@ class Product(BaseModel):
         return ", ".join(all_tags[:8]) if all_tags else "No tags"
     
     def to_metadata(self) -> dict:
-        """Metadata enriquecida - versión final corregida."""
+        """Metadata enriquecida para almacenamiento vectorial."""
         try:
             metadata = {
                 "id": self.id,
@@ -1095,22 +1198,20 @@ class Product(BaseModel):
                 "tags": json.dumps(self.tags[:5], ensure_ascii=False) if self.tags else "[]",
                 "ml_tags": json.dumps(self.ml_tags[:5], ensure_ascii=False) if self.ml_tags else "[]",
                 "compatible_devices": json.dumps(self.compatible_devices[:5], ensure_ascii=False) if self.compatible_devices else "[]",
-                "ml_processed": self.ml_processed,  # ok
+                "ml_processed": self.ml_processed,
                 "has_embedding": bool(self.embedding),
+                "nlp_processed": self.nlp_processed,
+                "has_ner": self.has_ner,
+                "has_zero_shot": self.has_zero_shot,
             }
 
-            # === 🔥 AGREGAR CAMPOS NLP SOLO SI EXISTEN (como pidieron) ===
-            metadata["nlp_processed"] = getattr(self, "nlp_processed", False)
-            metadata["has_ner"] = getattr(self, "has_ner", False)
-            metadata["has_zero_shot"] = getattr(self, "has_zero_shot", False)
-
-            # ======== SERIALIZACIONES OPCIONALES ==========
-            if getattr(self, "ner_entities", None):
+            # Campos opcionales
+            if self.ner_entities:
                 try:
                     metadata['ner_entities'] = json.dumps(self.ner_entities, ensure_ascii=False, default=str)
                 except: pass
             
-            if getattr(self, "zero_shot_classification", None):
+            if self.zero_shot_classification:
                 try:
                     metadata['zero_shot_classification'] = json.dumps(self.zero_shot_classification, ensure_ascii=False)
                 except: pass
@@ -1123,12 +1224,12 @@ class Product(BaseModel):
                 except:
                     metadata["has_embedding"] = False
 
-            if getattr(self,"predicted_category", None):
+            if self.predicted_category:
                 metadata["predicted_category"] = self.predicted_category
                 if not metadata["main_category"] or metadata["main_category"]=="General":
                     metadata["main_category"]=self.predicted_category
 
-            if getattr(self,"extracted_entities", None):
+            if self.extracted_entities:
                 try:
                     metadata["extracted_entities"]=json.dumps({k:v[:3] for k,v in self.extracted_entities.items() if v},ensure_ascii=False)
                 except: pass
@@ -1138,9 +1239,9 @@ class Product(BaseModel):
 
         except Exception as e:
             logger.error(f"❌ Error converting to metadata: {e}")
-            import traceback; logger.error(traceback.format_exc())
+            import traceback
+            logger.error(traceback.format_exc())
             return self._get_fallback_metadata()
-
     
     def _get_fallback_metadata(self) -> dict:
         return {
@@ -1159,6 +1260,9 @@ class Product(BaseModel):
             "ml_tags": "[]",
             "compatible_devices": "[]",
             "ml_processed": False,
+            "nlp_processed": False,
+            "has_ner": False,
+            "has_zero_shot": False,
         }
     
     def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
@@ -1196,19 +1300,19 @@ class Product(BaseModel):
         return summary
     
     def __str__(self) -> str:
-        ml_info = f", ML: {self.ml_processed}" if hasattr(self, 'ml_processed') else ""
-        embedding_info = f", HasEmbedding: {bool(self.embedding)}" if hasattr(self, 'embedding') else ""
+        ml_info = f", ML: {self.ml_processed}"
+        embedding_info = f", HasEmbedding: {bool(self.embedding)}"
         return f"Product(title='{self.title}', price={self.price}, category='{self.main_category}'{ml_info}{embedding_info})"
     
     def __repr__(self) -> str:
         return f"Product(id='{self.id}', title='{self.title}', ml_processed={self.ml_processed})"
+
 
 def create_product(raw_data: Dict[str, Any]) -> Product:
     return Product.from_dict(raw_data)
 
 
 def batch_create_products(raw_data_list: List[Dict[str, Any]]) -> List[Product]:
-    
     return Product.batch_create(raw_data_list)
 
 
@@ -1221,7 +1325,8 @@ def get_product_metrics() -> Dict[str, Any]:
             "ml_features": list(settings.ML_FEATURES) if settings.ML_ENABLED else [],
             "embedding_model": settings.ML_EMBEDDING_MODEL if settings.ML_ENABLED else None,
             "max_title_length": Product._MAX_TITLE_LENGTH,
-            "max_description_length": Product._MAX_DESCRIPTION_LENGTH
+            "max_description_length": Product._MAX_DESCRIPTION_LENGTH,
+            "is_ecommerce_general": True  # ✅ Indicador de e-commerce general
         }
     }
 
