@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 logging.basicConfig(
     level=logging.INFO,
@@ -423,7 +423,119 @@ def run_test_command(args):
         print("   • test rag-agent       - Test de WorkingAdvancedRAGAgent")
 
 # =====================================================
-#  RUN_RAG - VERSIÓN MEJORADA CON WORKINGADVANCEDRAGAGENT
+#  FUNCIONES AUXILIARES MEJORADAS
+# =====================================================
+
+def _extract_product_info(item: Any) -> Dict[str, Any]:
+    """
+    Extrae información de un producto o ProductReference de forma segura.
+    
+    Args:
+        item: Puede ser Product, ProductReference, o cualquier objeto
+        
+    Returns:
+        Diccionario con información extraída
+    """
+    try:
+        item_type = type(item).__name__
+        
+        if "ProductReference" in item_type:
+            # Es un ProductReference
+            title = item.title[:80] if hasattr(item, 'title') else str(item)[:80]
+            price = item.price if hasattr(item, 'price') else 0.0
+            category = "General"
+            
+            # Obtener categoría de múltiples fuentes
+            if hasattr(item, 'ml_features') and item.ml_features:
+                category = item.ml_features.get('predicted_category', 'General')
+            elif hasattr(item, 'metadata') and item.metadata:
+                category = item.metadata.get('main_category', 'General')
+            
+            score = item.score if hasattr(item, 'score') else 0.0
+            source = item.source if hasattr(item, 'source') else "ProductReference"
+            
+            return {
+                "type": "ProductReference",
+                "title": title,
+                "price": price,
+                "category": category,
+                "score": score,
+                "source": source,
+                "object": item
+            }
+            
+        elif "Product" in item_type:
+            # Es un objeto Product
+            title = getattr(item, 'title', str(item))[:80]
+            price = getattr(item, 'price', 0.0)
+            category = getattr(item, 'main_category', 'General')
+            predicted_category = getattr(item, 'predicted_category', None)
+            category = predicted_category if predicted_category else category
+            
+            # Product no tiene score o source nativo
+            ml_processed = getattr(item, 'ml_processed', False)
+            
+            return {
+                "type": "Product",
+                "title": title,
+                "price": price,
+                "category": category,
+                "score": 0.0,  # Product no tiene score
+                "source": "ml" if ml_processed else "basic",
+                "object": item
+            }
+            
+        else:
+            # Tipo desconocido
+            title = str(item)[:80]
+            return {
+                "type": "Unknown",
+                "title": title,
+                "price": 0.0,
+                "category": "Unknown",
+                "score": 0.0,
+                "source": "unknown",
+                "object": item
+            }
+            
+    except Exception as e:
+        logger.debug(f"Error extrayendo información del producto: {e}")
+        return {
+            "type": "Error",
+            "title": f"Error: {str(e)[:50]}",
+            "price": 0.0,
+            "category": "Error",
+            "score": 0.0,
+            "source": "error",
+            "object": item
+        }
+
+
+def _get_category_emoji(category: str) -> str:
+    """Devuelve emoji apropiado para la categoría."""
+    emoji_map = {
+        'Electronics': '📱',
+        'Books': '📚',
+        'Clothing': '👕',
+        'Home & Kitchen': '🏠',
+        'Sports & Outdoors': '⚽',
+        'Beauty': '💄',
+        'Toys & Games': '🧸',
+        'Automotive': '🚗',
+        'Office Products': '💼',
+        'Video Games': '🎮',
+        'General': '📦'
+    }
+    
+    for key, emoji in emoji_map.items():
+        if key.lower() in category.lower():
+            return emoji
+    
+    return '📦'  # Emoji por defecto
+
+
+# =====================================================
+#  RUN_RAG - VERSIÓN REFACTORIZADA Y CORREGIDA
 # =====================================================
 def run_rag(data_dir: Optional[str] = None, 
            mode: str = "enhanced",
@@ -512,21 +624,24 @@ def run_rag(data_dir: Optional[str] = None,
             user_id = user_profile.user_id
             print(f"👤 Usuario creado: {user_id}")
         else:
-            user_profile = user_manager.get_user(user_id)
+            user_profile = user_manager.get_user_profile(user_id)
             if user_profile:
                 print(f"👤 Usuario existente: {user_id}")
             else:
                 user_profile = user_manager.create_user_profile(
-                    user_id=user_id,
                     age=30,
                     gender="female",
                     country="Spain",
                     language="es"
                 )
+                user_id = user_profile.user_id
                 print(f"👤 Usuario registrado: {user_id}")
         
-        # 🔥 INICIALIZAR WORKINGADVANCEDRAGAGENT
-        print("\n🚀 Inicializando WorkingAdvancedRAGAgent...")
+        # 🔥 INICIALIZAR AGENTE
+        print("\n🚀 Inicializando agente...")
+        
+        working_rag_agent = None
+        basic_retriever = None
         
         try:
             from src.core.rag.advanced.WorkingRAGAgent import (
@@ -551,60 +666,66 @@ def run_rag(data_dir: Optional[str] = None,
                 ml_enabled=settings.ML_ENABLED,
                 local_llm_enabled=settings.LOCAL_LLM_ENABLED,
                 max_final=max_results,
-                enable_reranking=(not no_rlhf),  # Deshabilitar RLHF si se solicita
+                enable_reranking=(not no_rlhf),
                 ml_features=list(settings.ML_FEATURES),
                 use_ml_embeddings=settings.ML_ENABLED and 'embedding' in settings.ML_FEATURES,
                 ml_embedding_weight=settings.ML_WEIGHT
             )
             
-            # Crear agente
-            rag_agent = WorkingAdvancedRAGAgent(config=rag_config)
+            # Crear agente avanzado
+            working_rag_agent = WorkingAdvancedRAGAgent(config=rag_config)
             
             # Deshabilitar componentes si se solicita
             if no_collaborative:
-                rag_agent._collaborative_filter = None
+                working_rag_agent._collaborative_filter = None
                 print("🤝 Collaborative Filter: ❌ DESHABILITADO")
             
             if no_rlhf:
-                rag_agent.rlhf_model = None
-                rag_agent.rlhf_pipeline = None
+                working_rag_agent.rlhf_model = None
+                working_rag_agent.rlhf_pipeline = None
                 print("🧠 RLHF: ❌ DESHABILITADO")
             
             # Mostrar configuración del agente
-            config_summary = rag_agent.get_config_summary()
             print(f"\n📡 CONFIGURACIÓN RAG AGENT:")
-            print(f"   • Modo: {config_summary['rag_config']['mode']}")
-            print(f"   • ML: {'✅' if config_summary['rag_config']['ml_enabled'] else '❌'}")
-            print(f"   • LLM: {'✅' if config_summary['rag_config']['local_llm_enabled'] else '❌'}")
-            print(f"   • RLHF: {'✅' if config_summary['components']['rlhf_pipeline'] else '❌'}")
-            print(f"   • Collaborative Filter: {'✅' if config_summary['components']['collaborative_filter'] else '❌'}")
+            print(f"   • Tipo: WorkingAdvancedRAGAgent")
+            print(f"   • Modo: {rag_mode.value}")
+            print(f"   • ML: {'✅' if rag_config.ml_enabled else '❌'}")
+            print(f"   • LLM: {'✅' if rag_config.local_llm_enabled else '❌'}")
+            print(f"   • RLHF: {'✅' if not no_rlhf else '❌'}")
+            print(f"   • Collaborative Filter: {'✅' if not no_collaborative else '❌'}")
             
             # Verificar que el índice existe
-            if not rag_agent.retriever.index_exists():
+            if not working_rag_agent.retriever.index_exists():
                 print("\n🔧 Índice no encontrado, construyendo...")
-                rag_agent.retriever.build_index(products)
+                working_rag_agent.retriever.build_index(products)
                 print(f"✅ Índice construido con {len(products)} productos")
             
         except ImportError as e:
-            print(f"❌ No se pudo importar WorkingAdvancedRAGAgent: {e}")
-            print("⚠️  Fallback a RAG simple...")
+            print(f"⚠️  No se pudo importar WorkingAdvancedRAGAgent: {e}")
+            print("🔧 Fallback a Retriever básico...")
             
-            # Fallback a RAG simple
+            # Fallback a Retriever básico
             from src.core.rag.basic.retriever import Retriever
-            from src.core.rag.basic.RAG import SimpleRAG
             
-            retriever = Retriever(
+            basic_retriever = Retriever(
                 index_path=settings.VECTOR_INDEX_PATH,
                 embedding_model=settings.EMBEDDING_MODEL,
                 device=settings.DEVICE
             )
             
-            if not retriever.index_exists():
+            if not basic_retriever.index_exists():
                 print("🔧 Construyendo índice...")
-                retriever.build_index(products)
+                basic_retriever.build_index(products)
+                print(f"✅ Índice construido con {len(products)} productos")
             
-            rag_agent = SimpleRAG(retriever=retriever)
-            print("🧠 Agente RAG simple inicializado")
+            print(f"\n📡 CONFIGURACIÓN RAG AGENT:")
+            print(f"   • Tipo: Retriever Básico")
+            print(f"   • ML: {'✅' if settings.ML_ENABLED else '❌'}")
+            print(f"   • Modelo embeddings: {settings.EMBEDDING_MODEL}")
+            
+        except Exception as e:
+            print(f"❌ Error inicializando agente: {e}")
+            raise
         
         # Loop interactivo mejorado
         print(f"\n💡 Escribe 'exit' para salir, 'help' para comandos")
@@ -624,7 +745,8 @@ def run_rag(data_dir: Optional[str] = None,
                     print("   • stats - Mostrar estadísticas")
                     print("   • config - Mostrar configuración")
                     print("   • user - Mostrar información del usuario")
-                    print("   • clear - Limpiar caché")
+                    if working_rag_agent is not None:
+                        print("   • clear - Limpiar caché (solo WorkingAdvancedRAGAgent)")
                     continue
                 
                 if query.lower() == 'stats':
@@ -632,13 +754,12 @@ def run_rag(data_dir: Optional[str] = None,
                     print(f"   • Productos totales: {len(products)}")
                     print(f"   • ML habilitado: {settings.ML_ENABLED}")
                     print(f"   • LLM habilitado: {settings.LOCAL_LLM_ENABLED}")
+                    print(f"   • Tipo de agente: {'WorkingAdvancedRAGAgent' if working_rag_agent else 'Retriever Básico'}")
                     
-                    # Estadísticas del agente RAG si está disponible
-                    if hasattr(rag_agent, 'get_config_summary'):
-                        config = rag_agent.get_config_summary()
-                        print(f"   • Modo RAG: {config['rag_config']['mode']}")
-                        print(f"   • RLHF: {'✅' if config['components']['rlhf_pipeline'] else '❌'}")
-                        print(f"   • Collaborative Filter: {'✅' if config['components']['collaborative_filter'] else '❌'}")
+                    if working_rag_agent:
+                        print(f"   • Modo RAG: {mode}")
+                        print(f"   • RLHF: {'✅' if not no_rlhf else '❌'}")
+                        print(f"   • Collaborative Filter: {'✅' if not no_collaborative else '❌'}")
                     
                     continue
                 
@@ -658,11 +779,11 @@ def run_rag(data_dir: Optional[str] = None,
                     continue
                 
                 if query.lower() == 'clear':
-                    if hasattr(rag_agent, 'clear_cache'):
-                        rag_agent.clear_cache()
+                    if working_rag_agent is not None:
+                        working_rag_agent.clear_cache()
                         print("🗑️  Cache limpiado")
                     else:
-                        print("⚠️  El agente no tiene función clear_cache")
+                        print("⚠️  Comando 'clear' solo disponible para WorkingAdvancedRAGAgent")
                     continue
                 
                 if not query:
@@ -670,31 +791,62 @@ def run_rag(data_dir: Optional[str] = None,
                 
                 print(f"\n🔍 Buscando: '{query}'...")
                 
-                # 🔥 USAR WORKINGADVANCEDRAGAGENT
-                if hasattr(rag_agent, 'process_query'):
-                    # Procesar con RAG avanzado
-                    response = rag_agent.process_query(query, user_id)
-                    
-                    if isinstance(response, dict):
-                        answer = response.get('answer', 'Sin respuesta')
-                        products_result = response.get('products', [])
-                        stats = response.get('stats', {})
+                # 🔥 PROCESAR CONSULTA SEGÚN TIPO DE AGENTE
+                products_result = []
+                answer = ""
+                
+                if working_rag_agent is not None:
+                    # Usar WorkingAdvancedRAGAgent
+                    try:
+                        response = working_rag_agent.process_query(query, user_id)
                         
-                        # Mostrar estadísticas si está en modo verbose
-                        if verbose:
-                            print(f"\n📊 ESTADÍSTICAS PROCESAMIENTO:")
-                            print(f"   • Tiempo: {stats.get('processing_time', 0):.2f}s")
-                            print(f"   • Resultados iniciales: {stats.get('initial_results', 0)}")
-                            print(f"   • Resultados finales: {stats.get('final_results', 0)}")
-                            print(f"   • ML mejorado: {stats.get('ml_enhanced', False)}")
-                            print(f"   • Re-ranking: {stats.get('reranking_enabled', False)}")
-                    else:
-                        answer = str(response)
-                        products_result = []
+                        if isinstance(response, dict):
+                            answer = response.get('answer', 'Sin respuesta')
+                            products_result = response.get('products', [])
+                            
+                            if verbose:
+                                stats = response.get('stats', {})
+                                print(f"\n📊 ESTADÍSTICAS PROCESAMIENTO:")
+                                print(f"   • Tiempo: {stats.get('processing_time', 0):.2f}s")
+                                print(f"   • Resultados iniciales: {stats.get('initial_results', 0)}")
+                                print(f"   • Resultados finales: {stats.get('final_results', 0)}")
+                                print(f"   • ML mejorado: {stats.get('ml_enhanced', False)}")
+                                print(f"   • Re-ranking: {stats.get('reranking_enabled', False)}")
+                        else:
+                            answer = str(response)
+                            
+                    except Exception as e:
+                        print(f"❌ Error en process_query: {e}")
+                        answer = "Error procesando consulta con WorkingAdvancedRAGAgent"
+                        
+                elif basic_retriever is not None:
+                    # Usar Retriever básico
+                    try:
+                        # El Retriever tiene el método retrieve()
+                        products_result = basic_retriever.retrieve(query=query, k=max_results)
+                        
+                        # Crear una respuesta simple
+                        if products_result:
+                            product_titles = []
+                            for p in products_result[:3]:
+                                if hasattr(p, 'title'):
+                                    product_titles.append(p.title[:50])
+                                else:
+                                    product_titles.append(str(p)[:50])
+                            
+                            if product_titles:
+                                answer = f"Encontré {len(products_result)} productos para '{query}'. Los más relevantes: {', '.join(product_titles)}"
+                            else:
+                                answer = f"Encontré {len(products_result)} productos para '{query}'"
+                        else:
+                            answer = f"No encontré productos para '{query}'"
+                            
+                    except Exception as e:
+                        print(f"❌ Error en búsqueda básica: {e}")
+                        answer = "Error en búsqueda básica"
                 else:
-                    # Fallback a RAG simple
-                    products_result = rag_agent.search(query, top_k=max_results)
-                    answer = f"Encontré {len(products_result)} productos"
+                    print("❌ No hay agente configurado")
+                    continue
                 
                 # Mostrar respuesta
                 print(f"\n🤖 {answer}")
@@ -703,42 +855,27 @@ def run_rag(data_dir: Optional[str] = None,
                 if products_result:
                     print(f"\n📦 RESULTADOS ({len(products_result)} encontrados):")
                     
-                    for i, product in enumerate(products_result[:max_results], 1):
-                        # 🔥 Manejar tanto ProductReference como productos normales
+                    for i, item in enumerate(products_result[:max_results], 1):
                         try:
-                            from src.core.data.product_reference import ProductReference
+                            # Extraer información usando función auxiliar
+                            product_info = _extract_product_info(item)
                             
-                            if isinstance(product, ProductReference):
-                                # Es un ProductReference
-                                title = product.title[:80]
-                                price = product.price
-                                category = product.metadata.get('main_category', 'General')
-                                category = product.ml_features.get('predicted_category', category)
-                                score = product.score
-                                source = product.source
-                                
-                                # Emoji basado en categoría
-                                emoji = "📱" if "phone" in title.lower() or "smartphone" in title.lower() else \
-                                        "🎮" if "nintendo" in title.lower() or "game" in title.lower() else \
-                                        "💻" if "laptop" in title.lower() or "computer" in title.lower() else \
-                                        "📦"
-                            else:
-                                # Producto normal
-                                title = getattr(product, 'title', str(product))[:80]
-                                price = getattr(product, 'price', 0.0)
-                                category = getattr(product, 'main_category', 'General')
-                                category = getattr(product, 'predicted_category', category)
-                                score = getattr(product, 'score', 0.0)
-                                source = "simple_rag"
-                                
-                                emoji = "📦"
+                            title = product_info["title"]
+                            price = product_info["price"]
+                            category = product_info["category"]
+                            score = product_info["score"]
+                            source = product_info["source"]
+                            item_type = product_info["type"]
+                            
+                            # Obtener emoji para categoría
+                            emoji = _get_category_emoji(category)
                             
                             # Mostrar producto
                             print(f"  {emoji} {i}. {title}")
                             print(f"     💰 ${price:.2f} | 🏷️ {category}")
                             
                             if verbose:
-                                print(f"     ⭐ Score: {score:.3f} | 📍 Source: {source}")
+                                print(f"     ⭐ Score: {score:.3f} | 📍 Source: {source} ({item_type})")
                             
                             # Línea separadora
                             if i < min(len(products_result), max_results):
@@ -756,16 +893,62 @@ def run_rag(data_dir: Optional[str] = None,
                         print("     ✅ ¡Gracias por tu feedback positivo!")
                         # Guardar feedback positivo
                         try:
-                            user_manager.add_feedback(user_id, query, "positive")
-                        except:
-                            pass
+                            if working_rag_agent is not None:
+                                # Usar el método de feedback del agente avanzado
+                                working_rag_agent.log_feedback(
+                                    query=query,
+                                    answer=answer,
+                                    rating=5,
+                                    user_id=user_id
+                                )
+                            else:
+                                # Para Retriever básico, guardar en perfil de usuario
+                                product_ids = []
+                                for i, item in enumerate(products_result[:3]):
+                                    if hasattr(item, 'id'):
+                                        product_ids.append(item.id)
+                                    elif hasattr(item, '__dict__'):
+                                        product_ids.append(f"item_{i}")
+                                
+                                user_profile.add_feedback_event(
+                                    query=query,
+                                    response=answer,
+                                    rating=5,
+                                    products_shown=product_ids if product_ids else []
+                                )
+                                user_manager.save_user_profile(user_profile)
+                        except Exception as e:
+                            logger.debug(f"Error guardando feedback positivo: {e}")
+                            
                     elif feedback == 'n':
                         print("     ⚠️  Lo sentimos, mejoraremos")
                         # Guardar feedback negativo
                         try:
-                            user_manager.add_feedback(user_id, query, "negative")
-                        except:
-                            pass
+                            if working_rag_agent is not None:
+                                working_rag_agent.log_feedback(
+                                    query=query,
+                                    answer=answer,
+                                    rating=1,
+                                    user_id=user_id
+                                )
+                            else:
+                                product_ids = []
+                                for i, item in enumerate(products_result[:3]):
+                                    if hasattr(item, 'id'):
+                                        product_ids.append(item.id)
+                                    elif hasattr(item, '__dict__'):
+                                        product_ids.append(f"item_{i}")
+                                
+                                user_profile.add_feedback_event(
+                                    query=query,
+                                    response=answer,
+                                    rating=1,
+                                    products_shown=product_ids if product_ids else []
+                                )
+                                user_manager.save_user_profile(user_profile)
+                        except Exception as e:
+                            logger.debug(f"Error guardando feedback negativo: {e}")
+                            
                     else:
                         print("     ℹ️  Feedback omitido")
                         
@@ -776,6 +959,7 @@ def run_rag(data_dir: Optional[str] = None,
             except KeyboardInterrupt:
                 print("\n\n🛑 Sesión interrumpida")
                 break
+                
             except Exception as e:
                 print(f"❌ Error: {e}")
                 if verbose:
@@ -804,9 +988,14 @@ def run_interactive_mode():
             choice = input("\n🔍 Elige una opción (1-5): ").strip()
             
             if choice == '1':
-                from src.core.rag.advanced.WorkingRAGAgent import test_rag_pipeline
-                result = test_rag_pipeline("smartphone barato")
-                print(f"✅ Test RAG completado: {result.get('products_found', 0)} productos")
+                try:
+                    from src.core.rag.advanced.WorkingRAGAgent import test_rag_pipeline
+                    result = test_rag_pipeline("smartphone barato")
+                    print(f"✅ Test RAG completado: {result.get('products_found', 0)} productos")
+                except ImportError:
+                    print("❌ WorkingAdvancedRAGAgent no disponible")
+                except Exception as e:
+                    print(f"❌ Error: {e}")
                 
             elif choice == '2':
                 # Test ProductReference
@@ -831,7 +1020,7 @@ def run_interactive_mode():
                     print(f"❌ Error: {e}")
                     
             elif choice == '3':
-                print("🧪 Procesamiento ML - En desarrollo...")
+                print("🧪 Procesamiento ML:")
                 run_ml_stats()
                 
             elif choice == '4':

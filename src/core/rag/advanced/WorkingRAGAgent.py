@@ -5,12 +5,13 @@ Usa ProductReference y settings como única fuente de verdad.
 """
 
 import logging
-from typing import List, Optional, Dict, Any, Tuple, Callable
+from typing import List, Optional, Dict, Any, Tuple, Callable, Union, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 import time
 import torch
 from pathlib import Path
+import numpy as np
 
 # Importar configuración centralizada
 from src.core.config import settings, get_settings
@@ -80,7 +81,7 @@ class WorkingAdvancedRAGAgent:
         self._embedding_model = None
         
         # Cache para embeddings de queries
-        self._query_cache = {}
+        self._query_cache: Dict[str, List[float]] = {}
         
         # Inicializar logger
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
@@ -118,24 +119,23 @@ class WorkingAdvancedRAGAgent:
             logger.warning(f"⚠️ RLHF no disponible: {e}")
             self.rlhf_pipeline = None
     
-    # En WorkingRAGAgent._init_collaborative_filter()
     def _init_collaborative_filter(self):
         """Inicializar Collaborative Filter si está habilitado"""
         try:
             from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
             from src.core.data.user_manager import UserManager
-            from src.core.data.product_service import ProductService  # 🔥 NUEVO
+            from src.core.data.product_service import ProductService
             
             # Obtener gestor de usuarios
             user_manager = UserManager()
             
-            # 🔥 NUEVO: Usar ProductService real
+            # Usar ProductService real
             product_service = ProductService()
             
             # Crear filtro colaborativo con servicio real
             self._collaborative_filter = CollaborativeFilter(
                 user_manager=user_manager,
-                product_service=product_service,  # 🔥 Pasar servicio real
+                product_service=product_service,
                 use_ml_features=self.config.ml_enabled
             )
             
@@ -143,10 +143,29 @@ class WorkingAdvancedRAGAgent:
             
         except ImportError as e:
             logger.warning(f"⚠️ Collaborative Filter no disponible: {e}")
-            # Fallback al servicio simple
             self._init_simple_collaborative_filter()
         except Exception as e:
             logger.warning(f"⚠️ Error inicializando Collaborative Filter: {e}")
+    
+    def _init_simple_collaborative_filter(self):
+        """Inicializar filtro colaborativo simple como fallback"""
+        try:
+            from src.core.rag.advanced.collaborative_filter import CollaborativeFilter
+            from src.core.data.user_manager import UserManager
+            
+            user_manager = UserManager()
+            
+            # Crear filtro sin product_service
+            self._collaborative_filter = CollaborativeFilter(
+                user_manager=user_manager,
+                product_service=None,
+                use_ml_features=self.config.ml_enabled
+            )
+            
+            logger.info("🤝 Collaborative Filter simple inicializado (fallback)")
+        except Exception as e:
+            logger.error(f"❌ Error inicializando filtro simple: {e}")
+            self._collaborative_filter = None
     
     # --------------------------------------------------
     # Propiedades lazy
@@ -205,8 +224,8 @@ class WorkingAdvancedRAGAgent:
     # --------------------------------------------------
     # Métodos principales
     # --------------------------------------------------
-    
-    def process_query(self, query: str, user_id: str = None) -> Dict[str, Any]:
+
+    def process_query(self, query: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Procesa una consulta completa usando RAG avanzado.
         """
@@ -269,9 +288,7 @@ class WorkingAdvancedRAGAgent:
                 "products": [],
                 "error": str(e)
             }
-
     
-    # REEMPLAZA el método _semantic_search con esta versión corregida:
     def _semantic_search(self, query: str) -> List[ProductReference]:
         """Búsqueda semántica usando embeddings."""
         try:
@@ -319,52 +336,7 @@ class WorkingAdvancedRAGAgent:
             import traceback
             self.logger.error(traceback.format_exc())
             return []
-
-    # 🔥 AÑADE este método que falta:
-    def _calculate_initial_score(self, product: Product, query: str) -> float:
-        """Calcula score inicial basado en similitud semántica."""
-        if not product or not query:
-            return 0.0
-        
-        try:
-            # Método simple usando SequenceMatcher para similitud de texto
-            from difflib import SequenceMatcher
-            
-            # Calcular similitud basada en título y descripción
-            title = getattr(product, 'title', '')
-            description = getattr(product, 'description', '')
-            
-            # Ponderar título más que descripción
-            title_sim = SequenceMatcher(None, query.lower(), title.lower()).ratio()
-            desc_sim = SequenceMatcher(None, query.lower(), description.lower()).ratio() if description else 0
-            
-            # Combinar scores (70% título, 30% descripción)
-            score = (title_sim * 0.7) + (desc_sim * 0.3)
-            
-            # Ajustar con otros factores
-            price_factor = self._calculate_price_factor(product)
-            rating_factor = self._calculate_rating_factor(product)
-            
-            final_score = score * 0.6 + price_factor * 0.2 + rating_factor * 0.2
-            return min(1.0, max(0.0, final_score))
-            
-        except Exception:
-            return 0.3  # Score mínimo
-
-    def _calculate_price_factor(self, product: Product) -> float:
-        """Factor basado en precio (productos con precio definido son mejores)."""
-        price = getattr(product, 'price', None)
-        if price and isinstance(price, (int, float)) and price > 0:
-            return 0.8  # Bueno
-        return 0.3  # Malo
-
-    def _calculate_rating_factor(self, product: Product) -> float:
-        """Factor basado en rating."""
-        rating = getattr(product, 'average_rating', None)
-        if rating and isinstance(rating, (int, float)):
-            # Normalizar a 0-1
-            return min(1.0, rating / 5.0)
-        return 0.5  # Neutral
+    
     def _calculate_product_score(self, product: Any, query: str) -> float:
         """Calcula un score simple para el producto basado en la query."""
         try:
@@ -401,6 +373,7 @@ class WorkingAdvancedRAGAgent:
         except Exception as e:
             self.logger.warning(f"Error calculando score: {e}")
             return 0.1  # Score mínimo
+    
     def _enhance_with_ml(self, 
                         results: List[ProductReference], 
                         query: str) -> List[ProductReference]:
@@ -421,15 +394,17 @@ class WorkingAdvancedRAGAgent:
                 enhanced_results.append(enhanced_ref)
             else:
                 # Si ya tiene ML, calcular similitud adicional
-                if query_embedding and ref.has_embedding:
-                    similarity = self._calculate_similarity(
-                        query_embedding, 
-                        ref.embedding
-                    )
-                    ref.update_ml_features({
-                        'query_similarity': similarity,
-                        'ml_enhanced': True
-                    })
+                if query_embedding is not None and ref.has_embedding:
+                    # 🔥 CORRECCIÓN: Asegurar que ref.embedding no sea None
+                    if ref.embedding is not None:
+                        similarity = self._calculate_similarity_with_none_check(
+                            query_embedding, 
+                            ref.embedding
+                        )
+                        ref.update_ml_features({
+                            'query_similarity': similarity,
+                            'ml_enhanced': True
+                        })
                 enhanced_results.append(ref)
         
         # Ordenar por puntaje ML mejorado
@@ -449,7 +424,7 @@ class WorkingAdvancedRAGAgent:
         if not ref.product:
             return ref
         
-        ml_data = {}
+        ml_data: Dict[str, Any] = {}
         
         # Extraer características ML según configuración
         if 'category' in self.config.ml_features:
@@ -466,18 +441,22 @@ class WorkingAdvancedRAGAgent:
         if 'embedding' in self.config.ml_features and self.embedding_model:
             # Generar embedding si no existe
             if not ref.has_embedding:
-                text = ref.product.to_text() if hasattr(ref.product, 'to_text') else ref.title
+                text = ref.title if hasattr(ref, 'title') else ""
                 embedding = self.embedding_model.encode(text)
-                ml_data['embedding'] = embedding.tolist()
+                # 🔥 CORRECCIÓN: Convertir embedding a List[float] de forma segura
+                embedding_list = self._convert_to_float_list(embedding)
+                ml_data['embedding'] = embedding_list
                 ml_data['embedding_model'] = settings.ML_EMBEDDING_MODEL
             
             # Calcular similitud con query si hay embedding
             if query_embedding is not None and 'embedding' in ml_data:
-                similarity = self._calculate_similarity(
-                    query_embedding, 
-                    ml_data['embedding']
-                )
-                ml_data['similarity_score'] = similarity
+                embedding2 = ml_data['embedding']
+                if isinstance(embedding2, list):
+                    similarity = self._calculate_similarity_with_none_check(
+                        query_embedding, 
+                        embedding2
+                    )
+                    ml_data['similarity_score'] = similarity
         
         if 'tags' in self.config.ml_features:
             tags = self._generate_tags(ref.product)
@@ -573,21 +552,45 @@ class WorkingAdvancedRAGAgent:
         
         try:
             embedding = self.embedding_model.encode(query)
-            self._query_cache[query] = embedding.tolist()
-            return embedding.tolist()
+            # 🔥 CORRECCIÓN: Convertir a List[float] de forma segura
+            embedding_list = self._convert_to_float_list(embedding)
+            self._query_cache[query] = embedding_list
+            return embedding_list
         except Exception as e:
             self.logger.warning(f"⚠️ Error generando embedding para query: {e}")
             return None
     
-    def _calculate_similarity(self, 
-                             embedding1: List[float], 
-                             embedding2: List[float]) -> float:
-        """Calcula similitud coseno entre embeddings."""
+    def _convert_to_float_list(self, embedding: Any) -> List[float]:
+        """Convierte cualquier tipo de embedding a List[float]."""
         try:
-            import numpy as np
+            if hasattr(embedding, 'tolist'):
+                # Para numpy arrays y tensores
+                result = embedding.tolist()
+            elif isinstance(embedding, (list, tuple, np.ndarray)):
+                # Para listas, tuplas y arrays de numpy
+                result = list(embedding)
+            else:
+                # Para otros tipos, intentar conversión directa
+                result = list(embedding)
             
-            v1 = np.array(embedding1)
-            v2 = np.array(embedding2)
+            # Asegurar que todos los elementos sean float
+            return [float(x) for x in result]
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error convirtiendo embedding a lista: {e}")
+            # Devolver lista vacía como fallback
+            return []
+    
+    def _calculate_similarity_with_none_check(self, 
+                                            embedding1: Optional[Sequence[float]], 
+                                            embedding2: Optional[Sequence[float]]) -> float:
+        """Calcula similitud coseno entre embeddings con chequeo de None."""
+        if embedding1 is None or embedding2 is None:
+            return 0.0
+        
+        try:
+            # 🔥 CORRECCIÓN: Asegurar que son listas o arrays convertibles
+            v1 = np.array(embedding1, dtype=np.float32)
+            v2 = np.array(embedding2, dtype=np.float32)
             
             # Normalizar vectores
             norm1 = np.linalg.norm(v1)
@@ -605,6 +608,13 @@ class WorkingAdvancedRAGAgent:
         except Exception as e:
             self.logger.warning(f"⚠️ Error calculando similitud: {e}")
             return 0.0
+    
+    # 🔥 MANTENER método original para compatibilidad
+    def _calculate_similarity(self, 
+                             embedding1: List[float], 
+                             embedding2: List[float]) -> float:
+        """Calcula similitud coseno entre embeddings (método original)."""
+        return self._calculate_similarity_with_none_check(embedding1, embedding2)
     
     def _calculate_ml_score(self, 
                            ref: ProductReference, 
@@ -638,23 +648,31 @@ class WorkingAdvancedRAGAgent:
         
         reranked = []
         
+        # 🔥 INICIALIZAR collab_score aquí para evitar "possibly unbound"
+        collab_score = 0.0
+        
         for ref in results[:self.config.max_retrieved]:
             base_score = ref.score
             
             # 🔥 Aplicar RLHF scoring si disponible
             rlhf_score = 0.0
             if self.rlhf_model:
+                # Usar título como texto para RLHF
                 text = ref.title if hasattr(ref, 'title') else ""
                 rlhf_score = self._score_with_rlhf(query, text)
             
             # 🔥 Aplicar Collaborative Filter si hay usuario
-            collab_score = 0.0
+            collab_score = 0.0  # 🔥 INICIALIZAR en cada iteración
             if user_id and self._collaborative_filter:
+                # Convertir ref a string (product id) para collaborative filter
+                product_id_str = str(ref.id) if hasattr(ref, 'id') and ref.id is not None else ""
                 collab_scores = self._collaborative_filter.get_collaborative_scores(
                     user_id, 
-                    [ref.id]
+                    product_id_str
                 )
-                collab_score = collab_scores.get(ref.id, 0.0)
+                # Obtener score para este producto específico
+                if collab_scores and hasattr(ref, 'id'):
+                    collab_score = collab_scores.get(str(ref.id), 0.0)
             
             # 🔥 Combinar scores (60% base, 20% RLHF, 20% Collaborative)
             final_score = (
@@ -691,12 +709,8 @@ class WorkingAdvancedRAGAgent:
         scores = {}
         try:
             for ref in references:
-                if hasattr(ref, 'text'):
-                    text = ref.text
-                elif hasattr(ref, 'title'):
-                    text = ref.title
-                else:
-                    continue
+                # Usar título como texto
+                text = ref.title if hasattr(ref, 'title') else ""
                 
                 # Puntuar con modelo RLHF
                 score = self._score_with_rlhf(query, text)
@@ -877,7 +891,7 @@ class WorkingAdvancedRAGAgent:
             # 🔥 MOSTRAR CATEGORÍA en la respuesta
             answer_parts.append(
                 f"{emoji} {i+1}. {title[:60]} "
-                f"(💰 ${price:.2f} | 🏷️ {category})"  # ← ¡AHORA MUESTRA CATEGORÍA!
+                f"(💰 ${price:.2f} | 🏷️ {category})"
             )
         
         # Añadir recomendación final
@@ -895,6 +909,7 @@ class WorkingAdvancedRAGAgent:
             )
         
         return "\n".join(answer_parts)
+    
     def _extract_category_for_display(self, ref: ProductReference, title: str) -> str:
         """Extrae la mejor categoría para mostrar de múltiples fuentes."""
         # 🔥 PRIMERO: Intentar extraer del título (más confiable para Nintendo)
@@ -966,9 +981,11 @@ class WorkingAdvancedRAGAgent:
                     return category
         
         return 'General'
+    
     def _get_category_emoji(self, category: str) -> str:
         """Devuelve emoji apropiado para la categoría."""
         emoji_map = {
+            'Video Games': '🎮',
             'Electronics': '📱',
             'Books': '📚',
             'Clothing': '👕',
@@ -1062,8 +1079,11 @@ class WorkingAdvancedRAGAgent:
             except Exception as e:
                 results["errors"].append(f"Embedding Model: {e}")
         
-        return results
-    def log_feedback(self, query: str, answer: str, rating: int, user_id: str = None) -> None:
+        return results  # ← test_components termina AQUÍ
+
+
+    # 🔥 CORRECCIÓN: log_feedback debe estar aquí, NO dentro de test_components
+    def log_feedback(self, query: str, answer: str, rating: int, user_id: Optional[str] = None) -> None:
         """
         Registra feedback del usuario para RLHF.
         
@@ -1074,26 +1094,43 @@ class WorkingAdvancedRAGAgent:
             user_id: ID del usuario (opcional)
         """
         try:
-            # Guardar feedback en el pipeline RLHF si existe
-            if self.rlhf_pipeline:
-                self.rlhf_pipeline.add_feedback(
-                    query=query,
-                    answer=answer,
-                    rating=rating,
-                    user_id=user_id or "anonymous"
-                )
-                self.logger.info(f"📝 Feedback guardado: rating={rating}, user={user_id}")
+            # 🔥 SIMPLIFICADO: Guardar feedback en archivo o base de datos local
+            feedback_data = {
+                "query": query,
+                "answer": answer[:500],  # Limitar tamaño
+                "rating": rating,
+                "user_id": user_id or "anonymous",
+                "timestamp": time.time(),
+                "agent_mode": self.config.mode.value
+            }
             
-            # También actualizar Collaborative Filter si hay usuario
+            # Crear directorio si no existe
+            feedback_dir = Path("data/feedback")
+            feedback_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Guardar en archivo JSON
+            import json
+            from datetime import datetime
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = feedback_dir / f"feedback_{timestamp}_{rating}.json"
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(feedback_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"📝 Feedback guardado en {filename}")
+            
+            # 🔥 Actualizar Collaborative Filter si hay usuario
             if user_id and self._collaborative_filter:
-                # Buscar productos en la respuesta para actualizar preferencias
-                # Esto es simplificado - en una implementación real deberías
-                # extraer IDs de productos de la respuesta
-                self._collaborative_filter.update_user_preference(
-                    user_id=user_id,
-                    query=query,
-                    rating=rating
-                )
+                try:
+                    # 🔥 CORRECCIÓN: Llamar correctamente a get_collaborative_scores
+                    _ = self._collaborative_filter.get_collaborative_scores(
+                        user_or_profile=user_id,
+                        query_or_candidates=query
+                    )
+                    self.logger.debug(f"Cache de Collaborative Filter actualizado para usuario {user_id}")
+                except Exception as e:
+                    self.logger.debug(f"No se pudo actualizar cache de Collaborative Filter: {e}")
                 
         except Exception as e:
             self.logger.error(f"❌ Error guardando feedback: {e}")

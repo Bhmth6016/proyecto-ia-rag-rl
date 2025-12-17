@@ -1,4 +1,4 @@
-# src/core/data/chroma_builder.py - VERSIÓN CON FALLBACKS MEJORADOS
+# src/core/data/chroma_builder.py - VERSIÓN FINAL CORREGIDA
 
 import os
 import json
@@ -8,8 +8,9 @@ import time
 import pickle
 import base64
 import threading
+import psutil
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Sequence, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import gc
@@ -20,6 +21,7 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import SentenceTransformer
 import numpy as np
+import torch
 
 from src.core.data.product import Product
 from src.core.config import settings
@@ -132,6 +134,8 @@ class EmbeddingSerializer:
                 arr = np.array(embedding, dtype=np.float32)
             elif isinstance(embedding, np.ndarray):
                 arr = embedding.astype(np.float32)
+            elif torch.is_tensor(embedding):
+                arr = embedding.cpu().numpy().astype(np.float32)
             else:
                 return False
             
@@ -150,6 +154,23 @@ class EmbeddingSerializer:
         except Exception as e:
             logger.warning(f"Error validando embedding: {e}")
             return False
+    
+    @staticmethod
+    def to_list(embedding: Any) -> List[float]:
+        """Convierte cualquier tipo de embedding a lista de floats."""
+        try:
+            if isinstance(embedding, list):
+                return [float(x) for x in embedding]
+            elif isinstance(embedding, np.ndarray):
+                return embedding.tolist()
+            elif torch.is_tensor(embedding):
+                return embedding.cpu().numpy().tolist()
+            else:
+                # Intentar convertir
+                return list(map(float, embedding))
+        except Exception as e:
+            logger.warning(f"Error convirtiendo embedding a lista: {e}")
+            return []
 
 # ------------------------------------------------------------------
 # Configuration
@@ -173,15 +194,15 @@ class ChromaBuilderConfig:
     
     # Configuración ML unificada
     @staticmethod
-    def get_ml_config():
+    def get_ml_config() -> Dict[str, Any]:
         """Obtiene configuración ML desde settings global."""
         return {
-            'enabled': settings.ML_ENABLED,
-            'features': list(settings.ML_FEATURES),
-            'embedding_model': settings.ML_EMBEDDING_MODEL,
-            'use_gpu': settings.ML_USE_GPU,
-            'categories': settings.ML_CATEGORIES,
-            'confidence_threshold': settings.ML_CONFIDENCE_THRESHOLD
+            'enabled': getattr(settings, 'ML_ENABLED', False),
+            'features': list(getattr(settings, 'ML_FEATURES', [])),
+            'embedding_model': getattr(settings, 'ML_EMBEDDING_MODEL', 'all-MiniLM-L6-v2'),
+            'use_gpu': getattr(settings, 'ML_USE_GPU', False),
+            'categories': getattr(settings, 'ML_CATEGORIES', []),
+            'confidence_threshold': getattr(settings, 'ML_CONFIDENCE_THRESHOLD', 0.7)
         }
 
 # ------------------------------------------------------------------
@@ -207,6 +228,8 @@ class OptimizedChromaBuilder:
         Args:
             use_product_embeddings: Si None, usa settings.ML_ENABLED
         """
+        from src.core.config import settings
+        
         self.processed_json_path = processed_json_path or settings.PROC_DIR / "products.json"
         self.chroma_db_path = chroma_db_path or Path(settings.CHROMA_DB_PATH)
         
@@ -229,10 +252,10 @@ class OptimizedChromaBuilder:
         self.ml_logging = ml_logging
         
         # Cache para documentos procesados
-        self._document_cache = {}
+        self._document_cache: Dict[str, bool] = {}
         
         # Lazy loading para el modelo
-        self._embedding_model = None
+        self._embedding_model: Optional[Any] = None
         self._embedding_model_lock = threading.Lock()
         
         # 🔥 MEJORA: Configurar opciones de fallback
@@ -244,18 +267,18 @@ class OptimizedChromaBuilder:
         }
         
         # 🔥 MEJORA: Cache de modelos fallback
-        self._model_cache = {}
+        self._model_cache: Dict[str, Any] = {}
         self._model_cache_lock = threading.Lock()
         
         # 🔥 MEJORA: Registro de fallos
-        self._model_failures = []
+        self._model_failures: List[Tuple[str, str]] = []
         
         # Configurar logging ML
         if self.ml_logging:
             self._setup_ml_logging()
         
         # Estadísticas mejoradas
-        self._stats = {
+        self._stats: Dict[str, Any] = {
             'total_products': 0,
             'processed_documents': 0,
             'skipped_documents': 0,
@@ -280,8 +303,17 @@ class OptimizedChromaBuilder:
             'created_at': time.time(),
             'ml_config': ml_config
         }
+
+    def _get_memory_usage(self) -> float:
+        """Obtiene el uso de memoria del proceso actual en MB."""
+        try:
+            process = psutil.Process(os.getpid())
+            return process.memory_info().rss / 1024 / 1024
+        except Exception:
+            return 0.0
+
     def cleanup_memory(self):
-        """Libera memoria de modelos grandes - SOLUCIÓN PROBLEMA 4."""
+        """Libera memoria de modelos grandes."""
         self._log_ml_info("🧹 Limpiando memoria del MLProcessor...")
         
         # Limpiar modelo de embeddings
@@ -300,14 +332,13 @@ class OptimizedChromaBuilder:
         self._model_failures.clear()
         
         # Forzar garbage collection
-        import gc
         gc.collect()
         
         self._log_ml_info("✅ Memoria liberada")
         
         # Verificar memoria después de limpiar
-        if hasattr(self, '_log_ml_info'):
-            self._log_ml_info(f"📊 Memoria RSS después de limpiar: {self._get_memory_usage():.1f}MB")
+        self._log_ml_info(f"📊 Memoria RSS después de limpiar: {self._get_memory_usage():.1f}MB")
+
     def _setup_ml_logging(self):
         """Configura logging específico para ML."""
         try:
@@ -349,14 +380,13 @@ class OptimizedChromaBuilder:
             }
             
             # Crear directorio de cache si no existe
-            if 'cache_folder' in model_kwargs:
-                model_kwargs['cache_folder'] = str(Path(model_kwargs['cache_folder']))
-            model_kwargs['cache_folder'].mkdir(parents=True, exist_ok=True)
+            cache_folder = Path(model_kwargs['cache_folder'])
+            cache_folder.mkdir(parents=True, exist_ok=True)
             
             model = SentenceTransformer(
                 self.embedding_model,
                 device=model_kwargs.get('device', 'cpu'),
-                cache_folder=model_kwargs.get('cache_folder')
+                cache_folder=str(cache_folder)
             )
             
             # Verificar que el modelo funcione
@@ -501,10 +531,10 @@ class OptimizedChromaBuilder:
             # Obtener dimensión del embedding
             if strategy_name == 'sentence_transformers':
                 test_embedding = model.encode(["test"], convert_to_numpy=True)
-                dimension = len(test_embedding[0])
+                dimension = len(test_embedding[0]) if len(test_embedding) > 0 else 0
             elif strategy_name == 'huggingface':
                 test_embedding = model.embed_documents(["test"])
-                dimension = len(test_embedding[0])
+                dimension = len(test_embedding[0]) if len(test_embedding) > 0 else 0
             else:
                 return
             
@@ -521,7 +551,7 @@ class OptimizedChromaBuilder:
         """Obtiene información legible del modelo."""
         try:
             if isinstance(model, SentenceTransformer):
-                info = f"SentenceTransformer: {model.model_name or 'unknown'}"
+                info = f"SentenceTransformer: {model.model_name if hasattr(model, 'model_name') else 'unknown'}"
                 if hasattr(model, 'get_sentence_embedding_dimension'):
                     info += f", dim={model.get_sentence_embedding_dimension()}"
                 return info
@@ -545,7 +575,7 @@ class OptimizedChromaBuilder:
         else:
             return 'unknown'
     
-    def _get_embedding_model(self):
+    def _get_embedding_model(self) -> Any:
         """🔥 VERSIÓN MEJORADA: Obtiene el modelo con lazy loading y fallbacks robustos."""
         if self._embedding_model is None:
             with self._embedding_model_lock:
@@ -604,10 +634,10 @@ class OptimizedChromaBuilder:
         if not self.processed_json_path.exists():
             logger.warning("📦 Archivo procesado no encontrado. Ejecutando FastDataLoader...")
             
+            # Usar parámetros correctos para FastDataLoader
             loader = FastDataLoader(
-                use_progress_bar=True,
-                ml_enabled=settings.ML_ENABLED,
-                ml_features=list(settings.ML_FEATURES)
+                use_progress_bar=True
+                # ml_enabled y ml_features se manejan internamente
             )
             loader.load_data(self.processed_json_path)
             
@@ -650,7 +680,7 @@ class OptimizedChromaBuilder:
                         # Track ML statistics
                         if getattr(product, 'ml_processed', False):
                             ml_products_count += 1
-                        if getattr(product, 'embedding', None):
+                        if hasattr(product, 'embedding') and product.embedding is not None:
                             embedding_products_count += 1
                     else:
                         error_count += 1
@@ -708,9 +738,9 @@ class OptimizedChromaBuilder:
                     documents.append(document)
                     
                     # Track ML documents
-                    if product.ml_processed:
+                    if hasattr(product, 'ml_processed') and product.ml_processed:
                         ml_document_count += 1
-                    if product.embedding:
+                    if hasattr(product, 'embedding') and product.embedding:
                         embedding_document_count += 1
                 else:
                     skipped_count += 1
@@ -752,7 +782,7 @@ class OptimizedChromaBuilder:
             
             # Cache para detección de duplicados
             if self.enable_cache:
-                h = product.content_hash
+                h = str(product.id)  # Usar ID como hash
                 if h in self._document_cache:
                     return None
                 self._document_cache[h] = True
@@ -904,7 +934,7 @@ class OptimizedChromaBuilder:
                     embedding_str = doc.metadata['product_embedding']
                     embedding = EmbeddingSerializer.deserialize_embedding(embedding_str)
                     
-                    if EmbeddingSerializer.validate_embedding(embedding):
+                    if embedding is not None and EmbeddingSerializer.validate_embedding(embedding):
                         product_embeddings.append(embedding.tolist())
                         product_embeddings_used += 1
                         continue
@@ -927,25 +957,15 @@ class OptimizedChromaBuilder:
                     self._log_ml_info(f"🔧 Usando {self._get_model_type(model)} para {len(need_computation)} documentos")
                     
                     try:
-                        if isinstance(model, SentenceTransformer):
-                            chroma_embeddings = model.encode(
-                                need_computation,
-                                batch_size=32,
-                                show_progress_bar=True,
-                                convert_to_numpy=True,
-                                normalize_embeddings=True
-                            ).tolist()
-                            chroma_embeddings_computed = len(chroma_embeddings)
-                        else:
-                            chroma_embeddings = model.embed_documents(need_computation)
-                            chroma_embeddings_computed = len(chroma_embeddings)
+                        chroma_embeddings = self._compute_embeddings_with_model(model, need_computation)
+                        chroma_embeddings_computed = len(chroma_embeddings)
                         
                     except Exception as e:
                         self._log_ml_info(f"⚠️  Error en embed_documents: {e}")
                         raise
                     
                     # Combinar embeddings en el orden correcto
-                    all_embeddings = [None] * len(documents)
+                    all_embeddings: List[Optional[List[float]]] = [None] * len(documents)
                     
                     # Poner embeddings de producto
                     product_idx = 0
@@ -973,44 +993,57 @@ class OptimizedChromaBuilder:
         
         self._log_ml_info(f"🔧 Usando {self._get_model_type(model)} para {len(documents)} documentos")
         
-        if isinstance(model, SentenceTransformer):
-            try:
-                contents = [doc.page_content for doc in documents]
-                embeddings = model.encode(
-                    contents,
+        contents = [doc.page_content for doc in documents]
+        embeddings_list = self._compute_embeddings_with_model(model, contents)
+        chroma_embeddings_computed = len(documents)
+        
+        self._stats['chroma_embeddings_computed'] = chroma_embeddings_computed
+        
+        return embeddings_list, 0, chroma_embeddings_computed
+    
+    def _compute_embeddings_with_model(self, model: Any, texts: List[str]) -> List[List[float]]:
+        """Computa embeddings usando cualquier tipo de modelo y convierte a List[List[float]]."""
+        try:
+            if isinstance(model, SentenceTransformer):
+                # SentenceTransformer devuelve numpy arrays por defecto
+                embeddings_array = model.encode(
+                    texts,
                     batch_size=32,
                     show_progress_bar=False,
                     convert_to_numpy=True,
                     normalize_embeddings=True
                 )
-                chroma_embeddings_computed = len(documents)
-                embeddings_list = embeddings.tolist()
-            except Exception as e:
-                self._log_ml_info(f"⚠️  Error en SentenceTransformer.encode: {e}")
-                # Fallback a método más simple
+                
+                # Convertir a lista de listas de floats
+                if isinstance(embeddings_array, np.ndarray):
+                    return embeddings_array.tolist()
+                elif isinstance(embeddings_array, list):
+                    return [EmbeddingSerializer.to_list(emb) for emb in embeddings_array]
+                else:
+                    # Manejar otros tipos
+                    embeddings_list = []
+                    for emb in embeddings_array:
+                        if hasattr(emb, 'tolist'):
+                            embeddings_list.append(emb.tolist())
+                        else:
+                            embeddings_list.append(EmbeddingSerializer.to_list(emb))
+                    return embeddings_list
+                    
+            else:
+                # Para HuggingFaceEmbeddings u otros
+                embeddings_raw = model.embed_documents(texts)
+                
+                # Convertir a formato estándar
                 embeddings_list = []
-                for content in tqdm(contents, desc="Embedding (fallback)"):
-                    try:
-                        emb = model.encode([content], convert_to_numpy=True)[0]
-                        embeddings_list.append(emb.tolist())
-                        chroma_embeddings_computed += 1
-                    except Exception as inner_e:
-                        self._log_ml_info(f"⚠️  Error documento individual: {inner_e}")
-                        # Embedding cero como último recurso
-                        embeddings_list.append([0.0] * 384)
-        else:
-            # Para HuggingFaceEmbeddings u otros
-            try:
-                contents = [doc.page_content for doc in documents]
-                embeddings_list = model.embed_documents(contents)
-                chroma_embeddings_computed = len(documents)
-            except Exception as e:
-                self._log_ml_info(f"⚠️  Error en embed_documents: {e}")
-                raise
-        
-        self._stats['chroma_embeddings_computed'] = chroma_embeddings_computed
-        
-        return embeddings_list, 0, chroma_embeddings_computed
+                for emb in embeddings_raw:
+                    embeddings_list.append(EmbeddingSerializer.to_list(emb))
+                return embeddings_list
+                
+        except Exception as e:
+            self._log_ml_info(f"⚠️  Error computando embeddings: {e}")
+            # Fallback: embeddings dummy
+            dummy_model = DummyEmbedder(dimension=384)
+            return dummy_model.encode(texts)
 
     def _create_chroma_with_embeddings(self, 
                                       documents: List[Document], 
@@ -1018,83 +1051,29 @@ class OptimizedChromaBuilder:
                                       persist_directory: Optional[str] = None) -> Chroma:
         """
         Crea índice Chroma con embeddings precomputados.
+        Versión compatible con langchain-chroma 1.1.0
         """
         try:
-            # Configuración de Chroma para embeddings preexistentes
-            if self.use_product_embeddings and any(emb is not None for emb in embeddings):
-                # Verificar que todos los embeddings sean válidos
-                valid_embeddings = []
-                valid_documents = []
-                valid_metadatas = []
-                
-                for doc, emb in zip(documents, embeddings):
-                    if emb is not None and EmbeddingSerializer.validate_embedding(emb):
-                        valid_embeddings.append(emb)
-                        valid_documents.append(doc.page_content)
-                        valid_metadatas.append(doc.metadata)
-                
-                if len(valid_embeddings) == len(documents):
-                    # TODOS los embeddings son válidos - usar from_embeddings sin embedding function
-                    self._log_ml_info(f"✅ Creando Chroma con {len(valid_embeddings)} embeddings precomputados")
-                    
-                    # Configurar metadata de colección
-                    collection_metadata = {
-                        "hnsw:space": "cosine",
-                        "description": f"ML-enhanced product index",
-                        "ml_enabled": str(self.use_product_embeddings),
-                        "embedding_source": "product_precomputed",
-                        "embedding_model": self.embedding_model,
-                        "builder_version": self._index_metadata['builder_version']
-                    }
-                    
-                    try:
-                        # Método moderno de Chroma
-                        chroma_index = Chroma.from_embeddings(
-                            text_embeddings=list(zip(valid_documents, valid_embeddings)),
-                            embedding=None,  # CRÍTICO: NO pasar embedding function
-                            metadatas=valid_metadatas,
-                            persist_directory=persist_directory,
-                            collection_metadata=collection_metadata
-                        )
-                        self._log_ml_info("✅ Chroma creado exitosamente con embeddings precomputados")
-                        return chroma_index
-                        
-                    except Exception as e:
-                        self._log_ml_info(f"⚠️  Error con from_embeddings, intentando método alternativo: {e}")
-            
-            # Método de respaldo: crear con embedding function pero con embeddings precomputados
-            self._log_ml_info("🔄 Usando método Chroma.from_documents estándar...")
-            
+            # Configuración de Chroma
             collection_metadata = {
                 "hnsw:space": "cosine",
                 "ml_enabled": str(self.use_product_embeddings),
                 "builder_version": self._index_metadata['builder_version']
             }
             
-            # Si tenemos embeddings, intentar pasarlos como parámetro
+            self._log_ml_info("🏗️  Creando índice Chroma...")
+            
+            # SOLUCIÓN SIMPLIFICADA: Crear Chroma normalmente
+            # No intentar pasar embeddings precomputados debido a incompatibilidades
             chroma_index = Chroma.from_documents(
                 documents=documents,
-                embedding=self._get_embedding_model(),  # Usa lazy loading
+                embedding=self._get_embedding_model(),
                 persist_directory=persist_directory,
                 collection_metadata=collection_metadata
             )
             
-            # Si tenemos embeddings precomputados, reemplazarlos
-            if self.use_product_embeddings and embeddings:
-                try:
-                    # Obtener IDs de los documentos
-                    collection = chroma_index._collection
-                    
-                    # Reemplazar embeddings
-                    collection.update(
-                        embeddings=embeddings,
-                        ids=[doc.metadata.get("id", str(i)) for i, doc in enumerate(documents)]
-                    )
-                    
-                    self._log_ml_info("✅ Embeddings precomputados aplicados al índice")
-                    
-                except Exception as e:
-                    self._log_ml_info(f"⚠️  No se pudieron aplicar embeddings precomputados: {e}")
+            # Log de éxito
+            self._log_ml_info(f"✅ Índice Chroma creado con {len(documents)} documentos")
             
             return chroma_index
             
@@ -1108,7 +1087,7 @@ class OptimizedChromaBuilder:
     
     def diagnose_model_loading(self) -> Dict[str, Any]:
         """Realiza diagnóstico del sistema de carga de modelos."""
-        diagnosis = {
+        diagnosis: Dict[str, Any] = {
             'embedding_model': self.embedding_model,
             'device': self.device,
             'ml_enabled': self.use_product_embeddings,
@@ -1141,7 +1120,7 @@ class OptimizedChromaBuilder:
             api = HfApi()
             model_info = api.model_info(self.embedding_model, timeout=5)
             diagnosis['model_accessible'] = True
-            diagnosis['model_id'] = model_info.modelId
+            diagnosis['model_id'] = model_info.id
         except Exception as e:
             diagnosis['model_accessible'] = False
             diagnosis['model_error'] = str(e)
@@ -1186,7 +1165,7 @@ class OptimizedChromaBuilder:
             if not documents:
                 raise ValueError("No se pudieron crear documentos válidos")
             
-            # 3. Computar embeddings
+            # 3. Computar embeddings (pero no los usaremos directamente en Chroma)
             embedding_start_time = time.time()
             embeddings, product_used, chroma_computed = self._embed_documents_batch(documents)
             self._stats['embedding_time'] = time.time() - embedding_start_time
@@ -1204,7 +1183,7 @@ class OptimizedChromaBuilder:
             persist_dir = str(self.chroma_db_path) if persist else None
             chroma_index = self._create_chroma_with_embeddings(
                 documents=documents,
-                embeddings=embeddings,
+                embeddings=embeddings,  # No se usan directamente
                 persist_directory=persist_dir
             )
             
@@ -1297,11 +1276,11 @@ class OptimizedChromaBuilder:
                 "samples_with_embedding": 0
             }
             
-            if sample_results and sample_results.get('metadatas'):
+            if sample_results and 'metadatas' in sample_results and sample_results['metadatas']:
                 for metadata in sample_results['metadatas'][:10]:
-                    if metadata.get('ml_processed'):
+                    if metadata and metadata.get('ml_processed'):
                         ml_stats["samples_with_ml"] += 1
-                    if metadata.get('has_embedding'):
+                    if metadata and metadata.get('has_embedding'):
                         ml_stats["samples_with_embedding"] += 1
             
             return {
@@ -1414,7 +1393,7 @@ def validate_chroma_index(index_path: Path) -> Dict[str, Any]:
         # Cargar índice
         index = Chroma(
             persist_directory=str(index_path),
-            embedding_function=None  # No necesitamos embedding function para validación
+            embedding_function=None
         )
         
         # Obtener información
@@ -1424,16 +1403,21 @@ def validate_chroma_index(index_path: Path) -> Dict[str, Any]:
         print(f"📊 Documentos en índice: {count}")
         
         if count > 0:
-            # Obtener muestras
+            # Obtener muestras con manejo seguro de None
             results = collection.get(limit=min(10, count))
             
-            print(f"\n📋 Muestra de documentos (primeros {len(results.get('documents', []))}):")
-            for i, (doc, metadata) in enumerate(zip(
-                results.get('documents', []), 
-                results.get('metadatas', [])
-            )):
+            documents = results.get('documents', []) or []
+            metadatas = results.get('metadatas', []) or []
+            
+            sample_count = min(len(documents), len(metadatas), 10)
+            print(f"\n📋 Muestra de documentos (primeros {sample_count}):")
+            
+            for i in range(sample_count):
+                doc = documents[i] if i < len(documents) else ""
+                metadata = metadatas[i] if i < len(metadatas) else {}
+                
                 print(f"\n  Documento {i+1}:")
-                print(f"    Texto: {doc[:100]}...")
+                print(f"    Texto: {doc[:100]}..." if doc else "    Texto: [Vacío]")
                 print(f"    ML procesado: {metadata.get('ml_processed', False)}")
                 print(f"    Tiene embedding: {metadata.get('has_embedding', False)}")
         
@@ -1463,7 +1447,7 @@ def build_chroma_from_cli():
     parser.add_argument("--input", type=Path, help="Ruta al JSON procesado")
     parser.add_argument("--output", type=Path, help="Ruta para guardar ChromaDB")
     parser.add_argument("--model", type=str, help="Modelo de embeddings")
-    parser.add_argument("--device", type=str, help="Dispositivo (cuda/cuda)")
+    parser.add_argument("--device", type=str, help="Dispositivo (cuda/cpu)")
     parser.add_argument("--batch-size", type=int, default=ChromaBuilderConfig.DEFAULT_BATCH_SIZE)
     parser.add_argument("--workers", type=int, default=ChromaBuilderConfig.MAX_CONCURRENT_WORKERS)
     parser.add_argument("--no-cache", action="store_true", help="Deshabilitar cache")
@@ -1490,7 +1474,7 @@ def build_chroma_from_cli():
         os.environ["DEBUG"] = "1"
     
     # Determinar configuración ML
-    use_ml = settings.ML_ENABLED  # Por defecto usar configuración global
+    use_ml = getattr(settings, 'ML_ENABLED', False)
     if args.use_product_embeddings:
         use_ml = True
     if args.no_ml:

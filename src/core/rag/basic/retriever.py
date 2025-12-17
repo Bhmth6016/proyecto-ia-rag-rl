@@ -1,5 +1,5 @@
-from __future__ import annotations
 # src/core/rag/basic/retriever.py
+from __future__ import annotations
 import os
 import json
 import uuid
@@ -13,14 +13,14 @@ from difflib import SequenceMatcher
 import numpy as np 
 
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
+# Intentar importar Chroma con diferentes versiones
 try:
-    # LangChain >= 0.1.x
     from langchain_chroma import Chroma
     CHROMA_NEW = True
 except ImportError:
     try:
-        # LangChain <= 0.0.x
         from langchain_community.vectorstores import Chroma
         CHROMA_NEW = False
     except ImportError as e:
@@ -29,17 +29,30 @@ except ImportError:
             "Instala `langchain-chroma` o `langchain-community`."
         ) from e
 
-try:
-    # Opción recomendada (LangChain moderno)
-    from langchain_huggingface import HuggingFaceEmbeddings
-    HAS_LANGCHAIN_HF = True
-except ImportError:
-    # Fallback directo
-    from sentence_transformers import SentenceTransformer
-    HAS_LANGCHAIN_HF = False
+# Importar modelos de embeddings
+from sentence_transformers import SentenceTransformer
 
+# Intentar importar HuggingFaceEmbeddings pero manejar si no está disponible
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+    HAS_HUGGINGFACE = True
+except ImportError:
+    HAS_HUGGINGFACE = False
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.core.rag.basic.retriever import Retriever
+    from langchain_huggingface import HuggingFaceEmbeddings
+
+# Y actualizar la importación condicional:
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings as HFEmbeddings
+    HAS_HUGGINGFACE = True
+    HuggingFaceEmbeddings = HFEmbeddings  # Para type checking
+except ImportError:
+    HAS_HUGGINGFACE = False
+    HuggingFaceEmbeddings = None  #
 from src.core.utils.logger import get_logger
-from src.core.data.product import Product
+from src.core.data.product import Product, ProductDetails
 from src.core.config import settings
 
 logger = get_logger(__name__)
@@ -49,11 +62,9 @@ logger = get_logger(__name__)
 # ----------------------------------------------------------------------
 
 _SYNONYMS: Dict[str, List[str]] = {
-    # --- EXISTENTES ---
     "pelea": ["fight", "fighting", "combat", "battle", "versus", "vs", "lucha", "fighter"],
     "smash": ["super smash", "smash bros", "smash brothers", "nintendo smash"],
     "mario": ["super mario", "mario bros", "nintendo mario"],
-
     "mochila": ["backpack", "bagpack", "laptop bag", "daypack"],
     "computador": ["laptop", "notebook", "pc", "computer", "macbook"],
     "auriculares": ["headphones", "headset", "earbuds", "audífonos", "earphones"],
@@ -77,15 +88,10 @@ _SYNONYMS: Dict[str, List[str]] = {
     "musica": ["music", "instrumentos", "instrumentos musicales", "audio"],
     "app": ["application", "software", "programa", "aplicación"],
     "videojuego": ["video game", "juego", "game", "pc game"],
-
-
-    # --- 🔥 NUEVOS SINÓNIMOS REQUERIDOS para videojuegos ---
     "juego": ["game", "video game", "videogame", "gaming"],
     "nintendo": ["switch", "wii", "gamecube", "nes", "snes", "n64"],
     "playstation": ["ps4", "ps5", "sony playstation"],
     "xbox": ["xbox one", "xbox series", "microsoft xbox"],
-
-    # 🔥 Géneros gaming
     "acción": ["action", "shooter", "fps", "third person"],
     "aventura": ["adventure", "rpg", "role playing"],
     "deportes": ["sports", "fifa", "nba", "madden"],
@@ -102,13 +108,14 @@ def _normalize(text: str) -> str:
 # ----------------------------------------------------------------------
 # 🔥 NUEVO: Custom Embedder para embeddings 100% locales
 # ----------------------------------------------------------------------
-class LocalEmbedder:
-    """Embedder local que no requiere conexión a internet"""
+class LocalEmbedder(Embeddings):
+    """Embedder local que implementa la interfaz Embeddings de LangChain"""
     
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cuda"):
+        super().__init__()
         self.model_name = model_name
         self.device = device
-        self.model = None
+        self.model: Optional[Union[SentenceTransformer, Any, DummyEmbedder]] = None
         self._initialize_model()
     
     def _initialize_model(self):
@@ -116,8 +123,9 @@ class LocalEmbedder:
         try:
             logger.info(f"🔧 Inicializando embedder local: {self.model_name}")
             
-            if HAS_LANGCHAIN_HF:
-                # Usar LangChain HuggingFaceEmbeddings
+            if HAS_HUGGINGFACE:
+                # Importar aquí para evitar variable unbound
+                from langchain_huggingface import HuggingFaceEmbeddings
                 self.model = HuggingFaceEmbeddings(
                     model_name=self.model_name,
                     model_kwargs={"device": self.device},
@@ -126,42 +134,136 @@ class LocalEmbedder:
                         "batch_size": 32
                     }
                 )
+                logger.info(f"✅ Embedder local inicializado con HuggingFaceEmbeddings: {self.model_name}")
             else:
-                # Fallback a SentenceTransformer directamente
+                # Usar SentenceTransformer directamente
                 self.model = SentenceTransformer(self.model_name, device=self.device)
-            
-            logger.info(f"✅ Embedder local inicializado: {self.model_name}")
+                logger.info(f"✅ Embedder local inicializado con SentenceTransformer: {self.model_name}")
             
         except Exception as e:
             logger.error(f"❌ Error inicializando embedder local {self.model_name}: {e}")
-            raise
+            # Crear un modelo dummy como último recurso
+            self.model = DummyEmbedder()
     
     def embed_query(self, text: str) -> List[float]:
         """Genera embedding para una query"""
         try:
-            if HAS_LANGCHAIN_HF:
+            if self.model is None:
+                self._initialize_model()
+            
+            if self.model is None:
+                logger.error("❌ Modelo aún es None después de inicialización")
+                return [0.0] * 384
+            
+            if HAS_HUGGINGFACE and hasattr(self.model, 'embed_query'):
+                # Type safe para HuggingFaceEmbeddings
                 return self.model.embed_query(text)
-            else:
+            elif isinstance(self.model, SentenceTransformer):
                 # Usar SentenceTransformer directamente
                 embedding = self.model.encode(text, normalize_embeddings=True)
-                return embedding.tolist()
+                
+                # Convertir a lista de floats de forma segura
+                return self._convert_to_float_list(embedding)
+            else:
+                # Si es DummyEmbedder u otro tipo
+                return self.model.embed_query(text)
+                
         except Exception as e:
             logger.error(f"❌ Error generando embedding: {e}")
-            # Fallback: embedding simple
             return [0.0] * 384
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Genera embeddings para múltiples documentos"""
         try:
-            if HAS_LANGCHAIN_HF:
+            if self.model is None:
+                self._initialize_model()
+            
+            if self.model is None:
+                logger.error("❌ Modelo aún es None después de inicialización")
+                return [[0.0] * 384 for _ in texts]
+            
+            if HAS_HUGGINGFACE and hasattr(self.model, 'embed_documents'):
                 return self.model.embed_documents(texts)
-            else:
+            elif isinstance(self.model, SentenceTransformer):
                 embeddings = self.model.encode(texts, normalize_embeddings=True)
-                return embeddings.tolist()
+                
+                # Convertir a List[List[float]]
+                return self._convert_batch_to_float_lists(embeddings)
+            else:
+                return self.model.embed_documents(texts)
+                
         except Exception as e:
             logger.error(f"❌ Error generando embeddings de documentos: {e}")
-            # Fallback: embeddings simples
             return [[0.0] * 384 for _ in texts]
+    
+    def _convert_to_float_list(self, embedding: Any) -> List[float]:
+        """Convierte cualquier tipo de embedding a List[float]."""
+        try:
+            if isinstance(embedding, list):
+                return [float(x) for x in embedding]
+            elif isinstance(embedding, np.ndarray):
+                return embedding.tolist()
+            elif hasattr(embedding, 'cpu'):
+                # Tensor de PyTorch
+                return embedding.cpu().numpy().tolist()
+            elif hasattr(embedding, 'tolist'):
+                return embedding.tolist()
+            else:
+                # Intentar conversión directa
+                return [float(x) for x in embedding]
+        except Exception as e:
+            logger.warning(f"⚠️ Error convirtiendo embedding a lista: {e}")
+            return [0.0] * 384
+    
+    def _convert_batch_to_float_lists(self, embeddings: Any) -> List[List[float]]:
+        """Convierte un batch de embeddings a List[List[float]]."""
+        try:
+            if isinstance(embeddings, np.ndarray) and embeddings.ndim == 2:
+                return embeddings.tolist()
+            elif isinstance(embeddings, list):
+                # Ya es una lista, convertir cada elemento
+                result = []
+                for emb in embeddings:
+                    result.append(self._convert_to_float_list(emb))
+                return result
+            elif hasattr(embeddings, 'tolist'):
+                # Intentar tolist primero
+                emb_list = embeddings.tolist()
+                if isinstance(emb_list, list) and all(isinstance(x, list) for x in emb_list):
+                    return emb_list
+                else:
+                    # Wrap en lista adicional si es necesario
+                    return [self._convert_to_float_list(embeddings)]
+            else:
+                # Último recurso
+                return [[0.0] * 384 for _ in range(len(embeddings) if hasattr(embeddings, '__len__') else 1)]
+        except Exception as e:
+            logger.warning(f"⚠️ Error convirtiendo batch de embeddings: {e}")
+            return [[0.0] * 384 for _ in range(10)]
+
+# ----------------------------------------------------------------------
+# Dummy Embedder como fallback
+# ----------------------------------------------------------------------
+class DummyEmbedder:
+    """Embedder dummy como último recurso"""
+    
+    def __init__(self, dimension: int = 384):
+        self.dimension = dimension
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embedding dummy para query"""
+        import random
+        random.seed(hash(text) % 1000000)
+        embedding = [random.gauss(0, 1) for _ in range(self.dimension)]
+        # Normalizar
+        norm = sum(x**2 for x in embedding) ** 0.5
+        if norm > 0:
+            embedding = [x / norm for x in embedding]
+        return embedding
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embeddings dummy para documentos"""
+        return [self.embed_query(text) for text in texts]
 
 # ----------------------------------------------------------------------
 # Retriever
@@ -173,7 +275,7 @@ class Retriever:
         embedding_model: str = "all-MiniLM-L6-v2",  # Siempre local
         device: str = getattr(settings, "DEVICE", "cuda"),
         # 🔥 Ahora configurable globalmente — toma ML si está habilitado
-        use_product_embeddings: bool = settings.ML_ENABLED
+        use_product_embeddings: bool = getattr(settings, "ML_ENABLED", False)
     ):
         logger.info(f"Initializing Retriever (store exists: {Path(index_path).exists()})")
         logger.info(f"Using Chroma version: {'NEW' if CHROMA_NEW else 'OLD'}")
@@ -204,6 +306,7 @@ class Retriever:
             self._check_ml_capabilities()
 
         self.feedback_weights = self._load_feedback_weights()
+        self._last_decay_time = time.time()
 
     # ------------------------------------------------------------
     # 🔥 NUEVO MÉTODO: Similaridad con embeddings propios
@@ -216,10 +319,19 @@ class Retriever:
                 logger.debug(f"[Embedding Similarity] Product {product.id} tiene embedding propio")
                 
                 # Asegurar que el embedding sea un array numpy
-                product_embedding = np.array(product.embedding, dtype=np.float32)
+                if isinstance(product.embedding, list):
+                    product_embedding = np.array(product.embedding, dtype=np.float32)
+                elif isinstance(product.embedding, np.ndarray):
+                    product_embedding = product.embedding.astype(np.float32)
+                else:
+                    return self._score(query, product)
                 
                 # Generar embedding para la query
-                query_embedding = np.array(self.embedder.embed_query(query), dtype=np.float32)
+                query_embedding_array = self.embedder.embed_query(query)
+                if isinstance(query_embedding_array, list):
+                    query_embedding = np.array(query_embedding_array, dtype=np.float32)
+                else:
+                    query_embedding = query_embedding_array.astype(np.float32)
                 
                 # Verificar dimensiones
                 if len(query_embedding) != len(product_embedding):
@@ -265,6 +377,7 @@ class Retriever:
         except Exception as e:
             logger.error(f"❌ Error en search(): {e}")
             return []
+    
     # ------------------------------------------------------------
     # Ensure store loaded
     # ------------------------------------------------------------
@@ -272,18 +385,11 @@ class Retriever:
         if not hasattr(self, "store") or self.store is None:
             try:
                 if self.index_exists():
-                    if CHROMA_NEW:
-                        # NO pasar embedding_function
-                        self.store = Chroma(
-                            persist_directory=str(self.index_path)
-                        )
-                    else:
-                        # 🔥 CAMBIO: Usar custom embedding function para compatibilidad
-                        self.store = Chroma(
-                            persist_directory=str(self.index_path),
-                            embedding_function=self._get_langchain_embedding_function()
-                        )
-
+                    # Tanto la versión nueva como vieja usan 'embedding_function'
+                    self.store = Chroma(
+                        persist_directory=str(self.index_path),
+                        embedding_function=self.embedder  # Usar directamente el embedder
+                    )
                     logger.info("✅ Chroma store loaded successfully")
                     
                     # 🔥 NUEVO: Verificar si el índice tiene metadata ML
@@ -294,26 +400,11 @@ class Retriever:
             except Exception as e:
                 logger.error(f"❌ Error loading Chroma store: {e}")
                 self.store = None
-    
-    def _get_langchain_embedding_function(self):
-        """Retorna una función de embedding compatible con LangChain"""
-        class LangChainCompatibleEmbedding:
-            def __init__(self, embedder):
-                self.embedder = embedder
-            
-            def embed_query(self, text: str) -> List[float]:
-                return self.embedder.embed_query(text)
-            
-            def embed_documents(self, texts: List[str]) -> List[List[float]]:
-                return self.embedder.embed_documents(texts)
-        
-        return LangChainCompatibleEmbedding(self.embedder)
-
 
     def _check_ml_capabilities(self):
         """Verifica si el índice Chroma tiene capacidades ML"""
         try:
-            if hasattr(self.store, '_collection'):
+            if self.store and hasattr(self.store, '_collection'):
                 collection = self.store._collection
                 metadata = collection.metadata or {}
                 
@@ -324,9 +415,10 @@ class Retriever:
                     # Contar documentos con embeddings ML
                     sample = collection.get(limit=100)
                     if sample and sample.get('metadatas'):
-                        ml_count = sum(1 for m in sample['metadatas'] 
-                                     if m.get('has_embedding', False))
-                        logger.info(f"📊 {ml_count}/{len(sample['metadatas'])} documentos tienen embeddings ML")
+                        metadatas = sample['metadatas'] or []
+                        ml_count = sum(1 for m in metadatas 
+                                     if m and isinstance(m, dict) and m.get('has_embedding', False))
+                        logger.info(f"📊 {ml_count}/{len(metadatas)} documentos tienen embeddings ML")
                 
         except Exception as e:
             logger.debug(f"No se pudo verificar capacidades ML: {e}")
@@ -334,7 +426,9 @@ class Retriever:
     # Compatible con LangChain retriever
     def as_retriever(self, search_kwargs=None):
         self._ensure_store_loaded()
-        return self.store.as_retriever(search_kwargs=search_kwargs) if self.store else None
+        if self.store:
+            return self.store.as_retriever(search_kwargs=search_kwargs)
+        return None
 
     # ------------------------------------------------------------
     # Query expansion
@@ -375,11 +469,14 @@ class Retriever:
             if success_log.exists():
                 with open(success_log, 'r', encoding='utf-8') as f:
                     for line in f:
-                        record = json.loads(line)
-                        product_id = record.get('selected_product_id')
-                        rating = record.get('feedback', 0)
-                        if product_id and rating >= 4:  # Solo feedback positivo
-                            weights[product_id] = weights.get(product_id, 0) + 1.0
+                        try:
+                            record = json.loads(line)
+                            product_id = record.get('selected_product_id')
+                            rating = record.get('feedback', 0)
+                            if product_id and rating >= 4:  # Solo feedback positivo
+                                weights[str(product_id)] = weights.get(str(product_id), 0) + 1.0
+                        except json.JSONDecodeError:
+                            continue
             
             logger.info(f"✅ Cargados {len(weights)} pesos de feedback positivo")
             
@@ -396,7 +493,7 @@ class Retriever:
         min_similarity: float = 0.15,  # 🔥 Aumentado de 0.1 a 0.15
         top_k: Optional[int] = None,
         use_ml_embeddings: Optional[bool] = None
-    ):
+    ) -> List[Product]:
         """Compatibilidad con deepeval — ahora con deduplicación avanzada."""
         try:
             # --- compatibilidad ---
@@ -620,7 +717,6 @@ class Retriever:
             filters["weight"] = {"max": float(weight_matches[0])}
 
         return filters
-
     def _matches_all_filters(self, product: Product, filters: Dict) -> bool:
         if "price_range" in filters:
             r = filters["price_range"]
@@ -628,18 +724,59 @@ class Retriever:
                 return False
 
         if "color" in filters:
-            product_color = getattr(product, "color", "") or product.details.get("Color", "")
-            if not product_color or str(product_color).lower() != filters["color"].lower():
+            # SIMPLIFICACIÓN: Buscar solo en el texto del producto
+            search_text = ""
+            if product.title:
+                search_text += product.title.lower() + " "
+            if product.description:
+                search_text += product.description.lower() + " "
+            
+            # También buscar en detalles si están disponibles
+            if hasattr(product, "details") and product.details:
+                if isinstance(product.details, dict):
+                    search_text += " ".join(str(v).lower() for v in product.details.values() if v) + " "
+                elif hasattr(product.details, "__dict__"):
+                    search_text += " ".join(str(v).lower() for v in product.details.__dict__.values() if v) + " "
+            
+            filter_color = filters["color"].lower()
+            
+            # Mapear sinónimos de colores
+            color_synonyms = {
+                "rojo": ["rojo", "red", "colorado"],
+                "azul": ["azul", "blue"],
+                "verde": ["verde", "green"],
+                "negro": ["negro", "black"],
+                "blanco": ["blanco", "white", "blanca"],
+                "amarillo": ["amarillo", "yellow"],
+                "rosa": ["rosa", "pink", "rosado"],
+                "gris": ["gris", "gray", "grey"]
+            }
+            
+            # Verificar si el color o sus sinónimos están en el texto
+            color_found = False
+            if filter_color in color_synonyms:
+                for synonym in color_synonyms[filter_color]:
+                    if synonym in search_text:
+                        color_found = True
+                        break
+            else:
+                # Color no mapeado, buscar directamente
+                color_found = filter_color in search_text
+            
+            if not color_found:
                 return False
 
         if "wireless" in filters:
-            text = (product.title + product.description).lower()
+            text = ""
+            if product.title:
+                text += product.title.lower()
+            if product.description:
+                text += product.description.lower()
             is_wireless = any(w in text for w in ["wireless", "inalámbrico", "bluetooth"])
             if not is_wireless:
                 return False
 
         return True
-
     def _doc_to_product(self, doc: Document) -> Optional[Product]:
         try:
             if not doc.metadata:
@@ -647,7 +784,12 @@ class Retriever:
 
             def safe_json_load(x, default):
                 try:
-                    return json.loads(x)
+                    if isinstance(x, str):
+                        return json.loads(x)
+                    elif isinstance(x, (list, dict)):
+                        return x
+                    else:
+                        return default
                 except:
                     return default
 
@@ -670,14 +812,17 @@ class Retriever:
                 product_data["ml_processed"] = True
                 
                 # Intentar recuperar embedding serializado
-                if doc.metadata.get("product_embedding"):
+                embedding_str = doc.metadata.get("product_embedding")
+                if embedding_str:  # CORRECCIÓN: Verificar que no sea None
                     try:
                         import base64
                         import pickle
-                        embedding_str = doc.metadata.get("product_embedding")
-                        serialized = base64.b64decode(embedding_str.encode('utf-8'))
+                        # CORRECCIÓN: embedding_str ya es string
+                        serialized = base64.b64decode(embedding_str)
                         embedding = pickle.loads(serialized)
-                        product_data["embedding"] = embedding.tolist()
+                        
+                        # Convertir a lista de floats de forma segura
+                        product_data["embedding"] = self._convert_any_to_float_list(embedding)
                         product_data["embedding_model"] = doc.metadata.get("embedding_model", "unknown")
                     except Exception as e:
                         logger.debug(f"No se pudo recuperar embedding ML: {e}")
@@ -693,15 +838,29 @@ class Retriever:
                 except:
                     pass
 
-            # 🔥 AÑADE ESTA LÍNEA DE LOGGING PARA DEBUG:
-            logger.debug(f"[_doc_to_product] Creando Product con id: {product_data['id']}")
+            return Product.from_dict(product_data, ml_enrich=False)
             
-            return Product.from_dict(product_data, ml_enrich=False)  # Ya tiene ML procesado
-
         except Exception as e:
             logger.error(f"❌ Failed to convert doc -> product: {e}")
             return None
-
+    def _convert_any_to_float_list(self, embedding: Any) -> List[float]:
+        """Convierte cualquier tipo de embedding a lista de floats."""
+        try:
+            if isinstance(embedding, list):
+                return [float(x) for x in embedding]
+            elif isinstance(embedding, np.ndarray):
+                return embedding.tolist()
+            elif hasattr(embedding, 'cpu'):
+                # Tensor de PyTorch
+                return embedding.cpu().numpy().tolist()
+            elif hasattr(embedding, 'tolist'):
+                return embedding.tolist()
+            else:
+                # Intentar conversión directa
+                return [float(x) for x in embedding]
+        except Exception as e:
+            logger.warning(f"Error convirtiendo embedding: {e}")
+            return []
     def _score(self, query: str, product: Product) -> float:
         try:
             if not hasattr(product, 'title') or not product.title:
@@ -801,14 +960,17 @@ class Retriever:
             logger.debug(f"[_score] Error: {e}")
             return 0.1
 
-    def _text_similarity(self, q, t):
-        return SequenceMatcher(None, q, t).ratio()
-
     def _chroma_filter(self, f: Optional[Dict]) -> Dict:
-        return {
-            k: {"$in": v} if isinstance(v, list) else {"$eq": v}
-            for k, v in (f or {}).items()
-        }
+        if not f:
+            return {}
+        
+        result = {}
+        for k, v in f.items():
+            if isinstance(v, list):
+                result[k] = {"$in": v}
+            else:
+                result[k] = {"$eq": v}
+        return result
 
     def debug(self, category="Beauty", limit=3):
         if self.store:
@@ -882,6 +1044,7 @@ class Retriever:
         except Exception as e:
             logger.error(f"❌ Falló incluso el backup: {e}")
             raise RuntimeError(f"No se pudo limpiar índice bloqueado: {e}")
+    
     def _safe_clear_index(self):
         """Eliminar el índice de forma segura, manejando archivos bloqueados."""
         import time
@@ -901,63 +1064,16 @@ class Retriever:
                     time.sleep(retry_delay)
                 else:
                     logger.error(f"❌ Failed to clear index after {max_retries} attempts: {e}")
-                    self._force_clear_index()
+                    self._force_clear_index_safe()
             except Exception as e:
                 logger.error(f"❌ Unexpected error clearing index: {e}")
                 raise
 
-    def _force_clear_index(self):
-        """Método forzado para limpiar el índice cuando fallan los métodos normales."""
-        try:
-            import os
-
-            if hasattr(self, 'store') and self.store:
-                try:
-                    self.store = None
-                except:
-                    pass
-
-            if self.index_path.exists():
-                for root, dirs, files in os.walk(self.index_path, topdown=False):
-                    for name in files:
-                        file_path = os.path.join(root, name)
-                        try:
-                            os.chmod(file_path, 0o777)
-                            os.remove(file_path)
-                        except Exception as e:
-                            logger.warning(f"Could not remove {file_path}: {e}")
-
-                    for name in dirs:
-                        dir_path = os.path.join(root, name)
-                        try:
-                            os.chmod(dir_path, 0o777)
-                            os.rmdir(dir_path)
-                        except Exception as e:
-                            logger.warning(f"Could not remove directory {dir_path}: {e}")
-
-                try:
-                    os.rmdir(self.index_path)
-                except:
-                    pass
-
-        except Exception as e:
-            logger.error(f"❌ Force clear also failed: {e}")
-            raise RuntimeError(f"Could not clear index directory: {e}")
     def __del__(self):
         """Destructor para asegurar que Chroma se cierre correctamente."""
         try:
             if hasattr(self, 'store') and self.store:
-                # Forzar cierre de Chroma
-                if hasattr(self.store, '_client'):
-                    try:
-                        self.store._client = None
-                    except:
-                        pass
-                if hasattr(self.store, '_collection'):
-                    try:
-                        self.store._collection = None
-                    except:
-                        pass
+                # Limpiar referencias
                 self.store = None
         except:
             pass
@@ -969,6 +1085,7 @@ class Retriever:
             logger.info("✅ Conexión Chroma cerrada explícitamente")
         except Exception as e:
             logger.warning(f"⚠️ Error cerrando Chroma: {e}")
+    
     # ----------------------------------------------------------------------
     # build_index actualizado
     # ----------------------------------------------------------------------
@@ -989,55 +1106,33 @@ class Retriever:
 
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
 
-            documents = [
-                Document(page_content=p.to_text(), metadata=p.to_metadata())
-                for p in products if p.title and p.title.strip()
-            ]
+            # Crear documentos
+            documents = []
+            for p in products:
+                if p.title and p.title.strip():
+                    try:
+                        doc = Document(
+                            page_content=p.to_text(),
+                            metadata=p.to_metadata()
+                        )
+                        documents.append(doc)
+                    except Exception as e:
+                        logger.warning(f"Error creating document for product {p.id}: {e}")
 
-            logger.info(f"📝 Creating {len(documents)} documents")
+            logger.info(f"📝 Created {len(documents)} documents")
 
-            # 🔥 CORRECIÓN: Manejar correctamente ambas versiones de Chroma
-            if CHROMA_NEW:
-                # Versión nueva (langchain_chroma)
-                self.store = Chroma.from_documents(
-                    documents=documents,
-                    persist_directory=str(self.index_path),
-                    collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
-                )
-            else:
-                # 🔥 CORRECIÓN: Versión vieja (langchain_community)
-                # La versión antigua usa embedding_function (singular)
-                embedding_func = self._get_langchain_embedding_function()
-                
-                # IMPORTANTE: Asegurar que sea una función válida
-                if hasattr(embedding_func, 'embed_documents'):
-                    # Si ya tiene el método embed_documents, usarlo directamente
-                    self.store = Chroma.from_documents(
-                        documents=documents,
-                        embedding=embedding_func,  # 🔥 NOTA: 'embedding' no 'embedding_function'
-                        persist_directory=str(self.index_path),
-                        collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
-                    )
-                else:
-                    # Fallback: crear una función wrapper simple
-                    class SimpleEmbeddingFunction:
-                        def __init__(self, embedder):
-                            self.embedder = embedder
-                        
-                        def embed_documents(self, texts: List[str]) -> List[List[float]]:
-                            return self.embedder.embed_documents(texts)
-                        
-                        def embed_query(self, text: str) -> List[float]:
-                            return self.embedder.embed_query(text)
-                    
-                    simple_func = SimpleEmbeddingFunction(self.embedder)
-                    
-                    self.store = Chroma.from_documents(
-                        documents=documents,
-                        embedding=simple_func,  # 🔥 CORRECTO: 'embedding'
-                        persist_directory=str(self.index_path),
-                        collection_metadata={"hnsw:space": "cosine", "ml_enhanced": "true"}
-                    )
+            # 🔥 CORRECCIÓN: Usar self.embedder directamente
+            # El embedder ya implementa la interfaz Embeddings de LangChain
+            self.store = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embedder,  # Usar embedder directamente
+                persist_directory=str(self.index_path),
+                collection_metadata={
+                    "hnsw:space": "cosine", 
+                    "ml_enhanced": "true",
+                    "builder": "retriever_build_index"
+                }
+            )
 
             logger.info("✅ Index built successfully")
 
@@ -1047,8 +1142,8 @@ class Retriever:
             logger.error(traceback.format_exc())
             self.close()
             raise RuntimeError(f"Index build failed: {e}")
-        
-    def update_feedback_weights_immediately(self, selected_product_id: str, rating: int, all_shown_products: List[str] = None):
+    
+    def update_feedback_weights_immediately(self, selected_product_id: str, rating: int, all_shown_products: Optional[List[str]] = None):
         """Actualiza pesos de feedback con soft negative filtering"""
         try:
             if rating >= 4:  # ✅ Feedback positivo
@@ -1080,8 +1175,6 @@ class Retriever:
         """Aplica decay temporal a pesos antiguos (half-life de 30 días)"""
         try:
             current_time = time.time()
-            if not hasattr(self, '_last_decay_time'):
-                self._last_decay_time = current_time
             
             # Aplicar decay cada 24 horas
             if current_time - self._last_decay_time < 86400:
