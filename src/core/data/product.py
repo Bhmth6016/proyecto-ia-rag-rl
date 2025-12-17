@@ -6,12 +6,13 @@ import json
 import uuid
 import time
 import threading
-from typing import Optional, Dict, List, Any, ClassVar
+from typing import Optional, Dict, List, Any, ClassVar, Union
 from urllib.parse import urlparse, urlunparse
 from functools import lru_cache
 import logging
 
 from pydantic import BaseModel, Field, model_validator
+import numpy as np
 
 from src.core.config import settings, get_settings
 
@@ -168,7 +169,7 @@ class MLProductProcessor:
     _model_lock = threading.Lock()
     
     @classmethod
-    def _get_embedding_model(cls, model_name: str = None):
+    def _get_embedding_model(cls, model_name: Optional[str] = None):
         # ✅ CORRECCIÓN: Importar dentro del método para evitar problemas
         if model_name is None:
             from src.core.config import get_settings
@@ -214,7 +215,9 @@ class MLProductProcessor:
                 model = cls._get_embedding_model()
                 if model:
                     embedding = model.encode(text[:1000], normalize_embeddings=True)
-                    enriched['embedding'] = embedding.tolist()
+                    
+                    # ✅ CORRECCIÓN: Manejar diferentes tipos de embedding (Tensor, numpy array, lista)
+                    enriched['embedding'] = cls._convert_embedding_to_list(embedding)
                     enriched['embedding_model'] = settings.ML_EMBEDDING_MODEL
             
             # ✅ CORRECCIÓN: Usar _predict_category (no _predict_category_general)
@@ -243,6 +246,32 @@ class MLProductProcessor:
             logger.warning(f"ML processing failed: {e}")
             data['ml_processed'] = False
             return data
+    
+    @staticmethod
+    def _convert_embedding_to_list(embedding) -> List[float]:
+        """Convierte embeddings de cualquier tipo a lista de Python."""
+        try:
+            # Si es un Tensor de PyTorch
+            if hasattr(embedding, 'cpu'):
+                embedding = embedding.cpu().numpy()
+            elif hasattr(embedding, 'detach'):
+                embedding = embedding.detach().cpu().numpy()
+            
+            # Si es un numpy array
+            if isinstance(embedding, np.ndarray):
+                return embedding.tolist()
+            # Si ya es una lista
+            elif isinstance(embedding, list):
+                return embedding
+            # Si es iterable pero no lista
+            elif hasattr(embedding, '__iter__'):
+                return list(embedding)
+            # Último recurso
+            else:
+                return []
+        except Exception as e:
+            logger.warning(f"Error convirtiendo embedding a lista: {e}")
+            return []
     
     @staticmethod
     def _predict_category(text: str, categories: List[str]) -> Optional[str]:
@@ -330,32 +359,12 @@ class MLProductProcessor:
 
         if found_categories:
             best_category = max(found_categories.items(), key=lambda x: x[1])[0]
-            
-            # ✅ CORRECCIÓN: Mantener mapeo de categorías para normalización
-            category_mapping = {
-                'video games': 'Video Games',
-                'electronics': 'Electronics',
-                'books': 'Books',
-                'clothing': 'Clothing',
-                'home': 'Home & Kitchen',
-                'sports': 'Sports & Outdoors',
-                'beauty': 'Beauty',
-                'toys': 'Toys & Games',
-                'automotive': 'Automotive',
-                'office': 'Office Products',
-                'health': 'Health'
-            }
-            
-            # Convertir a minúscula para el mapeo
-            best_category_lower = best_category.lower()
-            if best_category_lower in category_mapping:
-                return category_mapping[best_category_lower]
-            return best_category.title()
+            return best_category
         
         return None
 
     @classmethod
-    def get_embedding_model_singleton(cls, model_name: str = None):
+    def get_embedding_model_singleton(cls, model_name: Optional[str] = None):
         if not hasattr(cls, '_global_embedding_model'):
             cls._global_embedding_model = None
         
@@ -408,11 +417,12 @@ class MLProductProcessor:
                 text_limited = text[:1000]
                 embedding = model.encode(text_limited, normalize_embeddings=True)
                 
-                enriched['embedding'] = embedding.tolist()
+                # ✅ CORRECCIÓN: Usar el método helper para convertir embedding
+                enriched['embedding'] = cls._convert_embedding_to_list(embedding)
                 enriched['embedding_model'] = settings.ML_EMBEDDING_MODEL
                 enriched['embedding_timestamp'] = time.time()
                 
-                logger.debug(f"🔧 Embedding generado: {len(embedding)} dimensiones")
+                logger.debug(f"🔧 Embedding generado: {len(enriched['embedding'])} dimensiones")
             
             return enriched
             
@@ -570,6 +580,10 @@ class Product(BaseModel):
     ner_entities: Optional[Dict[str, Any]] = Field(default=None)
     zero_shot_classification: Optional[Dict[str, float]] = Field(default=None)
     
+    # ✅ CORRECCIÓN: Configurar valores por defecto para campos opcionales
+    class Config:
+        arbitrary_types_allowed = True
+    
     # --------------------------------------------------
     # Validators simplificados
     # --------------------------------------------------
@@ -609,7 +623,9 @@ class Product(BaseModel):
             'categories': cls._clean_categories,
             'price': cls._clean_price,
             'brand': lambda x: str(x).strip() if x else '',
-            'product_type': lambda x: str(x).strip() if x else ''
+            'product_type': lambda x: str(x).strip() if x else '',
+            'average_rating': lambda x: float(x) if x is not None else None,
+            'rating_count': lambda x: int(x) if x is not None else None
         }
         
         for field, cleaner in field_cleaners.items():
@@ -786,7 +802,7 @@ class Product(BaseModel):
             'Office Products': [
                 'office', 'stationery', 'paper', 'pen', 'pencil', 'notebook',
                 'printer', 'scanner', 'desk', 'chair', 'lamp', 'folder', 'binder',
-                'stapler', 'scissors', 'tape', 'envelope', 'clipboard', 'calendar',
+                'stapler', 'scissors', 'tapes', 'envelope', 'clipboard', 'calendar',
                 'oficina', 'papelería', 'papel', 'bolígrafo', 'lápiz', 'cuaderno',
                 'impresora', 'escáner', 'escritorio', 'silla', 'carpeta', 'archivador',
                 'grapadora', 'tijeras', 'cinta', 'sobre', 'portapapeles', 'calendario'
@@ -842,7 +858,6 @@ class Product(BaseModel):
             return None
         
         desc_lower = description.lower()
-
         category_keywords = {
             'Video Games': ['nintendo','playstation','xbox','switch','ps5','videogame','console'],
             'Electronics': ['iphone','samsung','android','tablet','laptop','pc','macbook'],
@@ -856,13 +871,18 @@ class Product(BaseModel):
             'Office Products': ['office','stationery','desk','supplies'],
             'Health': ['vitamin','supplement','medicine','first aid','thermometer']
         }
+    
+        scores = {}
+        for category, words in category_keywords.items():
+            score = sum(1 for kw in words if kw in desc_lower)
+            if score > 0:
+                scores[category] = score
 
-        scores = {
-            cat: sum(1 for kw in words if kw in desc_lower)
-            for cat, words in category_keywords.items()
-        }
-
-        return max(scores, key=scores.get) if max(scores.values()) > 0 else None
+        if scores:
+            best_category = max(scores.items(), key=lambda x: x[1])[0]
+            return best_category
+        
+        return None
 
     @classmethod
     def _auto_clean_data(cls, data: Dict) -> Dict:
@@ -1162,18 +1182,28 @@ class Product(BaseModel):
             if not title or not isinstance(title, str):
                 title = 'Unknown Product'
             
-            # Crear producto básico
+            # ✅ CORRECCIÓN: Proporcionar valores por defecto para todos los campos requeridos
             return cls(
                 title=title[:200],
                 id=raw.get('id', str(uuid.uuid4())),
                 description=raw.get('description', '')[:5000] if raw.get('description') else '',
                 price=cls._auto_parse_price(raw.get('price')),
                 main_category=raw.get('main_category', 'General'),
-                ml_processed=False
+                ml_processed=False,
+                # ✅ Proporcionar valores por defecto para campos requeridos
+                average_rating=None,
+                rating_count=None
             )
         except Exception as e:
             logger.error(f"Error creating minimal product: {e}")
-            return cls(title='Error Product')
+            # ✅ CORRECCIÓN: Producto de error con valores por defecto
+            return cls(
+                title='Error Product',
+                price=None,
+                average_rating=None,
+                rating_count=None,
+                description=''
+            )
     
     @classmethod
     def batch_create(cls, raw_list: List[Dict]) -> List["Product"]:
@@ -1185,10 +1215,14 @@ class Product(BaseModel):
                 products.append(product)
             except Exception as e:
                 logger.warning(f"Error creating product: {e}")
-                # Crear producto mínimo
+                # ✅ CORRECCIÓN: Crear producto mínimo con valores por defecto
                 product = cls(
                     title=data.get('title', 'Unknown Product'),
-                    id=data.get('id', str(uuid.uuid4()))
+                    id=data.get('id', str(uuid.uuid4())),
+                    price=cls._auto_parse_price(data.get('price')),
+                    average_rating=None,
+                    rating_count=None,
+                    description=data.get('description', '')
                 )
                 products.append(product)
         

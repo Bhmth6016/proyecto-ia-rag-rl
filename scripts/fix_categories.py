@@ -99,13 +99,17 @@ def _extract_category_from_description(description: str) -> str:
         'Health': ['vitamin','supplement','medicine','first aid','thermometer']
     }
 
-    scores = {
-        cat: sum(1 for kw in words if kw in desc_lower)
-        for cat, words in category_keywords.items()
-    }
-
-    if max(scores.values()) > 0:
-        return max(scores, key=scores.get)
+    scores = {}
+    for cat, words in category_keywords.items():
+        score = sum(1 for kw in words if kw in desc_lower)
+        if score > 0:
+            scores[cat] = score
+    
+    # Corregir: verificar que scores no esté vacío
+    if scores and max(scores.values()) > 0:
+        # Usar max con key function correctamente
+        max_cat = max(scores, key=lambda k: scores[k])
+        return max_cat
     
     return "General"
 

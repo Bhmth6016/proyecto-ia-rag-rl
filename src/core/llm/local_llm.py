@@ -11,19 +11,11 @@ class LocalLLMClient:
     """Cliente para modelos LLM locales (Ollama, llamafile, etc.)"""
     
     def __init__(self, 
-                 endpoint: str = None, 
-                 model: str = None,
-                 temperature: float = None,
-                 timeout: int = None):
-        """
-        Inicializa cliente LLM local.
-        
-        Args:
-            endpoint: URL del endpoint de Ollama (por defecto: settings.LOCAL_LLM_ENDPOINT)
-            model: Nombre del modelo (por defecto: settings.LOCAL_LLM_MODEL)
-            temperature: Temperatura para generación (0.0-1.0)
-            timeout: Timeout en segundos para peticiones
-        """
+             endpoint: Optional[str] = None, 
+             model: Optional[str] = None,
+             temperature: Optional[float] = None,
+             timeout: Optional[int] = None,
+             max_retries: int = 3):
         self.endpoint = endpoint or settings.LOCAL_LLM_ENDPOINT
         self.model = model or settings.LOCAL_LLM_MODEL
         self.temperature = temperature if temperature is not None else settings.LOCAL_LLM_TEMPERATURE
@@ -42,10 +34,8 @@ class LocalLLMClient:
             logger.warning(f"Ollama no disponible en {self.endpoint}: {e}")
             return False
     
-    def generate(self, prompt: str, system_prompt: str = None) -> str:
-        """Genera texto usando modelo local."""
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         try:
-            # Configurar mensajes
             messages = []
             
             if system_prompt:
@@ -98,7 +88,7 @@ class LocalLLMClient:
             logger.error(f"Error en LLM local: {e}")
             return self._fallback_response(prompt, str(e))
     
-    def generate_stream(self, prompt: str, system_prompt: str = None):
+    def generate_stream(self, prompt: str, system_prompt: Optional[str] = None):
         """Genera texto en streaming usando modelo local."""
         try:
             # Configurar mensajes
@@ -153,8 +143,8 @@ class LocalLLMClient:
             logger.error(f"Error en streaming LLM: {e}")
             yield self._fallback_response(prompt, str(e))
     
-    def _fallback_response(self, prompt: str, error: str = None) -> str:
-        """Respuesta de fallback sin LLM."""
+    def _fallback_response(self, prompt: str, error: Optional[str] = None) -> str:
+
         if error:
             logger.info(f"Usando fallback debido a: {error}")
         

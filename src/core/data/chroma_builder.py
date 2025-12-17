@@ -121,7 +121,7 @@ class EmbeddingSerializer:
             return "[]"
     
     @staticmethod
-    def validate_embedding(embedding: Any, expected_dim: int = None) -> bool:
+    def validate_embedding(embedding: Any, expected_dim: Optional[int] = None) -> bool:
         """Valida que un embedding tenga formato correcto."""
         if embedding is None:
             return False
@@ -198,7 +198,7 @@ class OptimizedChromaBuilder:
         batch_size: int = ChromaBuilderConfig.DEFAULT_BATCH_SIZE,
         max_workers: int = ChromaBuilderConfig.MAX_CONCURRENT_WORKERS,
         enable_cache: bool = True,
-        use_product_embeddings: bool = None,
+        use_product_embeddings: Optional[bool] = None,
         ml_logging: bool = True
     ):
         """
@@ -349,12 +349,14 @@ class OptimizedChromaBuilder:
             }
             
             # Crear directorio de cache si no existe
-            model_kwargs['cache_folder'] = Path(model_kwargs['cache_folder'])
+            if 'cache_folder' in model_kwargs:
+                model_kwargs['cache_folder'] = str(Path(model_kwargs['cache_folder']))
             model_kwargs['cache_folder'].mkdir(parents=True, exist_ok=True)
             
             model = SentenceTransformer(
                 self.embedding_model,
-                **{k: v for k, v in model_kwargs.items() if v is not None}
+                device=model_kwargs.get('device', 'cpu'),
+                cache_folder=model_kwargs.get('cache_folder')
             )
             
             # Verificar que el modelo funcione

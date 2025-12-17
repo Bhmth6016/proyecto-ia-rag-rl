@@ -1,6 +1,6 @@
 # src/core/nlp/enrichment.py
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Generator
 from transformers import pipeline
 import torch
 
@@ -10,11 +10,10 @@ class NLPEnricher:
     """Sistema NLP para enriquecer productos con NER y Zero-Shot"""
     
     def __init__(self, 
-                ner_model: str = None,
-                zero_shot_model: str = None,
-                device: str = "cuda",
-                use_small_models: bool = True):  # 🔥 NUEVO
-        """Inicializa NLPEnricher con opción de modelos pequeños."""
+            ner_model: Optional[str] = None,
+            zero_shot_model: Optional[str] = None,
+            device: str = "cuda",
+            use_small_models: bool = True):
         
         from src.core.config import settings
         
@@ -39,13 +38,13 @@ class NLPEnricher:
             self.zero_shot_model_name = zero_shot_model
         
         # Carga diferida de modelos
-        self._ner_pipeline = None
-        self._zero_shot_pipeline = None
+        self._ner_pipeline: Optional[Any] = None
+        self._zero_shot_pipeline: Optional[Any] = None
         self._initialized = False
         
         logger.info(f"🔧 NLPEnricher configurado (modelos pequeños: {use_small_models})")
         
-    def initialize(self, force: bool = False):
+    def initialize(self, force: bool = False) -> None:
         """Inicializa modelos NLP (lazy loading) - VERSIÓN OPTIMIZADA."""
         if self._initialized and not force:
             return
@@ -63,7 +62,7 @@ class NLPEnricher:
             self._ner_pipeline = pipeline(
                 "ner",
                 model=self.ner_model_name,
-                device=0 if self.device == "cuda" else -1,
+                device=0 if self.device == "cuda" and torch.cuda.is_available() else -1,
                 aggregation_strategy="simple",
                 batch_size=1  # 🔥 Evitar problemas de memoria
             )
@@ -73,7 +72,7 @@ class NLPEnricher:
             self._zero_shot_pipeline = pipeline(
                 "zero-shot-classification",
                 model=self.zero_shot_model_name,
-                device=0 if self.device == "cuda" else -1
+                device=0 if self.device == "cuda" and torch.cuda.is_available() else -1
             )
             logger.debug(f"✅ Zero-Shot model cargado: {self.zero_shot_model_name}")
             
@@ -90,8 +89,7 @@ class NLPEnricher:
             import warnings
             warnings.filterwarnings("default")
             
-    def extract_entities(self, text: str) -> Dict[str, List[Dict]]:
-        """Extrae entidades nombradas del texto"""
+    def extract_entities(self, text: str) -> Dict[str, List[Dict[str, Any]]]:
         if not self._initialized:
             self.initialize()
             
@@ -101,8 +99,11 @@ class NLPEnricher:
         try:
             entities = self._ner_pipeline(text)
             
+            if entities is None:  # ← AÑADIR ESTA VALIDACIÓN
+                return {}
+            
             # Organizar por tipo de entidad
-            organized = {
+            organized: Dict[str, List[Dict[str, Any]]] = {
                 "PRODUCT": [],
                 "BRAND": [],
                 "CATEGORY": [],
@@ -110,26 +111,37 @@ class NLPEnricher:
             }
             
             for entity in entities:
-                entity_type = entity['entity_group']
-                entity_text = entity['word']
-                confidence = entity['score']
+                # Validar que entity no sea None y tenga los campos necesarios
+                if not entity:
+                    continue
+                    
+                if not isinstance(entity, dict):
+                    continue
+                    
+                entity_type = entity.get('entity_group')
+                entity_text = entity.get('word')
+                confidence = entity.get('score')
+                
+                # Validar que tengamos los datos mínimos
+                if not entity_type or not entity_text or confidence is None:
+                    continue
                 
                 # Mapear tipos de entidad
                 if entity_type in ["ORG", "MISC"]:
                     organized["BRAND"].append({
                         "name": entity_text,
-                        "confidence": confidence
+                        "confidence": float(confidence)
                     })
                 elif entity_type in ["PRODUCT", "OBJ"]:
                     organized["PRODUCT"].append({
                         "name": entity_text,
-                        "confidence": confidence
+                        "confidence": float(confidence)
                     })
                 else:
                     organized["ATTRIBUTE"].append({
                         "name": entity_text,
                         "type": entity_type,
-                        "confidence": confidence
+                        "confidence": float(confidence)
                     })
                     
             return organized
@@ -155,11 +167,19 @@ class NLPEnricher:
                 multi_label=True
             )
             
-            # Organizar resultados
-            labels = result['labels']
-            scores = result['scores']
+            # Validar que result sea un diccionario
+            if not isinstance(result, dict):
+                logger.warning(f"Resultado inesperado de zero_shot_pipeline: {type(result)}")
+                return {}
             
-            classification = {}
+            # Organizar resultados
+            labels = result.get('labels', [])
+            scores = result.get('scores', [])
+            
+            if not labels or not scores:
+                return {}
+            
+            classification: Dict[str, float] = {}
             for label, score in zip(labels, scores):
                 if score > 0.3:  # Umbral mínimo
                     classification[label] = float(score)
@@ -209,7 +229,7 @@ class NLPEnricher:
         if categories:
             zero_shot_result = self.zero_shot_classify(text, categories)
             if zero_shot_result:
-                enriched['zero_shot_classification'] = zero_shot_result['classification']
+                enriched['zero_shot_classification'] = zero_shot_result.get('classification', {})
                 enriched['predicted_category'] = zero_shot_result.get('best_category')
                 enriched['classification_confidence'] = zero_shot_result.get('confidence')
                 enriched['has_zero_shot'] = True
@@ -239,16 +259,11 @@ class NLPEnricher:
             
         return enriched_products
     
-    def cleanup_memory(self):
+    def cleanup_memory(self) -> None:
         """Libera memoria de modelos NLP - VERSIÓN MEJORADA."""
         try:
             # 🔥 IMPORTACIÓN SEGURA DE TORCH
-            try:
-                import torch
-                torch_available = True
-            except ImportError:
-                torch_available = False
-                logger.debug("⚠️ PyTorch no disponible para limpieza avanzada")
+            torch_available = 'torch' in globals() or 'torch' in locals()
             
             # Liberar pipelines
             if self._ner_pipeline:
@@ -274,7 +289,7 @@ class NLPEnricher:
         except Exception as e:
             logger.debug(f"⚠️ Error menor en limpieza NLP: {e}")
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor para liberar memoria automáticamente."""
         try:
             self.cleanup_memory()

@@ -76,7 +76,9 @@ class RLHFTrainer:
         else:
             return Dataset.from_dict({'query': [], 'response': [], 'labels': []})
 
-    def train(self, dataset: Dataset, save_dir: Path = None) -> Dict[str, Any]:
+    def train(self, dataset: Dataset, save_dir: Optional[Path] = None) -> Dict[str, Any]:
+        if save_dir is None:
+            save_dir = Path("models/rl_models")
         """Entrenamiento RLHF simplificado y funcional"""
         try:
             # CORRECCIÓN: Asegurar que el dataset tenga estructura correcta

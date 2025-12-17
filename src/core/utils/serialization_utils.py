@@ -102,17 +102,7 @@ class EmbeddingSerializer:
     
     # 🔥 SOLUCIÓN PROBLEMA 3: Método de validación mejorado
     @staticmethod
-    def validate_embedding_structure(embedding: Any, expected_dim: int = None) -> bool:
-        """
-        Valida que el embedding tenga estructura correcta.
-        
-        Args:
-            embedding: El embedding a validar
-            expected_dim: Dimensión esperada (opcional)
-            
-        Returns:
-            True si el embedding es válido
-        """
+    def validate_embedding_structure(embedding: Any, expected_dim: Optional[int] = None) -> bool:
         if embedding is None:
             logger.debug("Embedding es None")
             return False
@@ -163,8 +153,7 @@ class EmbeddingSerializer:
             return False
     
     @staticmethod
-    def _validate_list_embedding(embedding: List[float], expected_dim: int = None) -> bool:
-        """Valida un embedding en formato lista."""
+    def _validate_list_embedding(embedding: List[float], expected_dim: Optional[int] = None) -> bool:
         if not isinstance(embedding, list):
             return False
         
@@ -191,7 +180,7 @@ class EmbeddingSerializer:
             return False
     
     @staticmethod
-    def _validate_numpy_embedding(embedding: np.ndarray, expected_dim: int = None) -> bool:
+    def _validate_numpy_embedding(embedding: np.ndarray, expected_dim: Optional[int] = None) -> bool:
         """Valida un embedding en formato numpy array."""
         if not isinstance(embedding, np.ndarray):
             return False
@@ -261,8 +250,7 @@ class EmbeddingSerializer:
     
     # 🔥 SOLUCIÓN PROBLEMA 3: Alias para compatibilidad (tu método existente)
     @staticmethod
-    def validate_embedding(embedding: Any, expected_dim: int = None) -> bool:
-        """Alias para validate_embedding_structure para compatibilidad."""
+    def validate_embedding(embedding: Any, expected_dim: Optional[int] = None) -> bool:
         return EmbeddingSerializer.validate_embedding_structure(embedding, expected_dim)
     
     # ============================================================================

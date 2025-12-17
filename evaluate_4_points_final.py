@@ -3,15 +3,13 @@
 evaluate_4_points_final.py - Evaluación FINAL en 4 puntos con modelo RLHF entrenado
 """
 
-import os
-import sys
 import json
 import time
 import logging
 import random
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 import argparse
 
 # Configurar logging
@@ -63,56 +61,71 @@ class FourPointEvaluator:
         """Configura el sistema para cada punto"""
         if not CONFIG_AVAILABLE:
             logger.warning("⚠️ Usando configuración por defecto")
+            # Devolver configuración pero no intentar modificar settings
             return {
-                1: {"ml": False, "nlp": False, "rlhf": False, "mode": "basic"},
-                2: {"ml": False, "nlp": True, "rlhf": False, "mode": "enhanced"},
-                3: {"ml": True, "nlp": False, "rlhf": True, "mode": "balanced"},
-                4: {"ml": True, "nlp": True, "rlhf": True, "mode": "enhanced"},
+                1: {"ml": False, "nlp": False, "rlhf": False, "mode": "basic", "description": "Base sin ML/NLP"},
+                2: {"ml": False, "nlp": True, "rlhf": False, "mode": "enhanced", "description": "Base con NLP"},
+                3: {"ml": True, "nlp": False, "rlhf": True, "mode": "balanced", "description": "ML sin NLP"},
+                4: {"ml": True, "nlp": True, "rlhf": True, "mode": "enhanced", "description": "Completo (ML+NLP+RLHF)"},
             }[point]
         
-        configs = {
-            1: {  # Punto 1: Base sin entrenar (sin NER/Zero-shot)
-                "description": "Base sin ML/NLP",
-                "ml": False,
-                "nlp": False,
-                "rlhf": False
-            },
-            2: {  # Punto 2: Base sin entrenar (con NER/Zero-shot)
-                "description": "Base con NLP",
-                "ml": False,
-                "nlp": True,
-                "rlhf": False
-            },
-            3: {  # Punto 3: Entrenado (sin NER/Zero-shot)
-                "description": "ML sin NLP",
-                "ml": True,
-                "nlp": False,
-                "rlhf": True
-            },
-            4: {  # Punto 4: Entrenado (con NER/Zero-shot)
-                "description": "Completo (ML+NLP+RLHF)",
-                "ml": True,
-                "nlp": True,
-                "rlhf": True
+        # Solo intentar usar settings si está disponible
+        try:
+            from src.core.config import settings
+            
+            configs = {
+                1: {  # Punto 1: Base sin entrenar (sin NER/Zero-shot)
+                    "description": "Base sin ML/NLP",
+                    "ml": False,
+                    "nlp": False,
+                    "rlhf": False
+                },
+                2: {  # Punto 2: Base sin entrenar (con NER/Zero-shot)
+                    "description": "Base con NLP",
+                    "ml": False,
+                    "nlp": True,
+                    "rlhf": False
+                },
+                3: {  # Punto 3: Entrenado (sin NER/Zero-shot)
+                    "description": "ML sin NLP",
+                    "ml": True,
+                    "nlp": False,
+                    "rlhf": True
+                },
+                4: {  # Punto 4: Entrenado (con NER/Zero-shot)
+                    "description": "Completo (ML+NLP+RLHF)",
+                    "ml": True,
+                    "nlp": True,
+                    "rlhf": True
+                }
             }
-        }
-        
-        config = configs[point]
-        
-        # Aplicar configuración al sistema
-        settings.CURRENT_MODE = "basic" if point == 1 else "enhanced" if point in [2, 4] else "balanced"
-        settings.update_ml_settings(ml_enabled=config["ml"])
-        
-        if hasattr(settings, 'NLP_ENABLED'):
-            settings.NLP_ENABLED = config["nlp"]
-        
-        if hasattr(settings, 'LOCAL_LLM_ENABLED'):
-            settings.LOCAL_LLM_ENABLED = config["nlp"]  # LLM para NLP
-        
-        logger.info(f"🔧 Configurado Punto {point}: {config['description']}")
-        logger.info(f"   • ML: {config['ml']}, NLP: {config['nlp']}, RLHF: {config['rlhf']}")
-        
-        return config
+            
+            config = configs[point]
+            
+            # Aplicar configuración al sistema
+            settings.CURRENT_MODE = "basic" if point == 1 else "enhanced" if point in [2, 4] else "balanced"
+            settings.update_ml_settings(ml_enabled=config["ml"])
+            
+            if hasattr(settings, 'NLP_ENABLED'):
+                settings.NLP_ENABLED = config["nlp"]
+            
+            if hasattr(settings, 'LOCAL_LLM_ENABLED'):
+                settings.LOCAL_LLM_ENABLED = config["nlp"]  # LLM para NLP
+            
+            logger.info(f"🔧 Configurado Punto {point}: {config['description']}")
+            logger.info(f"   • ML: {config['ml']}, NLP: {config['nlp']}, RLHF: {config['rlhf']}")
+            
+            return config
+            
+        except ImportError as e:
+            logger.error(f"❌ Error importando settings: {e}")
+            logger.warning("⚠️ Usando configuración simulada")
+            return {
+                1: {"ml": False, "nlp": False, "rlhf": False, "mode": "basic", "description": "Base sin ML/NLP"},
+                2: {"ml": False, "nlp": True, "rlhf": False, "mode": "enhanced", "description": "Base con NLP"},
+                3: {"ml": True, "nlp": False, "rlhf": True, "mode": "balanced", "description": "ML sin NLP"},
+                4: {"ml": True, "nlp": True, "rlhf": True, "mode": "enhanced", "description": "Completo (ML+NLP+RLHF)"},
+            }[point]
     
     def create_mock_rag_agent(self, config: Dict):
         """Crea un agente RAG simulado basado en configuración"""

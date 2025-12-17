@@ -11,7 +11,6 @@ from src.core.config import settings
 from src.core.rag.basic.retriever import Retriever
 from src.core.rag.advanced.WorkingRAGAgent import WorkingAdvancedRAGAgent, RAGConfig
 from src.core.utils.logger import configure_root_logger
-from src.core.utils.parsers import parse_binary_score
 from src.core.init import get_system
 from src.core.data.user_manager import UserManager
 
@@ -139,13 +138,13 @@ def _handle_rag_mode(system, user_manager, args):
 
             # 🔥 NUEVO: Usar process_query del sistema híbrido
             response = agent.process_query(query, user_id)
-            print(f"\n🤖 {response.answer}\n")
-            print(f"📊 System: {len(response.products)} products | Quality: {response.quality_score:.2f}")
+            print(f"\n🤖 {response.get('answer', 'No hay respuesta')}\n")
+            print(f"📊 System: {len(response.get('products', []))} products | Quality: {response.get('quality_score', 0.0):.2f}")
 
             if not args.no_feedback:
                 rating = input("Helpful? (1-5, skip): ").strip().lower()
                 if rating in {'1', '2', '3', '4', '5'}:
-                    agent.log_feedback(query, response.answer, int(rating), user_id)
+                    agent.log_feedback(query, response.get('answer', ''), int(rating), user_id)
                     print("📝 Feedback saved for hybrid learning")
                 elif rating != "skip":
                     print("⚠️ Please enter 1-5 or 'skip'")

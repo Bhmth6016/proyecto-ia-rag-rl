@@ -2,32 +2,39 @@ from __future__ import annotations
 # src/core/rag/basic/retriever.py
 import os
 import json
-import numpy as np  # ✅ Asegurar que numpy está importado
 import uuid
 import time
 import logging
+import re
 import unicodedata
 from pathlib import Path
 from typing import List, Dict, Optional, Union, Any
-import re
 from difflib import SequenceMatcher
+import numpy as np 
 
 from langchain_core.documents import Document
 
-# CAMBIO: Usar la nueva versión de Chroma
 try:
+    # LangChain >= 0.1.x
     from langchain_chroma import Chroma
     CHROMA_NEW = True
 except ImportError:
-    from langchain_community.vectorstores import Chroma
-    CHROMA_NEW = False
+    try:
+        # LangChain <= 0.0.x
+        from langchain_community.vectorstores import Chroma
+        CHROMA_NEW = False
+    except ImportError as e:
+        raise ImportError(
+            "No se pudo importar Chroma. "
+            "Instala `langchain-chroma` o `langchain-community`."
+        ) from e
 
-# 🔥 CAMBIO: Usar el embedder local más robusto
 try:
+    # Opción recomendada (LangChain moderno)
     from langchain_huggingface import HuggingFaceEmbeddings
     HAS_LANGCHAIN_HF = True
 except ImportError:
-    # Fallback a sentence-transformers directamente
+    # Fallback directo
     from sentence_transformers import SentenceTransformer
     HAS_LANGCHAIN_HF = False
 

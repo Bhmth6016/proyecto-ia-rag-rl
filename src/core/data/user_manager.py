@@ -24,13 +24,12 @@ class UserManager:
         return hashlib.md5(base_string.encode()).hexdigest()[:12]
     
     def create_user_profile(self, 
-                            age: int,
-                            gender: str,
-                            country: str,
-                            language: str = "es",
-                            preferred_categories: List[str] = None,
-                            preferred_brands: List[str] = None) -> UserProfile:
-        """Crea nuevo perfil de usuario"""
+                       age: int,
+                       gender: str,
+                       country: str,
+                       language: str = "es",
+                       preferred_categories: Optional[List[str]] = None,
+                       preferred_brands: Optional[List[str]] = None) -> UserProfile:
         try:
             user_id = self.generate_user_id(age, gender, country)
             session_id = f"{user_id}_{int(datetime.now().timestamp())}"

@@ -2,7 +2,7 @@ from __future__ import annotations
 from src.core.config import settings
 # src/core/rag/advanced/collaborative_filter.py
 import logging
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Union
 from pathlib import Path
 import json
 from collections import Counter, defaultdict
@@ -131,7 +131,8 @@ class CollaborativeFilter:
             final_score = ml_score / total_weight if total_weight > 0 else 0.0
             
             # Aplicar transformación sigmoide para suavizar el score
-            return self._sigmoid(final_score * 3)  # Escalar y aplicar sigmoide
+            # 🔥 CONVERSIÓN EXPLÍCITA A FLOAT
+            return self._sigmoid(float(final_score * 3))  # Escalar y aplicar sigmoide
             
         except Exception as e:
             logger.debug(f"Error calculando score ML para producto {getattr(product, 'id', 'unknown')}: {e}")
@@ -193,18 +194,23 @@ class CollaborativeFilter:
         except:
             return 0.0
 
-    def _sigmoid(self, x: float) -> float:
+    def _sigmoid(self, x: Union[float, np.floating]) -> float:
         """Función sigmoide para normalizar scores"""
-        return 1 / (1 + np.exp(-x))
+        try:
+            # Convertir explícitamente a float
+            x_float = float(x)
+            return 1 / (1 + np.exp(-x_float))
+        except (ValueError, TypeError):
+            return 0.5  # Valor por defecto en caso de error
 
     def get_collaborative_scores(
-            self,
-            user_or_profile,
-            query_or_candidates,
-            target_user: Optional[UserProfile] = None,
-            query: Optional[str] = None,
-            candidate_products: Optional[List[Product]] = None,
-            max_similar_users: int = 8):
+        self,
+        user_or_profile: Optional[Union[str, UserProfile]],
+        query_or_candidates: Optional[Union[str, List[Product]]],
+        target_user: Optional[UserProfile] = None,
+        query: Optional[str] = None,
+        candidate_products: Optional[List[Product]] = None,
+        max_similar_users: int = 8) -> Dict[str, float]:
         
         # -------------------------------------------------
         # 🔥 VALIDACIONES INICIALES
@@ -240,15 +246,22 @@ class CollaborativeFilter:
         else:
             user = user_or_profile
             target_user = user_or_profile
-            query = query_or_candidates  # DeepEval ≠ interno
+            # 🔥 CORRECCIÓN: Solo asignar si es string
+            if isinstance(query_or_candidates, str):
+                query = query_or_candidates  # DeepEval ≠ interno
+            else:
+                # Si no es string, mantener el valor por defecto o usar string vacío
+                query = ""
 
         # -------------------------------------------------
         # 🔥 LÓGICA PRINCIPAL
         # -------------------------------------------------
         try:
-            similar_users = self.user_manager.find_similar_users(
-                target_user, self.min_similarity
-            )[:max_similar_users]
+            similar_users = []
+            if target_user:
+                similar_users = self.user_manager.find_similar_users(
+                    target_user, self.min_similarity
+                )[:max_similar_users]
 
             collaborative_scores = {}
 
@@ -260,8 +273,12 @@ class CollaborativeFilter:
 
             # 2) Si no hay resultados → fallback basado en categoría
             if not collaborative_scores:
+                # 🔥 CORRECCIÓN: Convertir tipos antes de llamar
+                safe_query = query if query else ""
+                safe_candidate_products = candidate_products if candidate_products else []
+                
                 collaborative_scores = self._get_category_fallback_scores(
-                    target_user, query, candidate_products
+                    target_user, safe_query, safe_candidate_products
                 )
 
             # 3) (Opcional) Re-rank con ML si está habilitado
@@ -292,13 +309,18 @@ class CollaborativeFilter:
         
         return self._normalize_with_quality_filter(collaborative_scores, similarity_weights)
 
-    def _get_category_fallback_scores(self, user: UserProfile, query: str, products: List[Product]) -> Dict[str, float]:
+    def _get_category_fallback_scores(self, user: Optional[UserProfile], query: str, products: List[Product]) -> Dict[str, float]:
         """
         Fallback: da scores basados en categorías preferidas del usuario
         """
         fallback_scores = {}
         
         try:
+            # 🔥 CORRECCIÓN: Manejar usuario None
+            if user is None:
+                logger.debug("Usuario None en fallback categórico, usando solo query")
+                return self._get_fallback_from_query_only(query, products)
+            
             user_categories = set()
             if user.preferred_categories:
                 for cat in user.preferred_categories:
@@ -360,7 +382,36 @@ class CollaborativeFilter:
         except Exception as e:
             logger.debug(f"Error en fallback categórico: {e}")
             return {}
-    
+    def _get_fallback_from_query_only(self, query: str, products: List[Product]) -> Dict[str, float]:
+        """Fallback cuando no hay usuario disponible"""
+        fallback_scores = {}
+        
+        try:
+            query_terms = set()
+            if query and isinstance(query, str):
+                query_terms = set(query.lower().split())
+            
+            for product in products:
+                score = 0.0
+                
+                product_title = getattr(product, 'title', '')
+                if product_title and isinstance(product_title, str):
+                    product_title = product_title.lower()
+                    title_terms = set(product_title.split())
+                    
+                    if query_terms and title_terms:
+                        common_terms = query_terms & title_terms
+                        if common_terms:
+                            score += len(common_terms) * 0.2
+                
+                if score > 0 and hasattr(product, 'id'):
+                    fallback_scores[product.id] = min(score, 1.0)
+            
+            return fallback_scores
+            
+        except Exception as e:
+            logger.debug(f"Error en fallback solo query: {e}")
+            return {}
     def _apply_ml_scoring(self, collaborative_scores: Dict[str, float], 
                          candidate_products: List[Product], 
                          similar_users: List[UserProfile]) -> Dict[str, float]:
@@ -389,10 +440,10 @@ class CollaborativeFilter:
         
     def adjust_weights_dynamically(
             self,
-            user_id: str = None,
-            query: str = None,
-            rag_results: list = None,
-            collab_results: list = None
+            user_id: Optional[str] = None,
+            query: Optional[str] = None,
+            rag_results: Optional[list] = None,
+            collab_results: Optional[list] = None
         ) -> Dict[str, float]:
 
         # Valores base
@@ -501,7 +552,7 @@ class CollaborativeFilter:
         except:
             return 0.3
 
-    def _evaluate_results_quality(self, results: list, query: str) -> float:
+    def _evaluate_results_quality(self, results: list, query: Optional[str]) -> float:
         """
         Evalúa si los resultados parecen relevantes.
         Retorna un valor 0.1 a 1.0
@@ -512,7 +563,7 @@ class CollaborativeFilter:
         score = 0.5  # base
 
         # Si la mayoría tiene query en el título (si existe)
-        if query:
+        if query and isinstance(query, str):
             q = query.lower().split()
             matches = 0
             total = 0
@@ -531,8 +582,7 @@ class CollaborativeFilter:
 
         return max(0.1, min(1.0, score))
     
-    def get_weights(self, user_id: str = None, query: str = None) -> Dict[str, float]:
-        """Obtiene pesos (ajustados dinámicamente si se proporciona contexto)."""
+    def get_weights(self, user_id: Optional[str] = None, query: Optional[str] = None) -> Dict[str, float]:
         if user_id or query:
             return self.adjust_weights_dynamically(user_id, query)
         return self.hybrid_weights
@@ -624,26 +674,29 @@ class CollaborativeFilter:
         
         return relevant_feedback[:8]  # Top 8 más relevantes
     
-    def _calculate_recency_weight(self, timestamp: datetime) -> float:
-        """
-        Calcula peso basado en recencia (feedback reciente vale más)
-        """
+    def _calculate_recency_weight(self, timestamp: Optional[datetime]) -> float:
+        """Calcula peso basado en recencia del feedback"""
+        if not timestamp:
+            return 0.5  # 🔥 AGREGAR return
+        
         try:
-            if not timestamp:
-                return 0.5
-                
+            # Calcular diferencia en días
             days_ago = (datetime.now() - timestamp).days
-            # Feedback de última semana: peso 1.0, después decae exponencialmente
-            if days_ago <= 7:
+            
+            # Peso decae exponencialmente
+            if days_ago <= 1:
                 return 1.0
+            elif days_ago <= 7:
+                return 0.8
             elif days_ago <= 30:
-                return 0.7
+                return 0.6
             elif days_ago <= 90:
                 return 0.4
             else:
-                return 0.2
-        except:
-            return 0.5  # Peso por defecto
+                return 0.3
+                
+        except Exception:
+            return 0.5  # 🔥 SIEMPRE retornar un valor float
     
     def _normalize_with_quality_filter(self, collaborative_scores: Dict[str, float], 
                                  similarity_weights: Dict[str, float]) -> Dict[str, float]:

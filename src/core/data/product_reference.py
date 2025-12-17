@@ -3,8 +3,8 @@
 ProductReference - Para estandarizar el manejo de productos en todo el sistema.
 Versión corregida sin dependencias circulares.
 """
-from dataclasses import dataclass, asdict
-from typing import Optional, Any, Dict, Literal, List, Union, Type, TYPE_CHECKING
+from dataclasses import dataclass, asdict, field
+from typing import Optional, Any, Dict, Literal, List, Union, Type, cast
 import json
 import logging
 import warnings
@@ -79,18 +79,22 @@ class ProductClassHolder:
 # Alias conveniente para uso
 Product = ProductClassHolder
 
+# Tipo para los posibles valores de source
+SourceType = Literal["rag", "collaborative", "hybrid", "ml", "ml_enhanced", "mixed"]
+
 @dataclass
 class ProductReference:
     """Referencia estandarizada a un producto en el sistema."""
     id: str
     product: Optional[Any] = None  # El objeto Product original
     score: float = 0.0
-    source: Literal["rag", "collaborative", "hybrid", "ml", "ml_enhanced", "mixed"] = "hybrid"
+    source: SourceType = "hybrid"  # Usar el tipo definido
     confidence: float = 0.0
-    metadata: Dict[str, Any] = None
-    ml_features: Dict[str, Any] = None  # Features específicas ML
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Cambiado: siempre dict, nunca None
+    ml_features: Dict[str, Any] = field(default_factory=dict)  # Cambiado: siempre dict, nunca None
     
     def __post_init__(self):
+        # Asegurar que metadata y ml_features no sean None
         if self.metadata is None:
             self.metadata = {}
         if self.ml_features is None:
@@ -107,9 +111,10 @@ class ProductReference:
         # Solo modificar si no está ya en un estado ML
         if self.source not in ["ml", "ml_enhanced", "mixed"]:
             if self.ml_features.get('embedding') or self.ml_features.get('similarity_score'):
-                self.source = "ml_enhanced"
+                # Usar cast para convertir string a SourceType
+                self.source = cast(SourceType, "ml_enhanced")
             elif self.ml_features.get('predicted_category') or self.ml_features.get('extracted_entities'):
-                self.source = "ml"
+                self.source = cast(SourceType, "ml")
     
     @property
     def title(self) -> str:
@@ -151,14 +156,14 @@ class ProductReference:
             return self.product.embedding
         
         # Buscar en ml_features
-        if 'embedding' in self.ml_features:
-            return self.ml_features['embedding']
+        embedding = self.ml_features.get('embedding')
+        if embedding is not None:
+            return embedding
         
         # Buscar en metadata
-        if 'embedding' in self.metadata:
-            embedding = self.metadata['embedding']
-            if isinstance(embedding, list):
-                return embedding
+        embedding = self.metadata.get('embedding')
+        if embedding is not None and isinstance(embedding, list):
+            return embedding
         
         return None
     
@@ -217,8 +222,9 @@ class ProductReference:
             common_fields = ['description', 'brand', 'main_category', 
                            'categories', 'product_type', 'average_rating']
             for field in common_fields:
-                if field in self.metadata:
-                    product_data[field] = self.metadata[field]
+                value = self.metadata.get(field)
+                if value is not None:
+                    product_data[field] = value
             
             # Crear producto básico
             product = ProductClass(**product_data)
@@ -277,7 +283,7 @@ class ProductReference:
             return {}
     
     def _extract_ml_product_data(self, product: Any) -> Dict[str, Any]:
-        """Extrae datos ML específicos del producto."""
+        """Extrace datos ML específicos del producto."""
         ml_data = {}
         
         try:
@@ -341,11 +347,23 @@ class ProductReference:
         has_embedding = hasattr(product, 'embedding') and product.embedding is not None
         
         # Determinar source basado en características REALES
-        if ml_processed or has_embedding:
-            if source == "rag" and (has_embedding or getattr(product, 'predicted_category', None)):
-                source = "ml_enhanced"
-            elif source == "collaborative" and ml_processed:
-                source = "mixed"
+        final_source: SourceType = "hybrid"
+        
+        # Validar y convertir el source proporcionado
+        valid_sources = ["rag", "collaborative", "hybrid", "ml", "ml_enhanced", "mixed"]
+        if source in valid_sources:
+            final_source = cast(SourceType, source)
+        else:
+            # Si no es válido, determinar automáticamente
+            if ml_processed or has_embedding:
+                if source == "rag" and (has_embedding or getattr(product, 'predicted_category', None)):
+                    final_source = "ml_enhanced"
+                elif source == "collaborative" and ml_processed:
+                    final_source = "mixed"
+                else:
+                    final_source = "ml"
+            else:
+                final_source = "rag"
         
         # Extraer features ML
         ml_features = cls._extract_ml_features(product)
@@ -367,7 +385,7 @@ class ProductReference:
             id=product.id,
             product=product,
             score=score,
-            source=source,
+            source=final_source,  # Usar el source validado
             confidence=confidence,
             metadata=metadata,
             ml_features=ml_features
@@ -428,11 +446,23 @@ class ProductReference:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ProductReference':
         """Crea ProductReference desde diccionario."""
+        # Validar y convertir source
+        source_data = data.get('source', 'hybrid')
+        valid_sources = ["rag", "collaborative", "hybrid", "ml", "ml_enhanced", "mixed"]
+        source: SourceType = "hybrid"
+        
+        if source_data in valid_sources:
+            source = cast(SourceType, source_data)
+        else:
+            # Intentar inferir del contenido
+            if data.get('ml_features'):
+                source = "ml_enhanced"
+        
         return cls(
             id=data['id'],
             product=data.get('product'),
             score=data.get('score', 0.0),
-            source=data.get('source', 'hybrid'),
+            source=source,  # Usar source validado
             confidence=data.get('confidence', 0.0),
             metadata=data.get('metadata', {}),
             ml_features=data.get('ml_features', {})
@@ -447,7 +477,8 @@ class ProductReference:
         has_significant = any(feat in new_features for feat in significant_features)
         
         if has_significant and self.source not in ["ml", "ml_enhanced", "mixed"]:
-            self.source = "ml_enhanced"
+            # Usar cast para convertir string a SourceType
+            self.source = cast(SourceType, "ml_enhanced")
         
         # Actualizar metadata si es necesario
         if 'embedding' in new_features:
@@ -493,28 +524,34 @@ class ProductReference:
 
 # Funciones utilitarias para manejo de ProductReferences con ML
 def filter_by_ml_confidence(references: List[ProductReference], 
-                          min_confidence: float = None) -> List[ProductReference]:
+                          min_confidence: Optional[float] = None) -> List[ProductReference]:
     """Filtra ProductReferences por confianza ML mínima."""
     if min_confidence is None:
         settings = _get_settings()
         min_confidence = getattr(settings, 'ML_CONFIDENCE_THRESHOLD', 0.6)
     
-    return [ref for ref in references if ref.ml_confidence >= min_confidence]
+    # Usar 0.6 como valor por defecto si min_confidence sigue siendo None
+    threshold = min_confidence if min_confidence is not None else 0.6
+    
+    return [ref for ref in references if ref.ml_confidence >= threshold]
 
 
 def sort_by_ml_score(references: List[ProductReference], 
-                    ml_weight: float = None) -> List[ProductReference]:
+                    ml_weight: Optional[float] = None) -> List[ProductReference]:
     """Ordena ProductReferences combinando score normal y ML."""
     if ml_weight is None:
         settings = _get_settings()
         ml_weight = getattr(settings, 'ML_WEIGHT', 0.3)
+    
+    # Usar 0.3 como valor por defecto si ml_weight sigue siendo None
+    weight = ml_weight if ml_weight is not None else 0.3
     
     def combined_score(ref: ProductReference) -> float:
         base_score = ref.score
         ml_score = ref.ml_confidence
         
         # Combinar scores con peso ajustable
-        return base_score * (1 - ml_weight) + ml_score * ml_weight
+        return base_score * (1 - weight) + ml_score * weight
     
     return sorted(references, key=combined_score, reverse=True)
 
@@ -556,7 +593,7 @@ def group_by_ml_features(references: List[ProductReference]) -> Dict[str, List[P
 
 def create_ml_enhanced_reference(product: Any, 
                                 ml_score: float = 0.0, 
-                                ml_data: Dict[str, Any] = None) -> ProductReference:
+                                ml_data: Optional[Dict[str, Any]] = None) -> ProductReference:
     """
     Crea un ProductReference específicamente para productos procesados por ML.
     """

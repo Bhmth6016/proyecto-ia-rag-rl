@@ -235,8 +235,7 @@ class UserProfile:
         self.last_active = datetime.now()
         self.total_sessions += 1
     
-    def add_search_event(self, query: str, results_count: int, clicked_products: List[str] = None):
-        """Añade evento de búsqueda"""
+    def add_search_event(self, query: str, results_count: int, clicked_products: Optional[List[str]] = None):
         self.search_history.append(SearchEvent(
             query=query,
             timestamp=datetime.now(),
@@ -245,7 +244,7 @@ class UserProfile:
         ))
         self.update_activity()
     
-    def add_feedback_event(self, query: str, response: str, rating: int, products_shown: List[str], selected_product: str = None):
+    def add_feedback_event(self, query: str, response: str, rating: int, products_shown: List[str], selected_product: Optional[str] = None):
         """Añade evento de feedback"""
         self.feedback_history.append(FeedbackEvent(
             query=query,

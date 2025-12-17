@@ -1063,7 +1063,40 @@ class WorkingAdvancedRAGAgent:
                 results["errors"].append(f"Embedding Model: {e}")
         
         return results
-
+    def log_feedback(self, query: str, answer: str, rating: int, user_id: str = None) -> None:
+        """
+        Registra feedback del usuario para RLHF.
+        
+        Args:
+            query: Consulta original del usuario
+            answer: Respuesta proporcionada
+            rating: Calificación 1-5
+            user_id: ID del usuario (opcional)
+        """
+        try:
+            # Guardar feedback en el pipeline RLHF si existe
+            if self.rlhf_pipeline:
+                self.rlhf_pipeline.add_feedback(
+                    query=query,
+                    answer=answer,
+                    rating=rating,
+                    user_id=user_id or "anonymous"
+                )
+                self.logger.info(f"📝 Feedback guardado: rating={rating}, user={user_id}")
+            
+            # También actualizar Collaborative Filter si hay usuario
+            if user_id and self._collaborative_filter:
+                # Buscar productos en la respuesta para actualizar preferencias
+                # Esto es simplificado - en una implementación real deberías
+                # extraer IDs de productos de la respuesta
+                self._collaborative_filter.update_user_preference(
+                    user_id=user_id,
+                    query=query,
+                    rating=rating
+                )
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error guardando feedback: {e}")
 
 # ----------------------------------------------------------
 # Funciones de conveniencia
