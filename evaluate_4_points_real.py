@@ -32,6 +32,15 @@ class RealFourPointEvaluator:
         # Consultas de prueba REALES (no se inventan respuestas)
         self.test_queries = self.load_test_queries()
         
+        # Mapeo de modos conceptuales → modos reales del sistema
+        self.mode_map = {
+            # (ml_enabled, nlp_enabled) → modo real
+            (False, False): "basic",        # Punto 1
+            (False, True): "ml_enhanced",   # Punto 2 (NLP sí, ML no → usamos ml_enhanced igual)
+            (True, False): "ml_enhanced",   # Punto 3
+            (True, True): "ml_enhanced"     # Punto 4
+        }
+        
         # Componentes reales (lazy loaded)
         self._rag_agent = None
         self._retriever = None
@@ -72,28 +81,32 @@ class RealFourPointEvaluator:
                     "ml_enabled": False,
                     "nlp_enabled": False,
                     "rlhf_enabled": False,
-                    "llm_enabled": False
+                    "llm_enabled": False,
+                    "conceptual_mode": "basic"
                 },
                 2: {  # Punto 2: Base sin entrenar (con NER/Zero-shot)
                     "description": "Base con NLP",
                     "ml_enabled": False,
                     "nlp_enabled": True,
                     "rlhf_enabled": False,
-                    "llm_enabled": True
+                    "llm_enabled": True,
+                    "conceptual_mode": "enhanced"
                 },
                 3: {  # Punto 3: Entrenado (sin NER/Zero-shot)
                     "description": "ML sin NLP",
                     "ml_enabled": True,
                     "nlp_enabled": False,
                     "rlhf_enabled": True,
-                    "llm_enabled": False
+                    "llm_enabled": False,
+                    "conceptual_mode": "balanced"
                 },
                 4: {  # Punto 4: Entrenado (con NER/Zero-shot)
                     "description": "Completo (ML+NLP+RLHF)",
                     "ml_enabled": True,
                     "nlp_enabled": True,
                     "rlhf_enabled": True,
-                    "llm_enabled": True
+                    "llm_enabled": True,
+                    "conceptual_mode": "enhanced"
                 }
             }
             
@@ -104,7 +117,14 @@ class RealFourPointEvaluator:
             settings.NLP_ENABLED = config["nlp_enabled"]
             settings.LOCAL_LLM_ENABLED = config["llm_enabled"]
             
-            # Establecer modo
+            # Determinar modo REAL del sistema (usando nuestro mapeo)
+            real_mode = self.mode_map.get(
+                (config["ml_enabled"], config["nlp_enabled"]), 
+                "basic"
+            )
+            config["real_mode"] = real_mode
+            
+            # Establecer modo (para logging)
             if point == 1:
                 settings.CURRENT_MODE = "basic"
             elif point == 2:
@@ -119,6 +139,8 @@ class RealFourPointEvaluator:
             config["rlhf_model_available"] = rlhf_model_path.exists() and any(rlhf_model_path.glob("*"))
             
             logger.info(f"🔧 Punto {point}: {config['description']}")
+            logger.info(f"   • Modo conceptual: {config['conceptual_mode']}")
+            logger.info(f"   • Modo real del sistema: {real_mode}")
             logger.info(f"   • ML: {config['ml_enabled']}, NLP: {config['nlp_enabled']}")
             logger.info(f"   • RLHF: {config['rlhf_enabled']} (modelo disponible: {config['rlhf_model_available']})")
             logger.info(f"   • LLM: {config['llm_enabled']}")
@@ -135,26 +157,21 @@ class RealFourPointEvaluator:
             # 🔥 USAR AGENTE REAL - NO MOCK
             from src.core.rag.advanced.WorkingRAGAgent import create_rag_agent
             
-            # Determinar modo basado en configuración
-            mode_map = {
-                (False, False): "basic",      # Sin ML, sin NLP
-                (False, True): "enhanced",    # Sin ML, con NLP
-                (True, False): "balanced",    # Con ML, sin NLP
-                (True, True): "enhanced"      # Con ML, con NLP
-            }
-            
-            mode = mode_map.get((config["ml_enabled"], config["nlp_enabled"]), "hybrid")
+            # Usar modo REAL del sistema (no el conceptual)
+            real_mode = config["real_mode"]
             
             # Crear agente REAL
             agent = create_rag_agent(
-                mode=mode,
+                mode=real_mode,
                 ml_enabled=config["ml_enabled"],
                 local_llm_enabled=config["llm_enabled"]
             )
             
             # Verificar componentes cargados
             test_results = agent.test_components()
-            logger.info(f"✅ Agente RAG real creado (modo: {mode})")
+            logger.info(f"✅ Agente RAG real creado")
+            logger.info(f"   • Modo real: {real_mode}")
+            logger.info(f"   • Modo conceptual: {config['conceptual_mode']}")
             logger.info(f"   • Retriever: {'✅' if test_results.get('retriever') else '❌'}")
             logger.info(f"   • LLM: {'✅' if test_results.get('llm_client') else '❌'}")
             logger.info(f"   • RLHF: {'✅' if test_results.get('rlhf_pipeline') else '❌'}")
@@ -348,7 +365,7 @@ class RealFourPointEvaluator:
         product_counts = []
         
         for i, (query, query_type) in enumerate(self.test_queries):
-            logger.info(f"🔍 Consulta {i+1}/{len(self.test_queries)}: '{query[:40]}...'")
+            logger.info(f"🔍 Consulta {i+1}/{len(self.test_queries)}: '{query[:40]}...' ({query_type})")
             
             # 🔥 PROCESAR CON AGENTE REAL
             start_time = time.time()
@@ -368,6 +385,7 @@ class RealFourPointEvaluator:
                 logger.info(f"   ⏱️  Tiempo: {query_time*1000:.1f}ms")
                 logger.info(f"   📊 Score: {scores['total']:.3f}")
                 logger.info(f"   🎯 Productos REALES: {len(products)}")
+                logger.info(f"   📝 Config: ML={config['ml_enabled']}, NLP={config['nlp_enabled']}, RLHF={config['rlhf_enabled']}")
                 
                 # Debug: mostrar primeros productos si hay
                 if products and logger.isEnabledFor(logging.DEBUG):
@@ -422,30 +440,31 @@ class RealFourPointEvaluator:
             "queries_evaluated": len(self.test_queries),
             "scores": avg_scores,
             "type_scores": type_scores,
-            "success_rate": sum(1 for c in product_counts if c > 0) / len(product_counts)
+            "success_rate": sum(1 for c in product_counts if c > 0) / len(product_counts) * 100
         }
         
         logger.info(f"✅ Punto {point} evaluado REALMENTE")
         logger.info(f"   📈 Score total: {avg_scores.get('total', 0):.3f}")
         logger.info(f"   ⏱️  Tiempo promedio: {avg_query_time_ms:.1f}ms")
         logger.info(f"   📦 Productos promedio: {avg_products:.1f}")
-        logger.info(f"   ✅ Tasa de éxito: {metrics['success_rate']*100:.1f}%")
+        logger.info(f"   ✅ Tasa de éxito: {metrics['success_rate']:.1f}%")
         
         return metrics
     
     def compare_points(self):
         """Compara los 4 puntos usando resultados REALES"""
-        print("\n" + "="*80)
+        print("\n" + "="*100)
         print("📊 COMPARACIÓN DE LOS 4 PUNTOS (RESULTADOS REALES)")
-        print("="*80)
+        print("="*100)
         
-        headers = ["Punto", "Configuración", "Score", "Tiempo(ms)", "Productos", "Éxito", "Simple", "Compleja", "Técnica"]
-        print(f"{headers[0]:<6} {headers[1]:<25} {headers[2]:<7} {headers[3]:<10} {headers[4]:<8} {headers[5]:<7} {headers[6]:<8} {headers[7]:<9} {headers[8]:<8}")
-        print("-"*80)
+        headers = ["Punto", "Configuración", "Modo Real", "Score", "Tiempo(ms)", "Productos", "Éxito", "Simple", "Compleja", "Técnica"]
+        print(f"{headers[0]:<6} {headers[1]:<20} {headers[2]:<12} {headers[3]:<7} {headers[4]:<10} {headers[5]:<8} {headers[6]:<7} {headers[7]:<8} {headers[8]:<9} {headers[9]:<8}")
+        print("-"*100)
         
         for point in sorted(self.results.keys()):
             r = self.results[point]
-            config_desc = r["config"]["description"][:23] + "..." if len(r["config"]["description"]) > 23 else r["config"]["description"]
+            config_desc = r["config"]["description"][:18] + "..." if len(r["config"]["description"]) > 18 else r["config"]["description"]
+            real_mode = r["config"].get("real_mode", "N/A")
             
             # Emojis según score
             score = r["scores"]["total"]
@@ -479,21 +498,21 @@ class RealFourPointEvaluator:
                 products_display = f"📭{products:.1f}"
             
             # Tasa de éxito
-            success = r["success_rate"] * 100
+            success = r["success_rate"]
             if success > 80:
-                success_display = f"✅{success:.0f}%"
+                success_display = f"✅{success:.1f}%"
             elif success > 50:
-                success_display = f"⚠️{success:.0f}%"
+                success_display = f"⚠️{success:.1f}%"
             else:
-                success_display = f"❌{success:.0f}%"
+                success_display = f"❌{success:.1f}%"
             
-            print(f"{point:<6} {config_desc:<25} {score_display:<7} {time_display:<10} "
+            print(f"{point:<6} {config_desc:<20} {real_mode:<12} {score_display:<7} {time_display:<10} "
                   f"{products_display:<8} {success_display:<7} "
                   f"{r['type_scores'].get('simple', 0):<8.3f} "
                   f"{r['type_scores'].get('complex', 0):<9.3f} "
                   f"{r['type_scores'].get('technical', 0):<8.3f}")
         
-        print("="*80)
+        print("="*100)
         
         # Análisis de mejoras REALES
         if 1 in self.results and 4 in self.results:
@@ -505,7 +524,7 @@ class RealFourPointEvaluator:
             
             time_increase = point4["avg_query_time_ms"] - point1["avg_query_time_ms"]
             products_increase = point4["avg_products_returned"] - point1["avg_products_returned"]
-            success_increase = (point4["success_rate"] - point1["success_rate"]) * 100
+            success_increase = point4["success_rate"] - point1["success_rate"]
             
             print(f"\n📈 MEJORA REAL Punto 4 vs Punto 1:")
             print(f"   • Score: +{score_improvement:+.1f}%")
@@ -544,7 +563,7 @@ class RealFourPointEvaluator:
             ("Score", lambda r: r["scores"]["total"], "max", ""),
             ("Tiempo", lambda r: r["avg_query_time_ms"], "min", "ms"),
             ("Productos", lambda r: r["avg_products_returned"], "max", ""),
-            ("Éxito", lambda r: r["success_rate"] * 100, "max", "%")
+            ("Éxito", lambda r: r["success_rate"], "max", "%")
         ]
 
         for cat_name, get_value, extremum, unit in categories:
@@ -577,6 +596,7 @@ class RealFourPointEvaluator:
             "query_list": [q for q, _ in self.test_queries],
             "rlhf_model_trained": Path("data/models/rlhf_model").exists() and any(Path("data/models/rlhf_model").iterdir()),
             "chroma_index_exists": Path(Path.cwd() / "data/processed/chroma_db").exists(),
+            "mode_mapping": dict(self.mode_map),
             "results": self.results,
             "disclaimer": "ESTOS SON RESULTADOS REALES - NO SE INVENTARON DATOS"
         }
@@ -721,9 +741,11 @@ def main():
     print(f"\n📈 ANÁLISIS DE LOS DATOS REALES:")
     for point in sorted(evaluator.results.keys()):
         r = evaluator.results[point]
-        print(f"   • Punto {point}: Score={r['scores']['total']:.3f}, "
-              f"Tiempo={r['avg_query_time_ms']:.1f}ms, "
-              f"Productos={r['avg_products_returned']:.1f}")
+        config = r["config"]
+        print(f"   • Punto {point} ({config['description']}):")
+        print(f"     Score={r['scores']['total']:.3f}, Tiempo={r['avg_query_time_ms']:.1f}ms")
+        print(f"     Productos={r['avg_products_returned']:.1f}, Éxito={r['success_rate']:.1f}%")
+        print(f"     Config: ML={config['ml_enabled']}, NLP={config['nlp_enabled']}, RLHF={config['rlhf_enabled']}")
     
     print(f"\n💡 SIGUIENTES PASOS (CON DATOS REALES):")
     print(f"   1. Revisa resultados detallados en: {output_file}")

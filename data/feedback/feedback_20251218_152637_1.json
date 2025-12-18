@@ -1,0 +1,8 @@
+{
+  "query": "recomiendame juegos de pelea",
+  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"recomiendame juegos de pelea\"\n                \n                Productos disponibles para recomendar:\n                1. Neogeo X Classics Vol 3 - $0.00 - Categoría: Clothing\n                \n                Genera una respuesta útil y natural que recomiende los productos más relevantes.\n                Incluye detalles específicos de los productos como precio, car",
+  "rating": 1,
+  "user_id": "ad110450569d",
+  "timestamp": 1766089597.7376978,
+  "agent_mode": "ml_enhanced"
+}

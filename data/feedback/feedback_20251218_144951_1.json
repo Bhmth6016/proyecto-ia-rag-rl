@@ -1,0 +1,8 @@
+{
+  "query": "muestrame juegos de zelda",
+  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"muestrame juegos de zelda\"\n                \n                Productos disponibles para recomendar:\n                1. Amiibo Aori - $24.90 - Categoría: Sports & Outdoors\n2. Monster Lab Wii - $16.33 - Categoría: Video Games\n3. The Legend of Zelda Majora S Mask Video Game Cartridge Console Card Us English Language - $109.95 - Categoría: Video Games\n                \n ",
+  "rating": 1,
+  "user_id": "8480d2c2bbe8",
+  "timestamp": 1766087391.9299464,
+  "agent_mode": "ml_enhanced"
+}

@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-12-18T15:54:11.639128",
+  "test_queries": 12,
+  "query_list": [
+    "nintendo switch",
+    "mario kart",
+    "zelda breath of the wild",
+    "¿Qué juegos de aventura para Nintendo Switch me recomiendas para niños?",
+    "Busco consola portátil con buena batería y pantalla OLED",
+    "Necesito un juego multijugador para jugar con amigos los fines de semana",
+    "producto nintendo con mejor relación calidad-precio",
+    "comparar nintendo switch oled vs lite para viajes",
+    "accesorios esenciales para nueva nintendo switch",
+    "algo divertido para regalar a mi sobrino de 10 años",
+    "consola retro para jugar juegos clásicos",
+    "¿qué me recomiendas si me gustan los juegos de estrategia?"
+  ],
+  "rlhf_model_trained": false,
+  "chroma_index_exists": true,
+  "mode_mapping": {
+    
