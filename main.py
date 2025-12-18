@@ -2,8 +2,10 @@
 # main.py - Sistema de Recomendación E-Commerce (VERSIÓN MEJORADA)
 
 import argparse
+import json
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -12,6 +14,26 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# =====================================================
+#  INICIALIZACIÓN DEL SISTEMA
+# =====================================================
+def init_system():
+    """Inicializar sistema de feedback y directorios."""
+    try:
+        from scripts.init_feedback_system import init_feedback_system
+        init_feedback_system()
+        print("✅ Sistema de feedback inicializado")
+    except ImportError:
+        print("⚠️  Script de inicialización no encontrado - creando directorios básicos...")
+        # Crear directorios mínimos
+        import os
+        os.makedirs("data/processed/historial", exist_ok=True)
+        os.makedirs("data/feedback", exist_ok=True)
+        os.makedirs("data/processed/user_profiles", exist_ok=True)
+        print("📁 Directorios básicos creados")
+    except Exception as e:
+        print(f"⚠️  Error inicializando sistema: {e}")
 
 # =====================================================
 #  CONFIGURACIÓN INICIAL CRÍTICA
@@ -45,6 +67,7 @@ def show_banner():
     print("║     🤖 Con procesamiento ML 100% Local                          ║")
     print("║     🔥 Multi-categoría: Electrónicos, Ropa, Hogar...            ║")
     print("║     📦 ProductReference + WorkingAdvancedRAGAgent               ║")
+    print("║     💾 Sistema de Historial de Conversaciones                   ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
 
 def show_config():
@@ -72,8 +95,67 @@ def show_config():
             print(f"   • ProductReference: ⚠️  PARCIALMENTE CONFIGURADO")
     except:
         print(f"   • ProductReference: ❌ NO CONFIGURADO")
-    
-    print()
+
+# =====================================================
+#  FUNCIONES DE HISTORIAL DE CONVERSACIONES
+# =====================================================
+
+def _save_conversation_to_historial(
+    query: str, 
+    answer: str, 
+    feedback_rating: Optional[int], 
+    products_shown: List[str],
+    user_id: str
+):
+    """Guarda la conversación en el historial."""
+    try:
+        from datetime import datetime
+        import json
+        from pathlib import Path
+        
+        # Crear directorio de historial
+        historial_dir = Path("data/processed/historial")
+        historial_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Crear entrada de conversación
+        conversation_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "session_id": f"session_{datetime.now().strftime('%Y%m%d')}",
+            "user_id": user_id,
+            "query": query,
+            "response": answer,
+            "feedback": feedback_rating if feedback_rating else None,
+            "products_shown": products_shown[:3],  # Guardar primeros 3 productos
+            "source": "rag_interactive",
+            "processed": False
+        }
+        
+        # Nombre del archivo basado en fecha
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        file_path = historial_dir / f"conversation_{date_str}.json"
+        
+        # Cargar conversaciones existentes o crear nueva lista
+        conversations = []
+        if file_path.exists():
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    conversations = json.load(f)
+                    if not isinstance(conversations, list):
+                        conversations = []
+            except:
+                conversations = []
+        
+        # Agregar nueva conversación
+        conversations.append(conversation_entry)
+        
+        # Guardar (limitar a últimas 100 conversaciones)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(conversations[-100:], f, indent=2, ensure_ascii=False)
+        
+        logger.debug(f"💾 Conversación guardada en historial ({len(conversations)} entradas)")
+        
+    except Exception as e:
+        logger.error(f"⚠️  Error guardando historial: {e}")
 
 # =====================================================
 #  PARSER DE ARGUMENTOS - MEJORADO
@@ -94,6 +176,7 @@ Ejemplos:
   %(prog)s ml repair                  # Reparar embeddings ML
   %(prog)s test product-ref           # Test ProductReference
   %(prog)s test rag-agent             # Test WorkingAdvancedRAGAgent
+  %(prog)s test historial             # Ver historial de conversaciones
   %(prog)s verify                     # Verificar sistema completo
         """
     )
@@ -417,10 +500,39 @@ def run_test_command(args):
             import traceback
             traceback.print_exc()
     
+    elif args.subcommand == "historial":
+        print("\n📚 VERIFICANDO HISTORIAL DE CONVERSACIONES")
+        print("-"*40)
+        
+        historial_dir = Path("data/processed/historial")
+        
+        if not historial_dir.exists():
+            print("❌ Directorio de historial no existe")
+            return
+        
+        total_conversations = 0
+        for file in historial_dir.glob("conversation_*.json"):
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    conversations = json.load(f)
+                    count = len(conversations)
+                    total_conversations += count
+                    print(f"📄 {file.name}: {count} conversaciones")
+                    
+                    if count > 0:
+                        last_convo = conversations[-1]
+                        print(f"   Última: '{last_convo.get('query', '')[:50]}...'")
+                        print(f"   Feedback: {last_convo.get('feedback', 'N/A')}")
+            except Exception as e:
+                print(f"⚠️  Error leyendo {file}: {e}")
+        
+        print(f"\n📊 TOTAL: {total_conversations} conversaciones en historial")
+    
     else:
         print("ℹ️ Subcomandos de test disponibles:")
         print("   • test product-ref     - Test de ProductReference")
         print("   • test rag-agent       - Test de WorkingAdvancedRAGAgent")
+        print("   • test historial       - Ver historial de conversaciones")
 
 # =====================================================
 #  FUNCIONES AUXILIARES MEJORADAS
@@ -510,7 +622,51 @@ def _extract_product_info(item: Any) -> Dict[str, Any]:
             "object": item
         }
 
-
+def _extract_product_ids_safely(products_result: List[Any], max_items: int = 3) -> List[str]:
+    """
+    Extrae IDs de productos de forma segura, manejando objetos None.
+    
+    Args:
+        products_result: Lista de productos o referencias
+        max_items: Número máximo de IDs a extraer
+    
+    Returns:
+        Lista de IDs de productos como strings
+    """
+    product_ids = []
+    
+    for i, item in enumerate(products_result[:max_items]):
+        try:
+            product_info = _extract_product_info(item)
+            obj = product_info.get("object")
+            
+            if obj is None:
+                product_ids.append(f"unknown_{i}")
+                continue
+            
+            # Intentar obtener ID de múltiples formas
+            product_id = None
+            
+            # 1. Buscar atributo 'id'
+            if hasattr(obj, 'id') and obj.id is not None:
+                product_id = str(obj.id)
+            # 2. Buscar en metadata
+            elif hasattr(obj, 'metadata') and isinstance(obj.metadata, dict):
+                product_id = obj.metadata.get('id')
+            # 3. Buscar en diccionario
+            elif isinstance(obj, dict):
+                product_id = obj.get('id')
+            
+            if product_id:
+                product_ids.append(product_id)
+            else:
+                product_ids.append(f"item_{i}")
+                
+        except Exception as e:
+            logger.debug(f"Error extrayendo ID de producto {i}: {e}")
+            product_ids.append(f"error_{i}")
+    
+    return product_ids
 def _get_category_emoji(category: str) -> str:
     """Devuelve emoji apropiado para la categoría."""
     emoji_map = {
@@ -535,7 +691,23 @@ def _get_category_emoji(category: str) -> str:
 
 
 # =====================================================
-#  RUN_RAG - VERSIÓN REFACTORIZADA Y CORREGIDA
+#  FUNCIÓN DE INICIALIZACIÓN DE FEEDBACK PROCESSOR
+# =====================================================
+def init_feedback_processor():
+    """Inicializar FeedbackProcessor global."""
+    try:
+        from src.core.rag.advanced.feedback_processor import FeedbackProcessor
+        return FeedbackProcessor()
+    except ImportError:
+        logger.debug("⚠️  FeedbackProcessor no disponible")
+        return None
+    except Exception as e:
+        logger.debug(f"⚠️  Error inicializando FeedbackProcessor: {e}")
+        return None
+
+
+# =====================================================
+#  RUN_RAG - VERSIÓN REFACTORIZADA Y MEJORADA
 # =====================================================
 def run_rag(data_dir: Optional[str] = None, 
            mode: str = "enhanced",
@@ -583,6 +755,11 @@ def run_rag(data_dir: Optional[str] = None,
         settings.ML_ENABLED = ml_enabled
         if not ml_enabled:
             settings.NLP_ENABLED = False
+    
+    # 🔥 Inicializar FeedbackProcessor global
+    feedback_processor = init_feedback_processor()
+    if feedback_processor:
+        print("📊 FeedbackProcessor global inicializado")
     
     try:
         # Cargar productos
@@ -745,6 +922,7 @@ def run_rag(data_dir: Optional[str] = None,
                     print("   • stats - Mostrar estadísticas")
                     print("   • config - Mostrar configuración")
                     print("   • user - Mostrar información del usuario")
+                    print("   • historial - Mostrar estadísticas de historial")
                     if working_rag_agent is not None:
                         print("   • clear - Limpiar caché (solo WorkingAdvancedRAGAgent)")
                     continue
@@ -776,6 +954,15 @@ def run_rag(data_dir: Optional[str] = None,
                         print(f"   • Género: {user_profile.gender}")
                     if hasattr(user_profile, 'country'):
                         print(f"   • País: {user_profile.country}")
+                    continue
+                
+                if query.lower() == 'historial':
+                    historial_dir = Path("data/processed/historial")
+                    if historial_dir.exists():
+                        total_files = len(list(historial_dir.glob("*.json")))
+                        print(f"📚 Historial: {total_files} archivos de conversación")
+                    else:
+                        print("📚 Historial: Directorio no existe aún")
                     continue
                 
                 if query.lower() == 'clear':
@@ -852,6 +1039,7 @@ def run_rag(data_dir: Optional[str] = None,
                 print(f"\n🤖 {answer}")
                 
                 # Mostrar resultados
+                product_ids = []
                 if products_result:
                     print(f"\n📦 RESULTADOS ({len(products_result)} encontrados):")
                     
@@ -870,6 +1058,12 @@ def run_rag(data_dir: Optional[str] = None,
                             # Obtener emoji para categoría
                             emoji = _get_category_emoji(category)
                             
+                            # Guardar ID del producto para historial
+                            if hasattr(product_info["object"], 'id'):
+                                product_ids.append(str(product_info["object"].id))
+                            else:
+                                product_ids.append(f"item_{i}")
+                            
                             # Mostrar producto
                             print(f"  {emoji} {i}. {title}")
                             print(f"     💰 ${price:.2f} | 🏷️ {category}")
@@ -883,78 +1077,159 @@ def run_rag(data_dir: Optional[str] = None,
                                 
                         except Exception as e:
                             print(f"  {i}. Error mostrando producto: {e}")
+                            product_ids.append(f"error_{i}")
                 
-                # Feedback mejorado
+                # 🔥 SECCIÓN DE FEEDBACK MEJORADA
+                feedback_rating = None
                 try:
                     print(f"\n💬 ¿Fue útil esta respuesta?")
-                    feedback = input("   (s) Sí | (n) No | (skip) Saltar: ").strip().lower()
+                    feedback_input = input("   (s) Sí | (n) No | (skip) Saltar: ").strip().lower()
                     
-                    if feedback == 's':
+                    if feedback_input == 's':
+                        feedback_rating = 5
                         print("     ✅ ¡Gracias por tu feedback positivo!")
-                        # Guardar feedback positivo
-                        try:
-                            if working_rag_agent is not None:
-                                # Usar el método de feedback del agente avanzado
-                                working_rag_agent.log_feedback(
-                                    query=query,
-                                    answer=answer,
-                                    rating=5,
-                                    user_id=user_id
-                                )
-                            else:
-                                # Para Retriever básico, guardar en perfil de usuario
-                                product_ids = []
-                                for i, item in enumerate(products_result[:3]):
-                                    if hasattr(item, 'id'):
-                                        product_ids.append(item.id)
-                                    elif hasattr(item, '__dict__'):
-                                        product_ids.append(f"item_{i}")
-                                
-                                user_profile.add_feedback_event(
-                                    query=query,
-                                    response=answer,
-                                    rating=5,
-                                    products_shown=product_ids if product_ids else []
-                                )
-                                user_manager.save_user_profile(user_profile)
-                        except Exception as e:
-                            logger.debug(f"Error guardando feedback positivo: {e}")
-                            
-                    elif feedback == 'n':
+                    elif feedback_input == 'n':
+                        feedback_rating = 1
                         print("     ⚠️  Lo sentimos, mejoraremos")
-                        # Guardar feedback negativo
-                        try:
-                            if working_rag_agent is not None:
-                                working_rag_agent.log_feedback(
-                                    query=query,
-                                    answer=answer,
-                                    rating=1,
-                                    user_id=user_id
-                                )
-                            else:
-                                product_ids = []
-                                for i, item in enumerate(products_result[:3]):
-                                    if hasattr(item, 'id'):
-                                        product_ids.append(item.id)
-                                    elif hasattr(item, '__dict__'):
-                                        product_ids.append(f"item_{i}")
-                                
-                                user_profile.add_feedback_event(
-                                    query=query,
-                                    response=answer,
-                                    rating=1,
-                                    products_shown=product_ids if product_ids else []
-                                )
-                                user_manager.save_user_profile(user_profile)
-                        except Exception as e:
-                            logger.debug(f"Error guardando feedback negativo: {e}")
-                            
                     else:
                         print("     ℹ️  Feedback omitido")
+                        feedback_rating = None
+                    
+                    # 🔥 GUARDAR FEEDBACK EN MÚLTIPLES LUGARES
+                    
+                    # 1. Guardar feedback en agentes específicos
+                    if feedback_rating:
+                        if working_rag_agent is not None:
+                            # Usar el método de feedback del agente avanzado
+                            working_rag_agent.log_feedback(
+                                query=query,
+                                answer=answer,
+                                rating=feedback_rating,
+                                user_id=user_id
+                            )
                         
+                        # 2. Extraer IDs de productos para historial (CORRECCIÓN: manejar None)
+                        feedback_product_ids = []
+                        for i, item in enumerate(products_result[:3]):
+                            product_info = _extract_product_info(item)
+                            obj = product_info.get("object")
+                            
+                            # 🔥 CORRECCIÓN: Manejar objeto None de forma segura
+                            if obj and hasattr(obj, 'id') and obj.id is not None:
+                                feedback_product_ids.append(str(obj.id))
+                            else:
+                                # Usar un ID generado basado en el índice
+                                feedback_product_ids.append(f"item_{i}")
+
+                        # 3. Guardar en perfil de usuario de forma segura
+                        try:
+                            # 🔥 CORRECCIÓN: Usar el método add_feedback_event con los parámetros CORRECTOS
+                            # según la definición en user_models.py
+                            user_profile.add_feedback_event(
+                                query=query,                    # str
+                                response=answer,                # str  
+                                rating=feedback_rating,         # int
+                                products_shown=feedback_product_ids[:3] if feedback_product_ids else [],  # List[str]
+                                selected_product=feedback_product_ids[0] if feedback_product_ids else None  # Optional[str]
+                            )
+                            
+                            # Guardar perfil
+                            if hasattr(user_manager, 'save_user_profile'):
+                                user_manager.save_user_profile(user_profile)
+                                print("     👤 Feedback guardado en perfil de usuario")
+                                
+                        except Exception as e:
+                            print(f"     ⚠️  Error guardando feedback en perfil: {e}")
+                            # Fallback: Guardar en archivo simple
+                            try:
+                                import json
+                                from datetime import datetime
+                                
+                                feedback_data = {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "user_id": user_id,
+                                    "query": query,
+                                    "response": answer,
+                                    "rating": feedback_rating,
+                                    "products_shown": feedback_product_ids[:3] if feedback_product_ids else [],
+                                    "selected_product": feedback_product_ids[0] if feedback_product_ids else None
+                                }
+                                
+                                feedback_dir = Path("data/feedback/user_feedback")
+                                feedback_dir.mkdir(parents=True, exist_ok=True)
+                                
+                                file_path = feedback_dir / f"feedback_{user_id}_{datetime.now().strftime('%Y%m%d')}.json"
+                                
+                                # Cargar feedback existente
+                                existing_feedback = []
+                                if file_path.exists():
+                                    with open(file_path, 'r', encoding='utf-8') as f:
+                                        try:
+                                            existing_feedback = json.load(f)
+                                        except:
+                                            existing_feedback = []
+                                
+                                # Agregar nuevo feedback
+                                existing_feedback.append(feedback_data)
+                                
+                                # Guardar (mantener solo últimos 100)
+                                with open(file_path, 'w', encoding='utf-8') as f:
+                                    json.dump(existing_feedback[-100:], f, indent=2, ensure_ascii=False)
+                                
+                                print("     💾 Feedback guardado en archivo (fallback)")
+                                
+                            except Exception as fallback_error:
+                                print(f"     ❌ Error en fallback también: {fallback_error}")
+                    
+                    # 4. GUARDAR EN HISTORIAL DE CONVERSACIONES (CRÍTICO)
+                    # Usar los product_ids que ya extrajimos antes en la variable principal
+                    _save_conversation_to_historial(
+                        query=query,
+                        answer=answer,
+                        feedback_rating=feedback_rating,
+                        products_shown=product_ids,  # Usar la variable product_ids que ya tenemos
+                        user_id=user_id
+                    )
+                    
+                    # 5. Procesar feedback con FeedbackProcessor global
+                    if feedback_processor and feedback_rating:
+                        try:
+                            feedback_processor.save_feedback(
+                                query=query,
+                                answer=answer,
+                                rating=feedback_rating,
+                                retrieved_docs=product_ids,  # Usar product_ids principal
+                                extra_meta={
+                                    "user_id": user_id,
+                                    "mode": mode,
+                                    "ml_enabled": settings.ML_ENABLED,
+                                    "agent_type": "WorkingAdvancedRAGAgent" if working_rag_agent else "BasicRetriever"
+                                }
+                            )
+                            print("     📝 Feedback procesado en tiempo real")
+                        except Exception as e:
+                            logger.debug(f"     ⚠️  Error procesando feedback: {e}")
+                            
                 except (KeyboardInterrupt, EOFError):
                     print("\n⚠️  Feedback interrumpido")
-                    pass
+                    # Guardar conversación sin feedback
+                    _save_conversation_to_historial(
+                        query=query,
+                        answer=answer,
+                        feedback_rating=None,
+                        products_shown=product_ids,
+                        user_id=user_id
+                    )
+                except Exception as e:
+                    logger.error(f"Error en sección de feedback: {e}")
+                    # Guardar conversación con error
+                    _save_conversation_to_historial(
+                        query=query,
+                        answer=answer,
+                        feedback_rating=None,
+                        products_shown=product_ids,
+                        user_id=user_id
+                    )
                 
             except KeyboardInterrupt:
                 print("\n\n🛑 Sesión interrumpida")
@@ -981,11 +1256,12 @@ def run_interactive_mode():
     print("   2. test-product-ref - Probar ProductReference")
     print("   3. test-ml - Probar procesamiento ML")
     print("   4. verify - Verificar sistema completo")
-    print("   5. exit - Salir")
+    print("   5. historial - Verificar historial de conversaciones")
+    print("   6. exit - Salir")
     
     while True:
         try:
-            choice = input("\n🔍 Elige una opción (1-5): ").strip()
+            choice = input("\n🔍 Elige una opción (1-6): ").strip()
             
             if choice == '1':
                 try:
@@ -1030,7 +1306,24 @@ def run_interactive_mode():
                 except ImportError:
                     print("❌ Script verify_system.py no encontrado")
                     
-            elif choice == '5' or choice.lower() == 'exit':
+            elif choice == '5':
+                historial_dir = Path("data/processed/historial")
+                if historial_dir.exists():
+                    total_files = len(list(historial_dir.glob("*.json")))
+                    print(f"📚 Historial: {total_files} archivos de conversación")
+                    
+                    # Mostrar archivos recientes
+                    for file in sorted(historial_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)[:3]:
+                        try:
+                            with open(file, 'r', encoding='utf-8') as f:
+                                conversations = json.load(f)
+                                print(f"📄 {file.name}: {len(conversations)} conversaciones")
+                        except:
+                            print(f"📄 {file.name}: Error leyendo")
+                else:
+                    print("📚 Historial: Directorio no existe aún")
+                    
+            elif choice == '6' or choice.lower() == 'exit':
                 print("👋 ¡Hasta luego!")
                 break
                 
@@ -1049,6 +1342,9 @@ def run_interactive_mode():
 if __name__ == "__main__":
     # Mostrar banner
     show_banner()
+    
+    # Inicializar sistema
+    init_system()
     
     # Parsear argumentos
     args = parse_arguments()
