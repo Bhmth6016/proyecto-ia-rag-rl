@@ -1,0 +1,182 @@
+[
+  {
+    "timestamp": "2025-11-19T14:06:24.227123",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_319",
+      "prod_591",
+      "prod_436"
+    ],
+    "selected_product": "prod_165"
+  },
+  {
+    "timestamp": "2025-12-01T14:06:24.227123",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_794",
+      "prod_333",
+      "prod_349"
+    ],
+    "selected_product": "prod_999"
+  },
+  {
+    "timestamp": "2025-12-16T14:06:24.227123",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_504",
+      "prod_679",
+      "prod_895"
+    ],
+    "selected_product": "prod_375"
+  },
+  {
+    "timestamp": "2025-11-21T14:06:24.227123",
+    "query": "tablet android",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_604",
+      "prod_753",
+      "prod_576"
+    ],
+    "selected_product": "prod_334"
+  },
+  {
+    "timestamp": "2025-12-05T14:06:24.227123",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_824",
+      "prod_929",
+      "prod_107"
+    ],
+    "selected_product": "prod_705"
+  },
+  {
+    "timestamp": "2025-12-15T14:06:24.227123",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 1,
+    "products_shown": [
+      "prod_385",
+      "prod_417",
+      "prod_384"
+    ],
+    "selected_product": "prod_734"
+  },
+  {
+    "timestamp": "2025-12-06T14:06:24.227123",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_100",
+      "prod_290",
+      "prod_108"
+    ],
+    "selected_product": "prod_434"
+  },
+  {
+    "timestamp": "2025-12-17T14:06:24.227123",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_229",
+      "prod_977",
+      "prod_188"
+    ],
+    "selected_product": "prod_485"
+  },
+  {
+    "timestamp": "2025-12-07T14:06:24.227123",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_415",
+      "prod_128",
+      "prod_706"
+    ],
+    "selected_product": "prod_231"
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_433",
+      "prod_560",
+      "prod_879"
+    ],
+    "selected_product": "prod_969"
+  },
+  {
+    "timestamp": "2025-12-03T14:06:24.227123",
+    "query": "tablet android",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_788",
+      "prod_338",
+      "prod_710"
+    ],
+    "selected_product": "prod_797"
+  },
+  {
+    "timestamp": "2025-11-30T14:06:24.227123",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_463",
+      "prod_119",
+      "prod_385"
+    ],
+    "selected_product": "prod_930"
+  },
+  {
+    "timestamp": "2025-12-01T14:06:24.227123",
+    "query": "tablet android",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_525",
+      "prod_160",
+      "prod_287"
+    ],
+    "selected_product": "prod_921"
+  },
+  {
+    "timestamp": "2025-11-25T14:06:24.227123",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_995",
+      "prod_180",
+      "prod_172"
+    ],
+    "selected_product": "prod_664"
+  },
+  {
+    "timestamp": "2025-12-16T14:06:24.227123",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_307",
+      "prod_380",
+      "prod_997"
+    ],
+    "selected_product": "prod_104"
+  }
+]

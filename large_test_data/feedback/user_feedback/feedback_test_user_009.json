@@ -1,0 +1,182 @@
+[
+  {
+    "timestamp": "2025-12-03T14:06:24.227123",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_575",
+      "prod_418",
+      "prod_278"
+    ],
+    "selected_product": "prod_280"
+  },
+  {
+    "timestamp": "2025-11-26T14:06:24.227123",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_884",
+      "prod_548",
+      "prod_989"
+    ],
+    "selected_product": "prod_493"
+  },
+  {
+    "timestamp": "2025-12-09T14:06:24.227123",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_202",
+      "prod_352",
+      "prod_707"
+    ],
+    "selected_product": "prod_678"
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 1,
+    "products_shown": [
+      "prod_378",
+      "prod_504",
+      "prod_135"
+    ],
+    "selected_product": "prod_532"
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_512",
+      "prod_618",
+      "prod_765"
+    ],
+    "selected_product": "prod_231"
+  },
+  {
+    "timestamp": "2025-11-18T14:06:24.227123",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_808",
+      "prod_350",
+      "prod_805"
+    ],
+    "selected_product": "prod_776"
+  },
+  {
+    "timestamp": "2025-11-30T14:06:24.227123",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_563",
+      "prod_591",
+      "prod_275"
+    ],
+    "selected_product": "prod_525"
+  },
+  {
+    "timestamp": "2025-12-03T14:06:24.227123",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_571",
+      "prod_383",
+      "prod_445"
+    ],
+    "selected_product": "prod_384"
+  },
+  {
+    "timestamp": "2025-12-04T14:06:24.227123",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_121",
+      "prod_127",
+      "prod_691"
+    ],
+    "selected_product": "prod_846"
+  },
+  {
+    "timestamp": "2025-12-05T14:06:24.227123",
+    "query": "consola videojuegos",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_981",
+      "prod_764",
+      "prod_367"
+    ],
+    "selected_product": "prod_801"
+  },
+  {
+    "timestamp": "2025-11-29T14:06:24.227123",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_751",
+      "prod_565",
+      "prod_809"
+    ],
+    "selected_product": "prod_578"
+  },
+  {
+    "timestamp": "2025-11-28T14:06:24.227123",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 1,
+    "products_shown": [
+      "prod_256",
+      "prod_554",
+      "prod_652"
+    ],
+    "selected_product": "prod_145"
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_273",
+      "prod_700",
+      "prod_148"
+    ],
+    "selected_product": "prod_839"
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_596",
+      "prod_941",
+      "prod_886"
+    ],
+    "selected_product": "prod_202"
+  },
+  {
+    "timestamp": "2025-12-10T14:06:24.227123",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_550",
+      "prod_686",
+      "prod_841"
+    ],
+    "selected_product": "prod_970"
+  }
+]

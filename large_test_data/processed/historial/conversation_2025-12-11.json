@@ -1,0 +1,146 @@
+[
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_1566",
+    "user_id": "test_user_011",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_011 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_936",
+      "prod_467",
+      "prod_941"
+    ],
+    "selected_product": "prod_533",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_2573",
+    "user_id": "test_user_015",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_015 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_863",
+      "prod_438",
+      "prod_542"
+    ],
+    "selected_product": "prod_901",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_8334",
+    "user_id": "test_user_019",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_019 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_400",
+      "prod_328",
+      "prod_222"
+    ],
+    "selected_product": "prod_696",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_8448",
+    "user_id": "test_user_019",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_019 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_794",
+      "prod_750",
+      "prod_347"
+    ],
+    "selected_product": "prod_346",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_1168",
+    "user_id": "test_user_019",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_019 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_513",
+      "prod_219",
+      "prod_258"
+    ],
+    "selected_product": "prod_716",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_8655",
+    "user_id": "test_user_020",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_020 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_312",
+      "prod_410",
+      "prod_497"
+    ],
+    "selected_product": "prod_243",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_5250",
+    "user_id": "test_user_021",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_491",
+      "prod_359",
+      "prod_720"
+    ],
+    "selected_product": "prod_346",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_6196",
+    "user_id": "test_user_026",
+    "query": "tablet android",
+    "response": "Respuesta para test_user_026 sobre productos relevantes.",
+    "feedback": 2,
+    "products_shown": [
+      "prod_884",
+      "prod_134",
+      "prod_681"
+    ],
+    "selected_product": "prod_689",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-12-11T14:06:24.227123",
+    "session_id": "session_8735",
+    "user_id": "test_user_026",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_026 sobre productos relevantes.",
+    "feedback": 2,
+    "products_shown": [
+      "prod_676",
+      "prod_542",
+      "prod_929"
+    ],
+    "selected_product": "prod_896",
+    "source": "quick_generator",
+    "processed": false
+  }
+]

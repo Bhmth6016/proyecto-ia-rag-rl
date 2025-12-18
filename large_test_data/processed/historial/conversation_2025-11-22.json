@@ -1,0 +1,258 @@
+[
+  {
+    "timestamp": "2025-11-22T14:06:24.225257",
+    "session_id": "session_3322",
+    "user_id": "test_user_001",
+    "query": "consola videojuegos",
+    "response": "Respuesta para test_user_001 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_840",
+      "prod_549",
+      "prod_629"
+    ],
+    "selected_product": "prod_911",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_1765",
+    "user_id": "test_user_004",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_004 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_205",
+      "prod_708",
+      "prod_480"
+    ],
+    "selected_product": "prod_833",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_1924",
+    "user_id": "test_user_005",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_005 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_945",
+      "prod_943",
+      "prod_119"
+    ],
+    "selected_product": "prod_832",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_9794",
+    "user_id": "test_user_008",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_008 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_974",
+      "prod_337",
+      "prod_151"
+    ],
+    "selected_product": "prod_315",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_8180",
+    "user_id": "test_user_008",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_008 sobre productos relevantes.",
+    "feedback": 3,
+    "products_shown": [
+      "prod_494",
+      "prod_711",
+      "prod_202"
+    ],
+    "selected_product": "prod_819",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_1760",
+    "user_id": "test_user_009",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "feedback": 1,
+    "products_shown": [
+      "prod_378",
+      "prod_504",
+      "prod_135"
+    ],
+    "selected_product": "prod_532",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_8289",
+    "user_id": "test_user_009",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_512",
+      "prod_618",
+      "prod_765"
+    ],
+    "selected_product": "prod_231",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_9172",
+    "user_id": "test_user_009",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_273",
+      "prod_700",
+      "prod_148"
+    ],
+    "selected_product": "prod_839",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_7801",
+    "user_id": "test_user_014",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_014 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_931",
+      "prod_721",
+      "prod_472"
+    ],
+    "selected_product": "prod_876",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_1429",
+    "user_id": "test_user_015",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_015 sobre productos relevantes.",
+    "feedback": 1,
+    "products_shown": [
+      "prod_812",
+      "prod_707",
+      "prod_204"
+    ],
+    "selected_product": "prod_784",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_9806",
+    "user_id": "test_user_016",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_016 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_979",
+      "prod_805",
+      "prod_511"
+    ],
+    "selected_product": "prod_704",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_8799",
+    "user_id": "test_user_017",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_017 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_440",
+      "prod_481",
+      "prod_999"
+    ],
+    "selected_product": "prod_979",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_6669",
+    "user_id": "test_user_019",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_019 sobre productos relevantes.",
+    "feedback": 3,
+    "products_shown": [
+      "prod_473",
+      "prod_721",
+      "prod_452"
+    ],
+    "selected_product": "prod_891",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_3186",
+    "user_id": "test_user_029",
+    "query": "consola videojuegos",
+    "response": "Respuesta para test_user_029 sobre productos relevantes.",
+    "feedback": 1,
+    "products_shown": [
+      "prod_977",
+      "prod_893",
+      "prod_576"
+    ],
+    "selected_product": "prod_434",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_1698",
+    "user_id": "test_user_030",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_030 sobre productos relevantes.",
+    "feedback": 2,
+    "products_shown": [
+      "prod_202",
+      "prod_568",
+      "prod_403"
+    ],
+    "selected_product": "prod_840",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-22T14:06:24.227123",
+    "session_id": "session_5883",
+    "user_id": "test_user_030",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_030 sobre productos relevantes.",
+    "feedback": 3,
+    "products_shown": [
+      "prod_761",
+      "prod_658",
+      "prod_217"
+    ],
+    "selected_product": "prod_221",
+    "source": "quick_generator",
+    "processed": false
+  }
+]

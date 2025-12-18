@@ -1,0 +1,13 @@
+{
+  "user_id": "test_user_001",
+  "name": "Usuario 1",
+  "email": "user1@test.com",
+  "age": 56,
+  "country": "Spain",
+  "preferred_categories": [
+    "Clothing",
+    "Electronics"
+  ],
+  "feedback_history": [],
+  "created_at": "2025-12-18T14:06:24.190013"
+}

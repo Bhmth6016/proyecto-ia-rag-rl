@@ -1,0 +1,162 @@
+[
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_9941",
+    "user_id": "test_user_009",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_009 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_596",
+      "prod_941",
+      "prod_886"
+    ],
+    "selected_product": "prod_202",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_9197",
+    "user_id": "test_user_010",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_010 sobre productos relevantes.",
+    "feedback": 3,
+    "products_shown": [
+      "prod_433",
+      "prod_560",
+      "prod_879"
+    ],
+    "selected_product": "prod_969",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_5356",
+    "user_id": "test_user_013",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_013 sobre productos relevantes.",
+    "feedback": 1,
+    "products_shown": [
+      "prod_567",
+      "prod_587",
+      "prod_285"
+    ],
+    "selected_product": "prod_114",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_2470",
+    "user_id": "test_user_013",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_013 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_304",
+      "prod_901",
+      "prod_355"
+    ],
+    "selected_product": "prod_722",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_1231",
+    "user_id": "test_user_017",
+    "query": "consola videojuegos",
+    "response": "Respuesta para test_user_017 sobre productos relevantes.",
+    "feedback": 5,
+    "products_shown": [
+      "prod_774",
+      "prod_418",
+      "prod_609"
+    ],
+    "selected_product": "prod_378",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_9159",
+    "user_id": "test_user_020",
+    "query": "impresora l\u00e1ser",
+    "response": "Respuesta para test_user_020 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_780",
+      "prod_690",
+      "prod_509"
+    ],
+    "selected_product": "prod_750",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_9233",
+    "user_id": "test_user_023",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_023 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_302",
+      "prod_164",
+      "prod_153"
+    ],
+    "selected_product": "prod_806",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_9735",
+    "user_id": "test_user_023",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_023 sobre productos relevantes.",
+    "feedback": 3,
+    "products_shown": [
+      "prod_812",
+      "prod_184",
+      "prod_310"
+    ],
+    "selected_product": "prod_572",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_7557",
+    "user_id": "test_user_026",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_026 sobre productos relevantes.",
+    "feedback": 4,
+    "products_shown": [
+      "prod_426",
+      "prod_484",
+      "prod_948"
+    ],
+    "selected_product": "prod_676",
+    "source": "quick_generator",
+    "processed": false
+  },
+  {
+    "timestamp": "2025-11-20T14:06:24.227123",
+    "session_id": "session_1012",
+    "user_id": "test_user_029",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_029 sobre productos relevantes.",
+    "feedback": 2,
+    "products_shown": [
+      "prod_284",
+      "prod_981",
+      "prod_797"
+    ],
+    "selected_product": "prod_664",
+    "source": "quick_generator",
+    "processed": false
+  }
+]

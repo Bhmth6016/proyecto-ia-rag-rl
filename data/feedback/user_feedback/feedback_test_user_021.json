@@ -1,0 +1,182 @@
+[
+  {
+    "timestamp": "2025-12-02T14:05:09.451367",
+    "query": "zapatillas deportivas",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_842",
+      "prod_422",
+      "prod_121"
+    ],
+    "selected_product": "prod_232"
+  },
+  {
+    "timestamp": "2025-12-02T14:05:09.451367",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_472",
+      "prod_415",
+      "prod_879"
+    ],
+    "selected_product": "prod_233"
+  },
+  {
+    "timestamp": "2025-12-08T14:05:09.451367",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_400",
+      "prod_990",
+      "prod_664"
+    ],
+    "selected_product": "prod_971"
+  },
+  {
+    "timestamp": "2025-12-06T14:05:09.451367",
+    "query": "libros de programaci\u00f3n",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_754",
+      "prod_376",
+      "prod_855"
+    ],
+    "selected_product": "prod_872"
+  },
+  {
+    "timestamp": "2025-12-15T14:05:09.451367",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_545",
+      "prod_950",
+      "prod_160"
+    ],
+    "selected_product": "prod_274"
+  },
+  {
+    "timestamp": "2025-11-30T14:05:09.451367",
+    "query": "smartwatch",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_377",
+      "prod_530",
+      "prod_395"
+    ],
+    "selected_product": "prod_179"
+  },
+  {
+    "timestamp": "2025-11-20T14:05:09.451367",
+    "query": "auriculares bluetooth",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_198",
+      "prod_704",
+      "prod_697"
+    ],
+    "selected_product": "prod_606"
+  },
+  {
+    "timestamp": "2025-12-12T14:05:09.451367",
+    "query": "tablet android",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_347",
+      "prod_741",
+      "prod_786"
+    ],
+    "selected_product": "prod_578"
+  },
+  {
+    "timestamp": "2025-11-27T14:05:09.451367",
+    "query": "c\u00e1mara digital",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_298",
+      "prod_759",
+      "prod_336"
+    ],
+    "selected_product": "prod_785"
+  },
+  {
+    "timestamp": "2025-11-23T14:05:09.451367",
+    "query": "laptop gaming",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 5,
+    "products_shown": [
+      "prod_119",
+      "prod_334",
+      "prod_115"
+    ],
+    "selected_product": "prod_413"
+  },
+  {
+    "timestamp": "2025-12-17T14:05:09.451367",
+    "query": "consola videojuegos",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_278",
+      "prod_438",
+      "prod_545"
+    ],
+    "selected_product": "prod_143"
+  },
+  {
+    "timestamp": "2025-11-29T14:05:09.451367",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_301",
+      "prod_892",
+      "prod_126"
+    ],
+    "selected_product": "prod_597"
+  },
+  {
+    "timestamp": "2025-11-20T14:05:09.451367",
+    "query": "tablet android",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 4,
+    "products_shown": [
+      "prod_466",
+      "prod_586",
+      "prod_868"
+    ],
+    "selected_product": "prod_724"
+  },
+  {
+    "timestamp": "2025-12-04T14:05:09.451367",
+    "query": "smartphone econ\u00f3mico",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 3,
+    "products_shown": [
+      "prod_295",
+      "prod_711",
+      "prod_543"
+    ],
+    "selected_product": "prod_677"
+  },
+  {
+    "timestamp": "2025-12-04T14:05:09.451367",
+    "query": "consola videojuegos",
+    "response": "Respuesta para test_user_021 sobre productos relevantes.",
+    "rating": 2,
+    "products_shown": [
+      "prod_886",
+      "prod_125",
+      "prod_455"
+    ],
+    "selected_product": "prod_633"
+  }
+]
