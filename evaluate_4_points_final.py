@@ -534,27 +534,40 @@ class RealFourPointEvaluator:
         
         # Mejor en cada categoría REAL
         print(f"\n🏆 MEJOR EN CADA CATEGORÍA (DATOS REALES):")
-        
-        categories = ["Score", "Tiempo", "Productos", "Éxito"]
-        for category in categories:
-            if category == "Score":
-                best_point = max(self.results.keys(), 
-                               key=lambda p: self.results[p]["scores"]["total"])
-                value = self.results[best_point]["scores"]["total"]
-            elif category == "Tiempo":
-                best_point = min(self.results.keys(),
-                               key=lambda p: self.results[p]["avg_query_time_ms"])
-                value = self.results[best_point]["avg_query_time_ms"]
-            elif category == "Productos":
-                best_point = max(self.results.keys(),
-                               key=lambda p: self.results[p]["avg_products_returned"])
-                value = self.results[best_point]["avg_products_returned"]
-            elif category == "Éxito":
-                best_point = max(self.results.keys(),
-                               key=lambda p: self.results[p]["success_rate"])
-                value = self.results[best_point]["success_rate"] * 100
-            
-            print(f"   • {category:<10}: Punto {best_point} ({value:.2f}{'%' if category=='Éxito' else ''})")
+
+        # Verificar que hay resultados
+        if not self.results:
+            print("   • No hay datos para comparar")
+            return
+
+        categories = [
+            ("Score", lambda r: r["scores"]["total"], "max", ""),
+            ("Tiempo", lambda r: r["avg_query_time_ms"], "min", "ms"),
+            ("Productos", lambda r: r["avg_products_returned"], "max", ""),
+            ("Éxito", lambda r: r["success_rate"] * 100, "max", "%")
+        ]
+
+        for cat_name, get_value, extremum, unit in categories:
+            try:
+                if extremum == "max":
+                    best_point = max(self.results.keys(), 
+                                key=lambda p: get_value(self.results[p]))
+                else:  # "min"
+                    best_point = min(self.results.keys(),
+                                key=lambda p: get_value(self.results[p]))
+                
+                value = get_value(self.results[best_point])
+                
+                # Formatear según unidad
+                if unit == "%":
+                    print(f"   • {cat_name:<10}: Punto {best_point} ({value:.1f}%)")
+                elif unit == "ms":
+                    print(f"   • {cat_name:<10}: Punto {best_point} ({value:.1f}ms)")
+                else:
+                    print(f"   • {cat_name:<10}: Punto {best_point} ({value:.2f})")
+                    
+            except (KeyError, ValueError, TypeError) as e:
+                print(f"   • {cat_name:<10}: Error ({e})")
     
     def save_results(self, filename: str = "4_points_evaluation_real.json"):
         """Guarda los resultados REALES"""
