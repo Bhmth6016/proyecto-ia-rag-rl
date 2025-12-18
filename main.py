@@ -178,12 +178,15 @@ Ejemplos:
   %(prog)s test rag-agent             # Test WorkingAdvancedRAGAgent
   %(prog)s test historial             # Ver historial de conversaciones
   %(prog)s verify                     # Verificar sistema completo
+  %(prog)s fix-titles                 # Generar títulos automáticos
+  %(prog)s fix-empty-titles           # Reparar títulos vacíos en dataset
         """
     )
     
+    # 🔥 AGREGAR 'fix-empty-titles' A LAS OPCIONES VÁLIDAS
     parser.add_argument(
         'command',
-        choices=['rag', 'index', 'ml', 'train', 'test', 'verify', 'interactive'],
+        choices=['rag', 'index', 'ml', 'train', 'test', 'verify', 'interactive', 'fix-titles', 'fix-empty-titles'],
         help='Comando a ejecutar'
     )
     
@@ -199,6 +202,7 @@ Ejemplos:
         help='Subcomando (stats, repair, test, rlhf, collab)'
     )
     
+    # Resto del código de parse_arguments() permanece igual...
     # Argumentos opcionales
     parser.add_argument('--data-dir', help='Directorio de datos')
     parser.add_argument('--verbose', '-v', action='store_true', help='Modo verbose')
@@ -1412,6 +1416,92 @@ if __name__ == "__main__":
                 
         elif args.command == "interactive":
             run_interactive_mode()
+        
+                # 🔥 AÑADIR NUEVO COMANDO fix-titles AQUÍ
+        elif args.command == "fix-titles":
+            print("\n📝 FIX: Generando títulos automáticos para productos sin título")
+            print("="*60)
+            
+            try:
+                from scripts.auto_title_generator import auto_generate_titles
+                from src.core.config import settings
+                
+                # Archivo de productos procesados
+                input_file = settings.PROC_DIR / "products.json"
+                
+                if not input_file.exists():
+                    print("❌ No se encontró el archivo de productos procesados")
+                    print(f"   Buscado en: {input_file}")
+                    # 🔥 CORRECCIÓN: Usar sys.exit() o break fuera de función
+                    import sys
+                    sys.exit(1)
+                
+                # Crear copia de respaldo
+                import shutil
+                import time
+                backup_file = settings.PROC_DIR / f"products_backup_{time.strftime('%Y%m%d_%H%M%S')}.json"
+                shutil.copy2(input_file, backup_file)
+                print(f"📋 Copia de respaldo creada: {backup_file}")
+                
+                # Generar títulos automáticos
+                auto_generate_titles(input_file)
+                
+                print("\n✅ Títulos generados automáticamente")
+                print(f"📊 Ver archivo: {input_file}")
+                
+            except ImportError as e:
+                print(f"⚠️  Script auto_title_generator.py no encontrado: {e}")
+                print("💡 Asegúrate de crear el archivo scripts/auto_title_generator.py")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        elif args.command == "fix-empty-titles":
+            print("\n🔧 FIX: Reparando títulos vacíos en dataset")
+            print("="*60)
+            
+            try:
+                from scripts.fix_empty_titles import fix_empty_titles_in_file
+                from src.core.config import settings
+                
+                # Archivo de productos procesados
+                input_file = settings.PROC_DIR / "products.json"
+                
+                if not input_file.exists():
+                    print("❌ No se encontró el archivo de productos procesados")
+                    print(f"   Buscado en: {input_file}")
+                    
+                    # Intentar con raw data
+                    raw_files = list(settings.RAW_DIR.glob("*.json"))
+                    if raw_files:
+                        input_file = raw_files[0]
+                        print(f"📂 Usando archivo raw: {input_file}")
+                    else:
+                        print("❌ No hay archivos de datos disponibles")
+                        import sys
+                        sys.exit(1)
+                
+                # Crear copia de respaldo
+                import shutil
+                import time
+                backup_file = input_file.parent / f"{input_file.stem}_backup_{time.strftime('%Y%m%d_%H%M%S')}{input_file.suffix}"
+                shutil.copy2(input_file, backup_file)
+                print(f"📋 Copia de respaldo creada: {backup_file}")
+                
+                # Reparar títulos vacíos
+                fix_empty_titles_in_file(input_file)
+                
+                print("\n✅ Títulos vacíos reparados")
+                print(f"📊 Archivo actualizado: {input_file}")
+                
+            except ImportError as e:
+                print(f"⚠️  Script fix_empty_titles.py no encontrado: {e}")
+                print("💡 Asegúrate de crear el archivo scripts/fix_empty_titles.py")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
             
         else:
             print(f"❌ Comando no reconocido: {args.command}")

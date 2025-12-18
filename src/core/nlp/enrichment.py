@@ -288,7 +288,91 @@ class NLPEnricher:
             
         except Exception as e:
             logger.debug(f"⚠️ Error menor en limpieza NLP: {e}")
-
+    def extract_product_title(self, text: str) -> Dict[str, Any]:
+        """
+        Extrae componentes para construir un título de producto.
+        
+        Args:
+            text: Texto del producto (descripción, características, etc.)
+            
+        Returns:
+            Dict con componentes para construir título
+        """
+        if not text:
+            return {}
+        
+        if not self._initialized:
+            self.initialize()
+        
+        components = {
+            "brand": None,
+            "product_type": None,
+            "key_features": [],
+            "attributes": []
+        }
+        
+        try:
+            # Extraer entidades
+            entities = self.extract_entities(text)
+            
+            # Identificar marca (usar entidad ORG)
+            if entities.get("BRAND"):
+                brands = entities["BRAND"]
+                if brands:
+                    # Seleccionar la marca con mayor confianza
+                    sorted_brands = sorted(brands, key=lambda x: x.get('confidence', 0), reverse=True)
+                    components["brand"] = sorted_brands[0]["name"]
+            
+            # Identificar tipo de producto
+            # Usar Zero-Shot para clasificar tipo de producto
+            product_types = [
+                "smartphone", "laptop", "tablet", "headphones", "television",
+                "book", "novel", "textbook", "magazine",
+                "shirt", "pants", "dress", "shoes", "jacket",
+                "toy", "game", "puzzle", "board game",
+                "kitchen appliance", "furniture", "home decor",
+                "sports equipment", "fitness gear",
+                "cosmetic", "skincare", "perfume",
+                "car accessory", "tool", "electronic device"
+            ]
+            
+            zero_shot_result = self.zero_shot_classify(text, product_types)
+            if zero_shot_result:
+                classification = zero_shot_result.get('classification', {})
+                if classification:
+                    # Obtener tipo con mayor score
+                    best_type = max(classification.items(), key=lambda x: x[1])[0]
+                    components["product_type"] = best_type
+            
+            # Extraer características clave
+            if entities.get("ATTRIBUTE"):
+                attributes = entities["ATTRIBUTE"]
+                for attr in attributes[:3]:  # Primeros 3 atributos
+                    name = attr.get("name", "")
+                    if name and len(name) > 2:
+                        components["attributes"].append(name)
+            
+            # Extraer colores y tamaños
+            if entities.get("COLOR"):
+                colors = [c["name"] for c in entities["COLOR"][:2]]
+                components["key_features"].extend(colors)
+            
+            if entities.get("SIZE"):
+                sizes = [s["name"] for s in entities["SIZE"][:2]]
+                components["key_features"].extend(sizes)
+            
+            # Extraer palabras clave del texto
+            import re
+            words = re.findall(r'\b[A-Z][a-z]+\b', text)
+            for word in words[:5]:
+                if word not in ["The", "And", "For", "With", "This", "That"]:
+                    components["key_features"].append(word.lower())
+            
+            return components
+            
+        except Exception as e:
+            logger.debug(f"Error extrayendo título: {e}")
+            return {}
     def __del__(self) -> None:
         """Destructor para liberar memoria automáticamente."""
         try:

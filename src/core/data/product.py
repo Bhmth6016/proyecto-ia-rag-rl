@@ -543,10 +543,12 @@ class Product(BaseModel):
     _MAX_DESCRIPTION_LENGTH: ClassVar[int] = 1000
     _DEFAULT_RATING: ClassVar[float] = 0.0
     _DEFAULT_PRICE: ClassVar[float] = 0.0
+    _DEFAULT_TITLE: ClassVar[str] = "Producto sin nombre"
     
     # Campos principales
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    title: str = Field("Unknown Product", min_length=1, max_length=_MAX_TITLE_LENGTH)
+    # 🔥 CAMBIO: Hacer title opcional con valor por defecto
+    title: Optional[str] = Field(default=None, max_length=_MAX_TITLE_LENGTH)
     main_category: Optional[str] = None
     categories: List[str] = Field(default_factory=list)
     price: Optional[float] = Field(None, ge=0)
@@ -597,12 +599,16 @@ class Product(BaseModel):
         # Obtener configuración actual
         current_settings = get_settings()
         
-        # 🔥 CORRECCIÓN PROBLEMA 4: Limpiar datos primero
-        processed = cls._clean_raw_data(data)
+        # 🔥 CORRECCIÓN: Limpiar datos primero con manejo de título
+        processed = cls._clean_raw_data_with_title_fallback(data)
         
         # Procesamiento automático base
         processed = cls._auto_enrich_data(processed)
         processed = cls._auto_clean_data(processed)
+        
+        # 🔥 IMPORTANTE: Asegurar que el título no sea None
+        if not processed.get('title'):
+            processed['title'] = cls._generate_title_from_data(processed)
         
         # 🔥 IMPORTANTE: Procesamiento ML si está habilitado en settings
         if current_settings.ML_ENABLED:
@@ -611,13 +617,23 @@ class Product(BaseModel):
         return processed
 
     @classmethod
-    def _clean_raw_data(cls, raw: Dict) -> Dict:
-        """Limpia datos crudos de forma robusta"""
+    def _clean_raw_data_with_title_fallback(cls, raw: Dict) -> Dict:
+        """Limpia datos crudos con generación automática de títulos como fallback."""
         cleaned = {}
         
-        # 🔥 Mapeo de campos con limpieza específica
+        # 🔥 CORRECCIÓN: Manejar título de forma robusta
+        title = raw.get('title', '')
+        if not title or not isinstance(title, str) or not title.strip():
+            # Intentar generar título automáticamente desde otros campos
+            generated_title = cls._generate_title_from_raw_data(raw)
+            cleaned['title'] = generated_title
+            cleaned['title_generated'] = True
+        else:
+            cleaned['title'] = str(title).strip()[:200]
+            cleaned['title_generated'] = False
+        
+        # Resto de campos con limpieza específica
         field_cleaners = {
-            'title': lambda x: str(x).strip()[:200] if x else 'Unknown Product',
             'description': lambda x: str(x).strip()[:1000] if x else '',
             'main_category': lambda x: str(x).strip() if x else 'General',
             'categories': cls._clean_categories,
@@ -639,12 +655,107 @@ class Product(BaseModel):
         # Campos adicionales con limpieza segura
         cleaned['id'] = raw.get('id', str(uuid.uuid4()))
         
-        # Copiar otros campos sin procesar (serán procesados después)
+        # Copiar otros campos sin procesar
         for key, value in raw.items():
             if key not in cleaned:
                 cleaned[key] = value
         
         return cleaned
+
+    @classmethod
+    def _generate_title_from_raw_data(cls, raw: Dict) -> str:
+        """Genera título automáticamente a partir de datos crudos."""
+        # Intentar extraer de múltiples fuentes
+        sources = [
+            raw.get('product_type'),
+            raw.get('main_category'),
+            raw.get('brand'),
+            raw.get('description', '')[:50] if raw.get('description') else None
+        ]
+        
+        # Filtrar fuentes válidas
+        valid_sources = [s for s in sources if s and isinstance(s, str) and s.strip()]
+        
+        if valid_sources:
+            # Tomar la primera fuente válida
+            title = valid_sources[0].strip()
+            # Capitalizar
+            title = title[0].upper() + title[1:] if len(title) > 1 else title.upper()
+            return title[:150]
+        
+        # Si no hay fuentes, usar categoría o tipo por defecto
+        for field in ['main_category', 'product_type']:
+            if raw.get(field):
+                field_value = str(raw[field]).strip()
+                if field_value:
+                    return f"Producto {field_value}"
+        
+        # Título por defecto
+        return cls._DEFAULT_TITLE
+
+    @classmethod
+    def _generate_title_from_data(cls, data: Dict) -> str:
+        """Genera título a partir de datos ya procesados."""
+        # Intentar usar categoría predicha
+        if data.get('predicted_category'):
+            return f"Producto {data['predicted_category']}"
+        
+        # Intentar usar categoría principal
+        if data.get('main_category') and data['main_category'] != 'General':
+            return f"Producto {data['main_category']}"
+        
+        # Intentar extraer de descripción
+        if data.get('description'):
+            desc = data['description']
+            # Extraer primeras palabras significativas
+            words = desc.split()[:3]
+            if len(words) >= 2:
+                return " ".join(words).capitalize() + "..."
+        
+        return cls._DEFAULT_TITLE
+
+    @classmethod
+    def _create_minimal_product(cls, raw: Dict) -> "Product":
+        """Crea producto mínimo cuando falla la creación normal."""
+        try:
+            # Extraer o generar título
+            title = None
+            
+            # 1. Intentar del raw
+            if raw.get('title'):
+                title = str(raw['title']).strip()
+            
+            # 2. Intentar generar desde otros campos
+            if not title or not title.strip():
+                title = cls._generate_title_from_raw_data(raw)
+            
+            # ✅ CORRECCIÓN: Asegurar que title no sea None o vacío
+            if not title or not title.strip():
+                title = cls._DEFAULT_TITLE
+            
+            # ✅ CORRECCIÓN: Proporcionar valores por defecto para todos los campos requeridos
+            return cls(
+                title=title[:200],
+                id=raw.get('id', str(uuid.uuid4())),
+                description=raw.get('description', '')[:5000] if raw.get('description') else '',
+                price=cls._auto_parse_price(raw.get('price')),
+                main_category=raw.get('main_category', 'General'),
+                ml_processed=False,
+                # ✅ Proporcionar valores por defecto para campos requeridos
+                average_rating=None,
+                rating_count=None
+            )
+        except Exception as e:
+            logger.error(f"Error creating minimal product: {e}")
+            # ✅ CORRECCIÓN: Producto de error con valores por defecto
+            return cls(
+                title=cls._DEFAULT_TITLE,
+                price=None,
+                average_rating=None,
+                rating_count=None,
+                description=''
+            )
+    
     
     @classmethod
     def _clean_categories(cls, categories: Any) -> List[str]:
@@ -714,6 +825,236 @@ class Product(BaseModel):
         
         # Si aún queda como General → se manejará después en la etapa ML
         return processed
+    
+    def _generate_title_from_content(cls, product_data: Dict) -> str:
+        """
+        Genera un título automáticamente basado en el contenido del producto.
+        Usa Zero-Shot o NER si está disponible, o extrae keywords como fallback.
+        """
+        description = product_data.get('description', '')
+        main_category = product_data.get('main_category', '')
+        brand = product_data.get('brand', '')
+        
+        # Si ya hay título, usarlo
+        existing_title = product_data.get('title', '')
+        if existing_title and existing_title.strip():
+            return existing_title
+        
+        # Si no hay suficiente contenido, usar título genérico
+        if not description and not main_category and not brand:
+            return "Producto sin nombre"
+        
+        # Intentar generar título con NLP (Zero-Shot o NER)
+        try:
+            # Importar NLPEnricher si está disponible
+            from src.core.nlp.enrichment import NLPEnricher
+            
+            # Inicializar NLPEnricher
+            nlp_enricher = None
+            try:
+                nlp_enricher = NLPEnricher(use_small_models=True)
+                nlp_enricher.initialize()
+            except Exception:
+                nlp_enricher = None
+            
+            if nlp_enricher:
+                # Preparar texto para análisis
+                text_parts = []
+                if brand:
+                    text_parts.append(f"Marca: {brand}")
+                if main_category:
+                    text_parts.append(f"Categoría: {main_category}")
+                if description:
+                    text_parts.append(description[:500])  # Limitar descripción
+                
+                text = " ".join(text_parts)
+                
+                # Extraer entidades clave con NER
+                entities = nlp_enricher.extract_entities(text)
+                
+                # Construir título con entidades encontradas
+                title_parts = []
+                
+                # Añadir marca si está disponible
+                if brand:
+                    title_parts.append(brand)
+                elif entities.get("BRAND"):
+                    # Usar primera marca detectada
+                    brands = entities["BRAND"]
+                    if brands and len(brands) > 0:
+                        title_parts.append(brands[0]["name"])
+                
+                # Añadir producto principal detectado
+                if entities.get("PRODUCT"):
+                    products = entities["PRODUCT"]
+                    if products and len(products) > 0:
+                        product_name = products[0]["name"]
+                        title_parts.append(product_name)
+                
+                # Añadir categoría
+                if main_category:
+                    # Convertir categoría a algo más legible
+                    cat_map = {
+                        'Electronics': 'Electrónico',
+                        'Books': 'Libro',
+                        'Clothing': 'Ropa',
+                        'Home & Kitchen': 'Hogar',
+                        'Sports & Outdoors': 'Deporte',
+                        'Beauty': 'Belleza',
+                        'Toys & Games': 'Juguete',
+                        'Automotive': 'Automotriz',
+                        'Office Products': 'Oficina',
+                        'Video Games': 'Videojuego',
+                        'Health': 'Salud'
+                    }
+                    readable_cat = cat_map.get(main_category, main_category)
+                    if readable_cat and readable_cat not in title_parts:
+                        title_parts.append(readable_cat)
+                
+                # Si tenemos partes, construir título
+                if title_parts:
+                    generated_title = " ".join(title_parts)
+                    # Capitalizar adecuadamente
+                    generated_title = generated_title.strip().capitalize()
+                    
+                    # Añadir calificador si es muy corto
+                    if len(generated_title.split()) < 2 and description:
+                        # Extraer keywords adicionales de la descripción
+                        keywords = cls._extract_keywords_from_description(description)
+                        if keywords:
+                            generated_title += f" - {keywords}"
+                    
+                    return generated_title[:150]  # Limitar longitud
+                
+        except Exception as e:
+            logger.debug(f"Error generando título con NLP: {e}")
+        
+        # Fallback: generar título basado en categoría y descripción
+        return cls._generate_fallback_title(description, main_category, brand)
+
+    @staticmethod
+    def _extract_keywords_from_description(description: str, max_keywords: int = 3) -> str:
+        """Extrae palabras clave importantes de la descripción."""
+        if not description:
+            return ""
+        
+        import re
+        from collections import Counter
+        
+        # Eliminar stopwords comunes
+        stopwords = {
+            'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+            'y', 'o', 'pero', 'por', 'para', 'con', 'de', 'en',
+            'a', 'ante', 'bajo', 'cabe', 'con', 'contra', 'de',
+            'desde', 'en', 'entre', 'hacia', 'hasta', 'para', 'por',
+            'según', 'sin', 'so', 'sobre', 'tras', 'durante', 'mediante'
+        }
+        
+        # Tokenizar y limpiar
+        words = re.findall(r'\b[a-záéíóúñ]{4,}\b', description.lower())
+        
+        # Filtrar stopwords
+        filtered_words = [w for w in words if w not in stopwords]
+        
+        # Contar frecuencia
+        word_counts = Counter(filtered_words)
+        
+        # Obtener palabras más comunes
+        common_words = [word for word, _ in word_counts.most_common(max_keywords)]
+        
+        return " ".join(common_words).title()
+
+    @classmethod
+    def _generate_fallback_title(cls, description: str, main_category: str, brand: str) -> str:
+        """Genera título de fallback cuando NLP no está disponible."""
+        title_parts = []
+        
+        # Añadir marca si está disponible
+        if brand:
+            title_parts.append(brand)
+        
+        # Añadir categoría
+        if main_category and main_category != "General":
+            cat_map = {
+                'Electronics': 'Producto Electrónico',
+                'Books': 'Libro',
+                'Clothing': 'Prenda de Ropa',
+                'Home & Kitchen': 'Artículo para el Hogar',
+                'Sports & Outdoors': 'Equipo Deportivo',
+                'Beauty': 'Producto de Belleza',
+                'Toys & Games': 'Juguete',
+                'Automotive': 'Producto Automotriz',
+                'Office Products': 'Artículo de Oficina',
+                'Video Games': 'Videojuego',
+                'Health': 'Producto para la Salud'
+            }
+            readable_cat = cat_map.get(main_category, f"Producto de {main_category}")
+            title_parts.append(readable_cat)
+        else:
+            title_parts.append("Producto")
+        
+        # Añadir keywords de la descripción si existe
+        if description:
+            keywords = cls._extract_keywords_from_description(description, max_keywords=2)
+            if keywords:
+                title_parts.append(f"({keywords})")
+        
+        # Construir título final
+        generated_title = " ".join(title_parts).strip()
+        
+        # Asegurar que tenga al menos 2 palabras
+        if len(generated_title.split()) < 2:
+            generated_title = f"{generated_title} - Calidad Garantizada"
+        
+        return generated_title[:200]  # Limitar longitud
+
+    # Modificar el método _clean_raw_data para usar generación automática
+    @classmethod
+    def _clean_raw_data(cls, raw: Dict) -> Dict:
+        """Limpia datos crudos con generación automática de títulos."""
+        cleaned = {}
+        
+        # 🔥 CORRECCIÓN: Si el título está vacío, generarlo automáticamente
+        title = raw.get('title', '')
+        if not title or not str(title).strip():
+            logger.info(f"📝 Generando título automático para producto sin título")
+            title = cls._generate_title_from_content(raw)
+            logger.info(f"   → Título generado: {title[:50]}...")
+        
+        # 🔥 Mapeo de campos con limpieza específica
+        field_cleaners = {
+            'title': lambda x: str(x).strip()[:200] if x else 'Unknown Product',
+            'description': lambda x: str(x).strip()[:1000] if x else '',
+            'main_category': lambda x: str(x).strip() if x else 'General',
+            'categories': cls._clean_categories,
+            'price': cls._clean_price,
+            'brand': lambda x: str(x).strip() if x else '',
+            'product_type': lambda x: str(x).strip() if x else '',
+            'average_rating': lambda x: float(x) if x is not None else None,
+            'rating_count': lambda x: int(x) if x is not None else None
+        }
+        
+        for field, cleaner in field_cleaners.items():
+            if field in raw:
+                try:
+                    cleaned[field] = cleaner(raw[field])
+                except Exception as e:
+                    logger.debug(f"Error limpiando campo {field}: {e}")
+                    cleaned[field] = field_cleaners[field](None)  # Valor por defecto
+        
+        # Asegurar que el título generado esté incluido
+        if 'title' not in cleaned or not cleaned['title']:
+            cleaned['title'] = title
+        
+        # Campos adicionales con limpieza segura
+        cleaned['id'] = raw.get('id', str(uuid.uuid4()))
+        
+        # Copiar otros campos sin procesar
+        for key, value in raw.items():
+            if key not in cleaned:
+                cleaned[key] = value
+        
+        return cleaned
     
     @staticmethod
     def _extract_category_from_title(title: str) -> Optional[str]:
@@ -1174,38 +1515,6 @@ class Product(BaseModel):
             return cls._create_minimal_product(raw)
 
     @classmethod
-    def _create_minimal_product(cls, raw: Dict) -> "Product":
-        """Crea producto mínimo cuando falla la creación normal."""
-        try:
-            # Extraer datos mínimos
-            title = raw.get('title')
-            if not title or not isinstance(title, str):
-                title = 'Unknown Product'
-            
-            # ✅ CORRECCIÓN: Proporcionar valores por defecto para todos los campos requeridos
-            return cls(
-                title=title[:200],
-                id=raw.get('id', str(uuid.uuid4())),
-                description=raw.get('description', '')[:5000] if raw.get('description') else '',
-                price=cls._auto_parse_price(raw.get('price')),
-                main_category=raw.get('main_category', 'General'),
-                ml_processed=False,
-                # ✅ Proporcionar valores por defecto para campos requeridos
-                average_rating=None,
-                rating_count=None
-            )
-        except Exception as e:
-            logger.error(f"Error creating minimal product: {e}")
-            # ✅ CORRECCIÓN: Producto de error con valores por defecto
-            return cls(
-                title='Error Product',
-                price=None,
-                average_rating=None,
-                rating_count=None,
-                description=''
-            )
-    
-    @classmethod
     def batch_create(cls, raw_list: List[Dict]) -> List["Product"]:
         """Crea múltiples productos con procesamiento optimizado."""
         products = []
@@ -1430,6 +1739,172 @@ def get_product_metrics() -> Dict[str, Any]:
         }
     }
 
+def enrich_with_nlp(product_data: Dict) -> Dict:
+    """
+    Enriquece datos del producto con NLP para generar título, categoría, etc.
+    
+    Args:
+        product_data: Datos del producto
+        
+    Returns:
+        Datos enriquecidos
+    """
+    try:
+        from src.core.nlp.enrichment import NLPEnricher
+        
+        # Inicializar NLPEnricher
+        nlp_enricher = NLPEnricher(use_small_models=True)
+        nlp_enricher.initialize()
+        
+        # Preparar texto para análisis
+        text_parts = []
+        if product_data.get('brand'):
+            text_parts.append(f"Marca: {product_data['brand']}")
+        if product_data.get('main_category'):
+            text_parts.append(f"Categoría: {product_data['main_category']}")
+        if product_data.get('description'):
+            text_parts.append(product_data['description'][:500])
+        
+        text = " ".join(text_parts)
+        
+        if not text:
+            return product_data
+        
+        # 1. Extraer entidades con NER
+        entities = nlp_enricher.extract_entities(text)
+        
+        # 2. Si no hay título, generar uno
+        if not product_data.get('title') or not str(product_data['title']).strip():
+            generated_title = Product._generate_title_from_entities(entities, product_data)
+            if generated_title:
+                product_data['title'] = generated_title
+                product_data['title_generated'] = True
+                logger.info(f"📝 Título generado automáticamente: {generated_title[:80]}")
+        
+        # 3. Clasificar categoría si no existe
+        if not product_data.get('main_category') or product_data['main_category'] == 'General':
+            categories = ['Electronics', 'Books', 'Clothing', 'Home & Kitchen', 
+                         'Sports & Outdoors', 'Beauty', 'Toys & Games', 
+                         'Automotive', 'Office Products', 'Video Games', 'Health']
+            
+            zero_shot_result = nlp_enricher.zero_shot_classify(text, categories)
+            if zero_shot_result:
+                best_category = zero_shot_result.get('best_category')
+                if best_category:
+                    product_data['main_category'] = best_category
+                    product_data['category_confidence'] = zero_shot_result.get('confidence', 0.0)
+                    product_data['category_generated'] = True
+        
+        # 4. Extraer y guardar entidades
+        if entities:
+            product_data['ner_entities'] = entities
+            product_data['has_ner'] = True
+            
+            # Extraer marcas de las entidades
+            if entities.get("BRAND"):
+                brands = [e["name"] for e in entities["BRAND"][:3]]
+                if brands and not product_data.get('brand'):
+                    product_data['brand'] = brands[0]
+        
+        # 5. Generar tags automáticos
+        tags = Product._generate_tags_from_entities(entities, text)
+        if tags:
+            if 'tags' not in product_data:
+                product_data['tags'] = []
+            product_data['tags'].extend(tags[:5])
+        
+        product_data['nlp_enriched'] = True
+        
+        # Limpiar memoria
+        nlp_enricher.cleanup_memory()
+        
+        return product_data
+        
+    except Exception as e:
+        logger.debug(f"Error en NLP enrichment: {e}")
+        return product_data
+
+@classmethod
+def _generate_title_from_entities(cls, entities: Dict, product_data: Dict) -> str:
+    """Genera título a partir de entidades NER."""
+    title_parts = []
+    
+    # Añadir marca
+    if entities.get("BRAND"):
+        brands = entities["BRAND"]
+        if brands and len(brands) > 0:
+            title_parts.append(brands[0]["name"])
+    
+    # Añadir producto principal
+    if entities.get("PRODUCT"):
+        products = entities["PRODUCT"]
+        if products and len(products) > 0:
+            product_name = products[0]["name"]
+            title_parts.append(product_name)
+    
+    # Añadir tipo/categoría de producto_data
+    product_type = product_data.get('product_type') or product_data.get('main_category')
+    if product_type:
+        # Convertir a algo más legible
+        type_map = {
+            'Electronics': 'Electrónico',
+            'Books': 'Libro',
+            'Clothing': 'Prenda',
+            'Home & Kitchen': 'Hogar',
+            'Sports & Outdoors': 'Deportivo',
+            'Beauty': 'Belleza',
+            'Toys & Games': 'Juguete',
+            'Automotive': 'Automotriz',
+            'Office Products': 'Oficina',
+            'Video Games': 'Videojuego'
+        }
+        readable_type = type_map.get(product_type, product_type)
+        title_parts.append(readable_type)
+    
+    # Si no tenemos suficientes partes, añadir "Producto"
+    if len(title_parts) < 2:
+        title_parts.append("Producto")
+    
+    # Unir partes
+    generated_title = " ".join(title_parts).strip()
+    
+    # Capitalizar adecuadamente
+    if generated_title:
+        words = generated_title.split()
+        if len(words) > 1:
+            # Capitalizar solo la primera palabra
+            words[0] = words[0].capitalize()
+            generated_title = " ".join(words)
+        else:
+            generated_title = generated_title.capitalize()
+    
+    return generated_title[:150]
+
+@classmethod
+def _generate_tags_from_entities(cls, entities: Dict, text: str) -> List[str]:
+    """Genera tags a partir de entidades y texto."""
+    tags = set()
+    
+    # Extraer tags de entidades
+    for entity_type, entity_list in entities.items():
+        if entity_list:
+            for entity in entity_list[:3]:  # Primeras 3 entidades de cada tipo
+                if entity.get("name"):
+                    tags.add(entity["name"].lower())
+    
+    # Extraer palabras clave del texto
+    import re
+    words = re.findall(r'\b[a-záéíóúñ]{4,}\b', text.lower())
+    
+    # Contar frecuencia
+    from collections import Counter
+    word_counts = Counter(words)
+    
+    # Añadir palabras más comunes
+    for word, _ in word_counts.most_common(5):
+        tags.add(word)
+    
+    return list(tags)[:8]  # Limitar a 8 tags
 
 __all__ = [
     'Product',
