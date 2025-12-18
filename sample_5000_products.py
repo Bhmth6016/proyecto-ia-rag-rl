@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-sample_5000_products.py - Toma archivos JSONL de raw, selecciona 5000 productos aleatorios
-                          y los guarda con sufijo _5000 en raw
+sample_10000_products.py - Toma archivos JSONL de raw, selecciona 10000 productos aleatorios
+                          y los guarda con sufijo _10000 en raw
 """
 
 import os
@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 def sample_jsonl_files():
     """
-    Procesa archivos JSONL del directorio raw, selecciona 5000 productos aleatorios
-    y guarda con sufijo _5000 en el mismo directorio.
+    Procesa archivos JSONL del directorio raw, selecciona 10000 productos aleatorios
+    y guarda con sufijo _10000 en el mismo directorio.
     """
     # Directorios
     BASE_DIR = Path(__file__).parent.parent if "src" in str(Path(__file__)) else Path(__file__).parent
@@ -44,14 +44,14 @@ def sample_jsonl_files():
     logger.info(f"📂 Encontrados {len(files)} archivos .jsonl en {RAW_DIR}")
     
     # Número de productos a muestrear
-    SAMPLE_SIZE = 5000
+    SAMPLE_SIZE = 10000
     
     for file in files:
         input_file = RAW_DIR / file
-        output_name = file.replace(".jsonl", f"_5000.jsonl")
+        output_name = file.replace(".jsonl", f"_10000.jsonl")
         output_file = RAW_DIR / output_name
         
-        # Si ya existe el archivo _5000, saltar
+        # Si ya existe el archivo _10000, saltar
         if output_file.exists():
             logger.info(f"⚠️  Archivo {output_name} ya existe, omitiendo...")
             continue
@@ -84,7 +84,7 @@ def sample_jsonl_files():
                 logger.warning(f"   ⚠️  Archivo vacío o sin productos válidos: {file}")
                 continue
             
-            # Limitar a 5000 si hay suficiente contenido
+            # Limitar a 10000 si hay suficiente contenido
             if len(dataset) > SAMPLE_SIZE:
                 print(f"   🎲 Seleccionando {SAMPLE_SIZE} productos aleatorios de {len(dataset)}...")
                 sampled_data = random.sample(dataset, SAMPLE_SIZE)
@@ -171,17 +171,17 @@ def _show_file_stats(data: List[Dict[str, Any]], output_file: Path):
 def main():
     """Función principal."""
     print("\n" + "="*60)
-    print("🎲 SAMPLER 5000 - Selecciona 5000 productos aleatorios")
+    print("🎲 SAMPLER 10000 - Selecciona 10000 productos aleatorios")
     print("="*60)
     print("📂 Directorio: data/raw/")
-    print("📝 Formato: nombre_original_5000.jsonl")
+    print("📝 Formato: nombre_original_10000.jsonl")
     print("="*60)
     
     try:
         success = sample_jsonl_files()
         
         if success:
-            print("\n💡 Archivos creados en data/raw/ con sufijo _5000")
+            print("\n💡 Archivos creados en data/raw/ con sufijo _10000")
             print("\n🎉 ¡Proceso completado exitosamente!")
         else:
             print("\n⚠️  No se pudieron procesar archivos")
