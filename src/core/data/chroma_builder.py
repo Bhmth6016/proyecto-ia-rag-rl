@@ -17,6 +17,7 @@ import gc
 
 from tqdm import tqdm
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import SentenceTransformer
@@ -63,6 +64,10 @@ class DummyEmbedder:
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Compatibilidad con langchain."""
         return self.encode(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Para queries individuales."""
+        return self.encode([text])[0]
 
 # ------------------------------------------------------------------
 # Embedding Serializer
@@ -171,6 +176,69 @@ class EmbeddingSerializer:
         except Exception as e:
             logger.warning(f"Error convirtiendo embedding a lista: {e}")
             return []
+
+# ------------------------------------------------------------------
+# Clase EmbeddingsWrapper para compatibilidad
+# ------------------------------------------------------------------
+class EmbeddingsWrapper(Embeddings):
+    """Wrapper para cualquier modelo de embeddings para compatibilidad con LangChain."""
+    
+    def __init__(self, model: Any):
+        self.model = model
+        
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed documentos."""
+        try:
+            if hasattr(self.model, 'embed_documents'):
+                return self.model.embed_documents(texts)
+            elif hasattr(self.model, 'encode'):
+                # Para SentenceTransformer
+                embeddings = self.model.encode(
+                    texts,
+                    batch_size=32,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True
+                )
+                if isinstance(embeddings, np.ndarray):
+                    return embeddings.tolist()
+                return embeddings
+            else:
+                # Fallback
+                dummy = DummyEmbedder(dimension=384)
+                return dummy.encode(texts)
+        except Exception as e:
+            logger.error(f"Error en embed_documents: {e}")
+            raise
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed una query."""
+        try:
+            if hasattr(self.model, 'embed_query'):
+                return self.model.embed_query(text)
+            elif hasattr(self.model, 'encode'):
+                # Para SentenceTransformer
+                embedding = self.model.encode(
+                    [text],
+                    convert_to_numpy=True,
+                    normalize_embeddings=True
+                )
+                if isinstance(embedding, np.ndarray):
+                    return embedding[0].tolist()
+                return embedding[0] if embedding else []
+            else:
+                # Fallback
+                dummy = DummyEmbedder(dimension=384)
+                return dummy.encode([text])[0]
+        except Exception as e:
+            logger.error(f"Error en embed_query: {e}")
+            raise
+
+    def __repr__(self) -> str:
+        """Representación del wrapper."""
+        if hasattr(self.model, 'model_name'):
+            return f"EmbeddingsWrapper(model={self.model.model_name})"
+        return f"EmbeddingsWrapper(model={type(self.model).__name__})"
 
 # ------------------------------------------------------------------
 # Configuration
@@ -559,6 +627,8 @@ class OptimizedChromaBuilder:
                 return f"HuggingFaceEmbeddings: {model.model_name}"
             elif isinstance(model, DummyEmbedder):
                 return f"DummyEmbedder: dim={model.dimension}"
+            elif isinstance(model, EmbeddingsWrapper):
+                return f"EmbeddingsWrapper: {self._get_model_info(model.model)}"
             else:
                 return f"Modelo tipo: {type(model).__name__}"
         except Exception:
@@ -572,6 +642,11 @@ class OptimizedChromaBuilder:
             return 'huggingface'
         elif isinstance(model, DummyEmbedder):
             return 'dummy'
+        elif isinstance(model, EmbeddingsWrapper):
+            # Obtener el tipo del modelo envuelto
+            if hasattr(model, 'model'):
+                return self._get_model_type(model.model)
+            return 'wrapped'
         else:
             return 'unknown'
     
@@ -586,24 +661,31 @@ class OptimizedChromaBuilder:
                     
                     try:
                         # 🔥 USAR EL SISTEMA DE FALLBACKS MEJORADO
-                        self._embedding_model = self._load_model_with_fallback()
+                        raw_model = self._load_model_with_fallback()
                         
                         load_time = time.time() - start_time
                         
-                        # 🔥 MEJORA: Log detallado del resultado
-                        if isinstance(self._embedding_model, DummyEmbedder):
-                            logger.warning(f"⚠️  Se cargó DummyEmbedder como último recurso en {load_time:.2f}s")
-                            logger.warning("La calidad de las búsquedas será limitada")
+                        # 🔥 MEJORA: Crear wrapper para compatibilidad
+                        if isinstance(raw_model, SentenceTransformer):
+                            # Crear wrapper para SentenceTransformer
+                            self._embedding_model = EmbeddingsWrapper(raw_model)
+                            self._log_ml_info(f"✅ SentenceTransformer cargado y envuelto en {load_time:.2f}s")
+                        elif isinstance(raw_model, (HuggingFaceEmbeddings, DummyEmbedder)):
+                            # HuggingFaceEmbeddings y DummyEmbedder ya son compatibles
+                            self._embedding_model = raw_model
+                            self._log_ml_info(f"✅ Modelo compatible cargado en {load_time:.2f}s")
                         else:
-                            self._log_ml_info(f"✅ Modelo cargado exitosamente en {load_time:.2f}s")
-                            
-                            # 🔥 MEJORA: Información adicional del modelo
-                            model_info = self._get_model_info(self._embedding_model)
-                            self._log_ml_info(f"📋 Info modelo: {model_info}")
+                            # Para cualquier otro tipo, crear wrapper
+                            self._embedding_model = EmbeddingsWrapper(raw_model)
+                            self._log_ml_info(f"✅ Modelo envuelto cargado en {load_time:.2f}s")
+                        
+                        # 🔥 MEJORA: Información adicional del modelo
+                        model_info = self._get_model_info(raw_model)
+                        self._log_ml_info(f"📋 Info modelo: {model_info}")
                         
                         # 🔥 MEJORA: Registrar uso en estadísticas
                         self._stats['model_load_time'] = load_time
-                        self._stats['model_type'] = self._get_model_type(self._embedding_model)
+                        self._stats['model_type'] = self._get_model_type(raw_model)
                         
                     except Exception as e:
                         logger.error(f"❌ Error fatal cargando modelo: {e}")
@@ -1004,6 +1086,10 @@ class OptimizedChromaBuilder:
     def _compute_embeddings_with_model(self, model: Any, texts: List[str]) -> List[List[float]]:
         """Computa embeddings usando cualquier tipo de modelo y convierte a List[List[float]]."""
         try:
+            # Si es un EmbeddingsWrapper, obtener el modelo interno
+            if isinstance(model, EmbeddingsWrapper):
+                model = model.model
+            
             if isinstance(model, SentenceTransformer):
                 # SentenceTransformer devuelve numpy arrays por defecto
                 embeddings_array = model.encode(
@@ -1063,11 +1149,18 @@ class OptimizedChromaBuilder:
             
             self._log_ml_info("🏗️  Creando índice Chroma...")
             
-            # SOLUCIÓN SIMPLIFICADA: Crear Chroma normalmente
-            # No intentar pasar embeddings precomputados debido a incompatibilidades
+            # 🔥 MEJORA: Obtener el modelo de embeddings
+            embedding_model = self._get_embedding_model()
+            
+            # 🔥 FIX: Asegurar que el modelo tenga los métodos requeridos
+            if not hasattr(embedding_model, 'embed_documents'):
+                # Si no tiene embed_documents, crear un wrapper
+                embedding_model = EmbeddingsWrapper(embedding_model)
+            
+            # 🔥 FIX: Usar from_documents con el modelo de embeddings
             chroma_index = Chroma.from_documents(
                 documents=documents,
-                embedding=self._get_embedding_model(),
+                embedding=embedding_model,  # 🔥 Usar el modelo de embeddings
                 persist_directory=persist_directory,
                 collection_metadata=collection_metadata
             )
