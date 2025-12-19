@@ -1,0 +1,8 @@
+{
+  "query": "warriors",
+  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"warriors\"\n                \n                Productos disponibles para recomendar:\n                1. Dynasty Warriors 4 Empires - $11.50 - Categoría: Video Games\n2. Ps4 Warriors All Stars (eu) - $38.60 - Categoría: Video Games\n3. Dragon Warrior (renewed) - $26.74 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que recom",
+  "rating": 5,
+  "user_id": "ae86be0f3d81",
+  "timestamp": 1766115846.2067554,
+  "agent_mode": "ml_enhanced"
+}

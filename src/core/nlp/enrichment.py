@@ -278,10 +278,10 @@ class NLPEnricher:
             import gc
             gc.collect()
             
-            # Limpieza de CUDA solo si torch está disponible
+            # Limpieza de cuda solo si torch está disponible
             if torch_available and torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                logger.debug("🧹 Memoria CUDA liberada")
+                logger.debug("🧹 Memoria cuda liberada")
             
             self._initialized = False
             logger.info("✅ Memoria NLP liberada")

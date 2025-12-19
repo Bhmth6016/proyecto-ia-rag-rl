@@ -140,7 +140,7 @@ class EmbeddingSerializer:
             elif isinstance(embedding, np.ndarray):
                 arr = embedding.astype(np.float32)
             elif torch.is_tensor(embedding):
-                arr = embedding.cpu().numpy().astype(np.float32)
+                arr = embedding.cuda().numpy().astype(np.float32)
             else:
                 return False
             
@@ -169,7 +169,7 @@ class EmbeddingSerializer:
             elif isinstance(embedding, np.ndarray):
                 return embedding.tolist()
             elif torch.is_tensor(embedding):
-                return embedding.cpu().numpy().tolist()
+                return embedding.cuda().numpy().tolist()
             else:
                 # Intentar convertir
                 return list(map(float, embedding))
@@ -453,7 +453,7 @@ class OptimizedChromaBuilder:
             
             model = SentenceTransformer(
                 self.embedding_model,
-                device=model_kwargs.get('device', 'cpu'),
+                device=model_kwargs.get('device', 'cuda'),
                 cache_folder=str(cache_folder)
             )
             
@@ -1540,7 +1540,7 @@ def build_chroma_from_cli():
     parser.add_argument("--input", type=Path, help="Ruta al JSON procesado")
     parser.add_argument("--output", type=Path, help="Ruta para guardar ChromaDB")
     parser.add_argument("--model", type=str, help="Modelo de embeddings")
-    parser.add_argument("--device", type=str, help="Dispositivo (cuda/cpu)")
+    parser.add_argument("--device", type=str, help="Dispositivo (cuda/cuda)")
     parser.add_argument("--batch-size", type=int, default=ChromaBuilderConfig.DEFAULT_BATCH_SIZE)
     parser.add_argument("--workers", type=int, default=ChromaBuilderConfig.MAX_CONCURRENT_WORKERS)
     parser.add_argument("--no-cache", action="store_true", help="Deshabilitar cache")

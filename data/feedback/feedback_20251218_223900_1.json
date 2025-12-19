@@ -1,0 +1,8 @@
+{
+  "query": "mause",
+  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"mause\"\n                \n                Productos disponibles para recomendar:\n                1. Mass Effect - $29.99 - Categoría: Video Games\n2. Quake 4 - $63.95 - Categoría: Video Games\n3. Motocross Madness 2 - $14.97 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que recomiende los productos más relevantes.\n       ",
+  "rating": 1,
+  "user_id": "ae86be0f3d81",
+  "timestamp": 1766115540.9828122,
+  "agent_mode": "ml_enhanced"
+}

@@ -86,7 +86,7 @@ class GlobalSettings(BaseModel):
     
     LOCAL_EMBEDDING_DEVICE: str = Field(
         default="cuda",
-        description="Dispositivo para embeddings (cuda/mps/cpu)"
+        description="Dispositivo para embeddings (cuda/mps/cuda)"
     )
     
     # ======================

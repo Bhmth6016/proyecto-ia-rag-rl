@@ -12,7 +12,8 @@ import time
 import torch
 from pathlib import Path
 import numpy as np
-
+import random
+from collections import defaultdict
 # Importar configuración centralizada
 from src.core.config import settings, get_settings
 from src.core.data.product import Product
@@ -62,6 +63,54 @@ class RAGConfig:
     freshness_weight: float = 0.1
 
 
+
+class SimpleRLBandit:
+    """
+    Implementación mínima de RL (Multi-Armed Bandit) para el Paper.
+    - Estado: (Implícito) Query actual
+    - Acción: Reordenar/Seleccionar producto
+    - Recompensa: Feedback de usuario (+1/-1)
+    - Política: Epsilon-Greedy
+    """
+    def __init__(self, epsilon=0.2, alpha=0.1):
+        self.q_values = defaultdict(float) # Tabla Q(s,a) simplificada a Q(product_id)
+        self.epsilon = epsilon  # Factor de exploración
+        self.alpha = alpha      # Tasa de aprendizaje
+        self.counts = defaultdict(int) # Para estadísticas
+
+    def rank(self, products: List[Any]) -> List[Any]:
+        """Aplica política Epsilon-Greedy para reordenar."""
+        if not products:
+            return []
+            
+        # Exploración: Aleatorizar orden (descubrir nuevos productos buenos)
+        if random.random() < self.epsilon:
+            shuffled = products.copy()
+            random.shuffle(shuffled)
+            return shuffled
+            
+        # Explotación: Ordenar por valor Q aprendido (usar lo que sabemos que gusta)
+        # Se combina con el score original para mantener relevancia semántica
+        return sorted(
+            products, 
+            key=lambda p: self.get_q_value(p) + (getattr(p, 'score', 0) * 0.5), 
+            reverse=True
+        )
+
+    def get_q_value(self, product) -> float:
+        """Obtiene valor Q actual para un producto."""
+        pid = getattr(product, 'id', str(product))
+        return self.q_values[pid]
+
+    def update(self, product_id: str, reward: float):
+        """Actualización Q-Learning: Q(a) = Q(a) + alpha * (r - Q(a))"""
+        old_val = self.q_values[product_id]
+        # Ecuación fundamental de RL (Temporal Difference)
+        new_val = old_val + self.alpha * (reward - old_val)
+        self.q_values[product_id] = new_val
+        self.counts[product_id] += 1
+
+
 class WorkingAdvancedRAGAgent:
     """
     Agente RAG avanzado que usa configuración ML centralizada
@@ -74,6 +123,9 @@ class WorkingAdvancedRAGAgent:
         
         # Configuración del agente
         self.config = config or RAGConfig()
+
+        # 🔥 NUEVO: Inicializar motor RL Simple
+        self.rl_bandit = SimpleRLBandit(epsilon=0.2, alpha=0.1)
         
         # Componentes del sistema (lazy loaded)
         self._retriever = None
@@ -101,6 +153,7 @@ class WorkingAdvancedRAGAgent:
         self.logger.info(f"   • LLM Local: {'✅' if self.config.local_llm_enabled else '❌'}")
         self.logger.info(f"   • RLHF: {'✅' if self.rlhf_pipeline else '❌'}")
         self.logger.info(f"   • Collaborative Filter: {'✅' if self._collaborative_filter else '❌'}")
+        self.logger.info(f"🧠 RL Bandit Simple: ✅ ACTIVO")
 
     def _init_rlhf(self):
         """Inicializar componente RLHF si está habilitado"""
@@ -698,7 +751,16 @@ class WorkingAdvancedRAGAgent:
         final_results = reranked[:self.config.max_final]
         
         logger.info(f"🔄 Re-ranking aplicado: RLHF={self.rlhf_model is not None}, CF={collab_score>0}")
-        return final_results
+
+
+        if self.config.ml_enabled: # O una flag especifica use_rl
+            self.logger.info("🎲 Aplicando política RL (Epsilon-Greedy)")
+            final_results = self.rl_bandit.rank(reranked)
+        else:
+            final_results = reranked
+
+        # Asegurar límite final
+        return final_results[:self.config.max_final]
     
     # 🔥 NUEVO: Método para usar RLHF en scoring
     def _apply_rlhf_scoring(self, query: str, references: List[ProductReference]) -> Dict[str, float]:
@@ -1084,16 +1146,17 @@ class WorkingAdvancedRAGAgent:
 
     # 🔥 CORRECCIÓN: log_feedback debe estar aquí, NO dentro de test_components
     def log_feedback(self, query: str, answer: str, rating: int, user_id: Optional[str] = None) -> None:
-        """
-        Registra feedback del usuario para RLHF.
-        
-        Args:
-            query: Consulta original del usuario
-            answer: Respuesta proporcionada
-            rating: Calificación 1-5
-            user_id: ID del usuario (opcional)
-        """
+        """Registra feedback y ENTRENA el modelo RL."""
         try:
+            # 1. Convertir Rating (1-5) a Recompensa (-1 a +1)
+            # 1-2 = -1 (Castigo), 3 = 0 (Neutro), 4-5 = +1 (Premio)
+            reward = 0
+            if rating >= 4:
+                reward = 1
+            elif rating <= 2:
+                reward = -1
+            
+            self.logger.info(f"📢 Feedback recibido: {rating}⭐ -> Reward: {reward}")
             # 🔥 SIMPLIFICADO: Guardar feedback en archivo o base de datos local
             feedback_data = {
                 "query": query,

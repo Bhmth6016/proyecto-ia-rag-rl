@@ -1,0 +1,8 @@
+{
+  "query": "play estation",
+  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"play estation\"\n                \n                Productos disponibles para recomendar:\n                1. Fifa 18 for Playstation 4 - $15.47 - Categoría: Video Games\n2. Tactics Ogre - Playstation - $189.99 - Categoría: Video Games\n3. Matchpoint - Playstation 5 - $36.48 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que",
+  "rating": 5,
+  "user_id": "ae86be0f3d81",
+  "timestamp": 1766115477.1079383,
+  "agent_mode": "ml_enhanced"
+}

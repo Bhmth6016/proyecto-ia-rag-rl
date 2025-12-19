@@ -252,10 +252,10 @@ class MLProductProcessor:
         """Convierte embeddings de cualquier tipo a lista de Python."""
         try:
             # Si es un Tensor de PyTorch
-            if hasattr(embedding, 'cpu'):
-                embedding = embedding.cpu().numpy()
+            if hasattr(embedding, 'cuda'):
+                embedding = embedding.cuda().numpy()
             elif hasattr(embedding, 'detach'):
-                embedding = embedding.detach().cpu().numpy()
+                embedding = embedding.detach().cuda().numpy()
             
             # Si es un numpy array
             if isinstance(embedding, np.ndarray):

@@ -73,7 +73,7 @@ class EmbeddingModelSingleton:
                     
                     cls._model = SentenceTransformer(
                         model_name,
-                        device='cpu'  # ← OPCIÓN: especificar dispositivo
+                        device='cuda'  # ← OPCIÓN: especificar dispositivo
                     )
                     logger.info(f"✅ Modelo de embeddings cargado")
                 except ImportError:
@@ -200,7 +200,7 @@ class ProductDataPreprocessor:
         self.enable_nlp = enable_nlp
         
         # 🔥 CORRECCIÓN: Añadir atributo device
-        self.device = "cuda" if settings.ML_USE_GPU else "cpu"
+        self.device = "cuda" if settings.ML_USE_GPU else "cuda"
         
         # Modelos (lazy loading)
         self._embedding_model = None

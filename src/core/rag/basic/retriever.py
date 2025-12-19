@@ -203,9 +203,9 @@ class LocalEmbedder(Embeddings):
                 return [float(x) for x in embedding]
             elif isinstance(embedding, np.ndarray):
                 return embedding.tolist()
-            elif hasattr(embedding, 'cpu'):
+            elif hasattr(embedding, 'cuda'):
                 # Tensor de PyTorch
-                return embedding.cpu().numpy().tolist()
+                return embedding.cuda().numpy().tolist()
             elif hasattr(embedding, 'tolist'):
                 return embedding.tolist()
             else:
@@ -850,9 +850,9 @@ class Retriever:
                 return [float(x) for x in embedding]
             elif isinstance(embedding, np.ndarray):
                 return embedding.tolist()
-            elif hasattr(embedding, 'cpu'):
+            elif hasattr(embedding, 'cuda'):
                 # Tensor de PyTorch
-                return embedding.cpu().numpy().tolist()
+                return embedding.cuda().numpy().tolist()
             elif hasattr(embedding, 'tolist'):
                 return embedding.tolist()
             else:
