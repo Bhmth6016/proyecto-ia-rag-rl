@@ -1,8 +1,0 @@
-{
-  "query": "muestrame consolas",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"muestrame consolas\"\n                \n                Productos disponibles para recomendar:\n                1. Culpa Innata Download - $9.99 - Categoría: Office Products\n2. Shadow of the Colossus - Playstation 2 (renewed) - $27.89 - Categoría: Video Games\n3. Senran Kagura Peach Beach Splash - Standard Edition Ps4 - $50.90 - Categoría: Video Games\n                \n ",
-  "rating": 1,
-  "user_id": "8480d2c2bbe8",
-  "timestamp": 1766087302.2013333,
-  "agent_mode": "ml_enhanced"
-}

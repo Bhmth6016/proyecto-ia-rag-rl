@@ -1,8 +1,0 @@
-{
-  "query": "juegos de accion",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"juegos de accion\"\n                \n                Productos disponibles para recomendar:\n                1. Dragon Warrior - $15.94 - Categoría: Video Games\n2. Puzzle Quest - Pc - $21.98 - Categoría: Video Games\n3. Hoyle Word Games 2002 - Pc - $74.99 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que recomiende los pr",
-  "rating": 5,
-  "user_id": "ae86be0f3d81",
-  "timestamp": 1766115426.0495267,
-  "agent_mode": "ml_enhanced"
-}

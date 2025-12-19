@@ -1,0 +1,66 @@
+# Configuración para el paper: Sistema Híbrido RAG+RL para E-commerce
+experiment:
+  name: "hybrid_rag_rl_ecommerce_paper"
+  seed: 42
+  version: "paper_v1.0"
+  description: "Implementación del sistema híbrido RAG+RL para recomendación en e-commerce"
+
+dataset:
+  raw_path: "data/raw"
+  sample_size: 2000
+  max_files: 2
+  categories: ["Books", "Electronics", "Home & Kitchen"]
+
+embedding:
+  model: "all-MiniLM-L6-v2"
+  dimension: 384
+
+retrieval:
+  top_k: 100
+  index_type: "flat"
+
+ranking:
+  baseline_weights:
+    content_similarity: 0.35
+    title_similarity: 0.20
+    category_exact_match: 0.15
+    rating_normalized: 0.12
+    price_available: 0.08
+    has_brand: 0.05
+    num_features: 0.03
+    title_length: 0.02
+  
+  ml_weights:
+    content_similarity: 0.30
+    title_similarity: 0.20
+    category_exact_match: 0.18
+    rating_normalized: 0.15
+    price_available: 0.10
+    has_brand: 0.04
+    num_features: 0.03
+
+rlhf:
+  alpha: 0.15
+  exploration_eps: 0.25
+  learning_rate: 0.01
+  num_episodes: 50
+  batch_size: 10
+
+evaluation:
+  test_queries: [
+    "smartphone with good camera",
+    "gaming laptop for students",
+    "noise cancelling headphones",
+    "science fiction book series",
+    "running shoes for training"
+  ]
+  num_runs: 5
+  metrics: ["ndcg@10", "precision@5", "mrr"]
+
+ablation_study:
+  enabled: true
+  configurations: ["full", "without_ner", "without_rating"]
+
+output:
+  generate_plots: true
+  save_results: true

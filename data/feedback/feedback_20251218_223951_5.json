@@ -1,8 +1,0 @@
-{
-  "query": "mouse",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"mouse\"\n                \n                Productos disponibles para recomendar:\n                1. Manhattan Wired Optical Game Mouse (179164) - $12.92 - Categoría: Computers\n2. Sanpyl Usb Mouse Cable for G9 G9x Game Mouse Replacement Mouse Line Repair Accessory - $7.42 - Categoría: Computers\n3. Bloody Gaming W70 Max Gaming Mouse 10 000 Cpi 250 Ips Rgb Gaming Mouse ",
-  "rating": 5,
-  "user_id": "ae86be0f3d81",
-  "timestamp": 1766115591.0956013,
-  "agent_mode": "ml_enhanced"
-}

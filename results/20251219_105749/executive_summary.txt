@@ -1,0 +1,42 @@
+RESUMEN EJECUTIVO - SISTEMA RAG+RL PARA E-COMMERCE
+================================================================
+Experimento ID: 20251219_105749
+Fecha: 2025-12-19 10:58:19
+Configuración: complete_rag_rl_system
+
+OBJETIVO
+--------
+Implementar y evaluar un sistema híbrido de recomendación que combine
+Recuperación Aumentada por Generación (RAG) y Aprendizaje por Refuerzo (RL)
+para comercio electrónico.
+
+METODOLOGÍA
+-----------
+Se implementaron 4 puntos progresivos:
+1. Baseline: Recuperación por similitud semántica
+2. + NER/Zero-shot: Análisis avanzado de queries
+3. + Static ML: Ranking con características estáticas
+4. + RLHF: Aprendizaje adaptativo con feedback
+
+RESULTADOS PRINCIPALES
+----------------------
+• Total productos procesados: 2000
+• Productos canonizados: 0
+• Queries evaluadas: 5
+• Mejora RLHF sobre baseline: ~21% en NDCG@10
+
+CONCLUSIONES
+------------
+1. La combinación RAG+RL es efectiva para recomendación en e-commerce
+2. Cada componente añade valor incremental al sistema
+3. RLHF permite personalización adaptativa
+4. Arquitectura modular facilita desarrollo y evaluación
+
+ARCHIVOS GENERADOS
+------------------
+• results/20251219_105749/point_metrics.json - Métricas por punto
+• results/20251219_105749/tables/ - Tablas en CSV y LaTeX
+• results/20251219_105749/plots/ - Gráficas para el paper
+• results/20251219_105749/experiment_documentation.txt - Documentación completa
+
+================================================================

@@ -1,8 +1,0 @@
-{
-  "query": "virgin",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"virgin\"\n                \n                Productos disponibles para recomendar:\n                1. Vigilante - $0.00 - Categoría: Video Games\n2. Virtual Farm Download - $6.99 - Categoría: Video Games\n3. Vampire the Masquerade Redemption - Pc - $8.45 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que recomiende los prod",
-  "rating": 1,
-  "user_id": "ae86be0f3d81",
-  "timestamp": 1766115800.5728579,
-  "agent_mode": "ml_enhanced"
-}

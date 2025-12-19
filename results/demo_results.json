@@ -1,0 +1,11 @@
+{
+  "total_products": 10,
+  "products_with_price": 10,
+  "products_with_rating": 10,
+  "categories": [
+    "Video Games",
+    "Electronics",
+    "Books",
+    "Sports"
+  ]
+}

@@ -1,8 +1,0 @@
-{
-  "query": "juegos de mario",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"juegos de mario\"\n                \n                Productos disponibles para recomendar:\n                1. Super Mario Galaxy 2 - $73.95 - Categoría: Video Games\n2. New Super Mario Bros. 2 - $33.93 - Categoría: Video Games\n3. New Super Mario Bros. U - $49.60 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que recomiend",
-  "rating": 5,
-  "user_id": "ae86be0f3d81",
-  "timestamp": 1766115329.2159169,
-  "agent_mode": "ml_enhanced"
-}

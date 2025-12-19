@@ -1,0 +1,18 @@
+{
+  "total_products": 1000,
+  "products_with_price": 494,
+  "products_with_rating": 1000,
+  "unique_categories": 21,
+  "categories": [
+    "Sports & Outdoors",
+    "Tools & Home Improvement",
+    "Baby",
+    "AMAZON FASHION",
+    "Cell Phones & Accessories",
+    "Office Products",
+    "Toys & Games",
+    "Grocery",
+    "Amazon Home",
+    "Musical Instruments"
+  ]
+}

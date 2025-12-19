@@ -1,0 +1,46 @@
+experiment:
+  name: "complete_rag_rl_system"
+  seed: 42
+
+dataset:
+  raw_path: "data/raw"
+  sample_size: 2000
+  max_files: 2
+
+embedding:
+  model: "all-MiniLM-L6-v2"
+  dimension: 384
+
+retrieval:
+  top_k: 50
+
+ranking:
+  baseline_weights:
+    content_similarity: 0.4
+    title_similarity: 0.2
+    category_exact_match: 0.15
+    rating_normalized: 0.1
+    price_available: 0.05
+    has_brand: 0.05
+    title_length: 0.025
+    desc_length: 0.025
+  ml_weights:
+    content_similarity: 0.35
+    title_similarity: 0.2
+    category_exact_match: 0.2
+    rating_normalized: 0.15
+    price_available: 0.05
+    has_brand: 0.05
+
+evaluation:
+  test_queries: [
+    "smartphone with good camera",
+    "gaming laptop",
+    "wireless headphones",
+    "science fiction books",
+    "running shoes"
+  ]
+
+rlhf:
+  alpha: 0.1
+  num_episodes: 20

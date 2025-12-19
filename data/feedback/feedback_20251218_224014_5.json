@@ -1,8 +1,0 @@
-{
-  "query": "call of duty",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"call of duty\"\n                \n                Productos disponibles para recomendar:\n                1. Call of Duty Black Ops (ps3) - $49.90 - Categoría: Video Games\n2. Call of Duty Modern Warfare 2 - Xbox 360 - $31.00 - Categoría: Video Games\n3. Call of Duty Advanced Warfare (xbox One) - $24.94 - Categoría: Video Games\n                \n                Genera una",
-  "rating": 5,
-  "user_id": "ae86be0f3d81",
-  "timestamp": 1766115614.5188856,
-  "agent_mode": "ml_enhanced"
-}

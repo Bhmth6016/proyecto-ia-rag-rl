@@ -1,8 +1,0 @@
-{
-  "query": "war",
-  "answer": "He procesado tu consulta sobre: '\n                Eres un asistente de recomendaciones de Amazon.\n                Usuario pregunta: \"war\"\n                \n                Productos disponibles para recomendar:\n                1. Air Combat - $39.97 - Categoría: Video Games\n2. Gears of War Guide - $5.31 - Categoría: Video Games\n3. Elements of War - Pc - $3.47 - Categoría: Video Games\n                \n                Genera una respuesta útil y natural que recomiende los productos más relevantes.\n",
-  "rating": 5,
-  "user_id": "ae86be0f3d81",
-  "timestamp": 1766115696.2511978,
-  "agent_mode": "ml_enhanced"
-}
