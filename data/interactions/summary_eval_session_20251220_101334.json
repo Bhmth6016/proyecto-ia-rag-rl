@@ -1,0 +1,10 @@
+{
+  "session_id": "eval_session_20251220_101334",
+  "total_interactions": 94,
+  "click_count": 47,
+  "query_count": 47,
+  "modes_used": [
+    "with_rlhf"
+  ],
+  "timestamp_end": "2025-12-20T10:33:15.494433"
+}

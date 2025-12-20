@@ -1,6 +1,6 @@
 # src/data/canonicalizer.py
 """
-Canonización de productos - ÚNICO lugar donde se generan embeddings
+Canonización de productos para datos Amazon JSONL
 """
 import json
 import hashlib
@@ -9,6 +9,7 @@ from typing import List, Optional, Dict, Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -46,43 +47,44 @@ class CanonicalProduct:
 
 
 class ProductCanonicalizer:
-    """Canoniza productos y genera embeddings una sola vez"""
+    """Canoniza productos específicamente para Amazon JSONL"""
     
     def __init__(self, embedding_model: str = "all-MiniLM-L6-v2"):
         self.embedding_model = SentenceTransformer(embedding_model)
         logger.info(f"✅ Canonicalizer inicializado con modelo: {embedding_model}")
     
     def canonicalize(self, raw_product: Dict[str, Any]) -> Optional[CanonicalProduct]:
-        """Convierte producto crudo a formato canónico"""
+        """Convierte producto crudo a formato canónico - Optimizado para Amazon JSONL"""
         try:
-            # Validar campos mínimos
-            title = raw_product.get('title', '').strip()
-            if not title or len(title) < 3:
+            # Extraer ID único (generar uno si no existe)
+            product_id = self._extract_id(raw_product)
+            if not product_id:
                 return None
             
-            description = raw_product.get('description', '').strip()
+            # Extraer título
+            title = self._extract_title(raw_product)
+            if not title or len(title.strip()) < 3:
+                return None
+            
+            # Extraer descripción
+            description = self._extract_description(raw_product)
             if not description:
-                description = title
+                description = title  # Usar título como fallback
             
-            # Extraer y limpiar precio
-            price = self._extract_price(raw_product.get('price'))
+            # Extraer precio
+            price = self._extract_price(raw_product)
             
-            # Categoría
-            category = raw_product.get('main_category', 'General')
-            if not category:
-                category = 'General'
+            # Extraer categoría
+            category = self._extract_category(raw_product)
             
-            # Rating
-            rating = self._extract_rating(raw_product.get('average_rating'))
-            rating_count = raw_product.get('rating_count')
+            # Extraer rating
+            rating = self._extract_rating(raw_product)
+            rating_count = self._extract_rating_count(raw_product)
             
             # Generar embeddings
             title_embedding = self.embedding_model.encode(title, normalize_embeddings=True)
             content = f"{title} {description}"
             content_embedding = self.embedding_model.encode(content, normalize_embeddings=True)
-            
-            # ID único
-            product_id = raw_product.get('id', f"prod_{hashlib.md5(title.encode()).hexdigest()[:8]}")
             
             return CanonicalProduct(
                 id=product_id,
@@ -97,73 +99,187 @@ class ProductCanonicalizer:
             )
             
         except Exception as e:
-            logger.warning(f"⚠️ Error canonizando producto: {e}")
+            logger.debug(f"⚠️ Error canonizando producto: {e}")
             return None
     
-    def _extract_price(self, price_data: Any) -> Optional[float]:
-        """Extrae precio de forma robusta"""
+    def _extract_id(self, raw_product: Dict[str, Any]) -> str:
+        """Extrae ID único del producto"""
+        # Intentar diferentes campos para ID
+        id_fields = ['asin', 'id', 'product_id']
+        
+        for field in id_fields:
+            if field in raw_product and raw_product[field]:
+                return str(raw_product[field])
+        
+        # Si no hay ID, generar uno basado en título hash
+        title = self._extract_title(raw_product)
+        if title:
+            return f"prod_{hashlib.md5(title.encode()).hexdigest()[:12]}"
+        
+        # Último recurso: ID aleatorio
+        import uuid
+        return f"prod_{uuid.uuid4().hex[:12]}"
+    
+    def _extract_title(self, raw_product: Dict[str, Any]) -> str:
+        """Extrae título del producto"""
+        # Campo principal
+        if 'title' in raw_product and raw_product['title']:
+            title = raw_product['title']
+            if isinstance(title, str):
+                return title.strip()
+            elif isinstance(title, list):
+                return ' '.join([str(t) for t in title if t]).strip()
+        
+        # Campos alternativos
+        alt_fields = ['name', 'product_title', 'product_name']
+        for field in alt_fields:
+            if field in raw_product and raw_product[field]:
+                title = raw_product[field]
+                if isinstance(title, str):
+                    return title.strip()
+        
+        return ""
+    
+    def _extract_description(self, raw_product: Dict[str, Any]) -> str:
+        """Extrae descripción del producto"""
+        description_parts = []
+        
+        # Descripción principal
+        if 'description' in raw_product and raw_product['description']:
+            desc = raw_product['description']
+            if isinstance(desc, str):
+                description_parts.append(desc.strip())
+            elif isinstance(desc, list):
+                description_parts.extend([str(d).strip() for d in desc if d])
+        
+        # Features/bullet points
+        if 'features' in raw_product and raw_product['features']:
+            features = raw_product['features']
+            if isinstance(features, list):
+                description_parts.extend([str(f).strip() for f in features if f])
+        
+        # Bullet points (campo alternativo)
+        if 'bullet_points' in raw_product and raw_product['bullet_points']:
+            bullets = raw_product['bullet_points']
+            if isinstance(bullets, list):
+                description_parts.extend([str(b).strip() for b in bullets if b])
+        
+        # Unir todas las partes
+        if description_parts:
+            return ' '.join(description_parts)
+        
+        return ""
+    
+    def _extract_price(self, raw_product: Dict[str, Any]) -> Optional[float]:
+        """Extrae precio del producto"""
+        price_data = raw_product.get('price')
+        
         if price_data is None:
             return None
         
         try:
+            # Si es número directamente
             if isinstance(price_data, (int, float)):
                 return float(price_data)
-            elif isinstance(price_data, str):
-                import re
-                match = re.search(r'(\d+(?:\.\d+)?)', price_data)
+            
+            # Si es string, extraer número
+            if isinstance(price_data, str):
+                # Buscar primer número (entero o decimal)
+                match = re.search(r'(\d+[\.,]?\d*)', price_data.replace(',', ''))
                 if match:
-                    return float(match.group(1))
-        except:
+                    price_str = match.group(1).replace(',', '.')
+                    return float(price_str)
+            
+            # Si es diccionario, buscar valor
+            if isinstance(price_data, dict):
+                for value in price_data.values():
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                    elif isinstance(value, str):
+                        match = re.search(r'(\d+[\.,]?\d*)', value.replace(',', ''))
+                        if match:
+                            price_str = match.group(1).replace(',', '.')
+                            return float(price_str)
+        
+        except (ValueError, TypeError, AttributeError):
             pass
         
         return None
     
-    def _extract_rating(self, rating_data: Any) -> Optional[float]:
-        """Extrae rating de forma robusta"""
-        if rating_data is None:
-            return None
+    def _extract_category(self, raw_product: Dict[str, Any]) -> str:
+        """Extrae categoría del producto"""
+        # Campo principal
+        if 'main_category' in raw_product and raw_product['main_category']:
+            cat = raw_product['main_category']
+            if isinstance(cat, str):
+                return cat.strip()
+            elif isinstance(cat, list) and cat:
+                return str(cat[0]).strip()
         
-        try:
-            if isinstance(rating_data, (int, float)):
-                rating = float(rating_data)
-                return max(0.0, min(5.0, rating))
-        except:
-            pass
+        # Campos alternativos
+        alt_fields = ['category', 'categories', 'primary_category']
+        for field in alt_fields:
+            if field in raw_product and raw_product[field]:
+                cat = raw_product[field]
+                if isinstance(cat, str):
+                    return cat.strip()
+                elif isinstance(cat, list) and cat:
+                    return str(cat[0]).strip()
+        
+        return "General"
+    
+    def _extract_rating(self, raw_product: Dict[str, Any]) -> Optional[float]:
+        """Extrae rating del producto"""
+        rating_fields = ['average_rating', 'rating', 'overall_rating', 'stars', 'review_score']
+        
+        for field in rating_fields:
+            if field in raw_product and raw_product[field] is not None:
+                try:
+                    rating = float(raw_product[field])
+                    # Asegurar que esté en rango 0-5
+                    if rating > 5 and rating <= 100:  # Escala 0-100
+                        rating = rating / 20
+                    elif rating > 10:  # Escala 0-10
+                        rating = rating / 2
+                    
+                    return max(0.0, min(5.0, rating))
+                except (ValueError, TypeError):
+                    continue
+        
+        return None
+    
+    def _extract_rating_count(self, raw_product: Dict[str, Any]) -> Optional[int]:
+        """Extrae número de ratings"""
+        count_fields = ['rating_number', 'rating_count', 'total_ratings', 'num_ratings']
+        
+        for field in count_fields:
+            if field in raw_product and raw_product[field] is not None:
+                try:
+                    return int(raw_product[field])
+                except (ValueError, TypeError):
+                    continue
         
         return None
     
     def batch_canonicalize(self, raw_products: List[Dict]) -> List[CanonicalProduct]:
-        """Canoniza múltiples productos"""
+        """Canoniza múltiples productos con logging detallado"""
         canonical = []
+        errors = 0
         
         for i, raw in enumerate(raw_products):
-            if i % 100 == 0:
-                logger.info(f"📦 Canonizando producto {i}/{len(raw_products)}")
+            if i % 100 == 0 and i > 0:
+                logger.info(f"📦 Procesados {i}/{len(raw_products)} productos...")
             
             product = self.canonicalize(raw)
             if product:
                 canonical.append(product)
+            else:
+                errors += 1
+                if errors <= 5:  # Log solo primeros errores
+                    logger.debug(f"  Producto {i} no pudo ser canonicalizado")
         
         logger.info(f"✅ Canonizados {len(canonical)}/{len(raw_products)} productos")
+        if errors > 0:
+            logger.info(f"⚠️  {errors} productos no pudieron ser procesados")
+        
         return canonical
-    
-    def save_canonical(self, products: List[CanonicalProduct], path: str):
-        """Guarda productos canónicos (sin embeddings)"""
-        save_data = []
-        
-        for product in products:
-            save_data.append({
-                "id": product.id,
-                "title": product.title,
-                "description": product.description,
-                "price": product.price,
-                "category": product.category,
-                "rating": product.rating,
-                "rating_count": product.rating_count,
-                "content_hash": product.content_hash
-            })
-        
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(save_data, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"💾 Guardados {len(save_data)} productos canónicos en {path}")

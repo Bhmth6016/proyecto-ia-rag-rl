@@ -1,0 +1,38 @@
+# Configuraciones específicas para experimentos
+
+# Experimentos comparativos
+comparative_experiments:
+  - name: "3_modes_comparison"
+    description: "Comparación de los 3 modos de ranking"
+    modes: ["baseline", "with_features", "with_rlhf"]
+    queries: 10
+    users_per_mode: 3
+    metrics: ["ndcg@5", "mrr", "ctr"]
+    
+  - name: "rlhf_learning_curve"
+    description: "Evolución del aprendizaje RLHF"
+    iterations: 100
+    feedback_per_iteration: 10
+    evaluation_frequency: 10
+
+# Parámetros de experimentos
+parameters:
+  baseline:
+    k_neighbors: 50
+    similarity_threshold: 0.5
+    
+  with_features:
+    feature_weights:
+      content_similarity: 0.25
+      title_similarity: 0.20
+      category_exact_match: 0.25
+      rating_normalized: 0.15
+      price_available: 0.05
+      has_brand: 0.05
+      description_length: 0.05
+      
+  with_rlhf:
+    learning_rate: 0.1
+    exploration_rate: 0.1
+    discount_factor: 0.9
+    batch_size: 32

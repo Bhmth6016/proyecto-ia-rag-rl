@@ -5,3 +5,4 @@ venv/
 env/
 .myenv/
 myenv/
+/data/cache

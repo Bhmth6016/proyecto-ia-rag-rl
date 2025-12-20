@@ -1,5 +1,0 @@
-Punto,recall@10,precision@5,ndcg@10,mrr,learning_gain
-Punto 1 (Baseline),0.65,0.42,0.58,0.35,
-Punto 2 (+NER/Zero-shot),0.72,0.48,0.64,0.41,
-Punto 3 (+Static ML),0.78,0.55,0.71,0.48,
-Punto 4 (+RLHF),0.85,0.62,0.79,0.56,0.21
