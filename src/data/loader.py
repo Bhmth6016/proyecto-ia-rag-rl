@@ -1,31 +1,102 @@
 # src/data/loader.py
 """
-Data Loader para Amazon JSONL - Optimizado
+Data Loader para Amazon JSONL - Versión actualizada
 """
 import json
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-def load_raw_products(limit: int = None) -> List[Dict[str, Any]]:
+def load_raw_products(file_path: Optional[str] = None, limit: int = None) -> List[Dict[str, Any]]:
     """
-    Carga TODOS los productos desde archivos JSONL de Amazon
+    Carga productos desde archivos JSONL de Amazon
     
     Args:
-        limit: Si es None, carga todos los productos
+        file_path: Ruta a un archivo específico (si es None, carga de todos)
+        limit: Límite máximo de productos a cargar
     
     Returns:
         Lista de productos crudos
     """
     products = []
+    
+    if file_path:
+        # Cargar desde un archivo específico
+        return _load_single_file(file_path, limit)
+    else:
+        # Cargar desde todos los archivos
+        return _load_all_files(limit)
+
+
+def _load_single_file(file_path: str, limit: int = None) -> List[Dict[str, Any]]:
+    """Carga productos desde un solo archivo"""
+    products = []
+    file_path_obj = Path(file_path)
+    
+    if not file_path_obj.exists():
+        logger.warning(f"⚠️  Archivo no encontrado: {file_path}")
+        return []
+    
+    try:
+        logger.info(f"📄 Cargando: {file_path_obj.name}")
+        
+        with open(file_path_obj, 'r', encoding='utf-8') as f:
+            lines_read = 0
+            lines_valid = 0
+            
+            for line in f:
+                if limit is not None and lines_valid >= limit:
+                    break
+                
+                lines_read += 1
+                
+                try:
+                    data = json.loads(line.strip())
+                    
+                    if not isinstance(data, dict):
+                        continue
+                    
+                    title = data.get('title')
+                    if not title:
+                        continue
+                    
+                    # Normalizar datos básicos
+                    if 'main_category' not in data:
+                        data['main_category'] = data.get('categories', [''])[0] if data.get('categories') else ''
+                    
+                    # Añadir identificador único si no existe
+                    if 'id' not in data:
+                        data['id'] = f"{file_path_obj.stem}_{lines_read}"
+                    
+                    products.append(data)
+                    lines_valid += 1
+                    
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error procesando línea: {e}")
+                    continue
+        
+        logger.info(f"  ✓ Líneas leídas: {lines_read}")
+        logger.info(f"  ✓ Productos válidos: {lines_valid}")
+        
+        return products
+        
+    except Exception as e:
+        logger.error(f"  ✗ Error cargando {file_path_obj.name}: {e}")
+        return []
+
+
+def _load_all_files(limit: int = None) -> List[Dict[str, Any]]:
+    """Carga productos desde todos los archivos"""
+    products = []
     data_dir = Path("data/raw")
     
     if not data_dir.exists():
         logger.warning("⚠️  Directorio data/raw no existe")
-        # Crear directorio si no existe
         data_dir.mkdir(parents=True, exist_ok=True)
         return []
     
@@ -53,7 +124,7 @@ def load_raw_products(limit: int = None) -> List[Dict[str, Any]]:
     
     logger.info(f"📂 Procesando {len(jsonl_files)}/9 archivos")
     
-    # Procesar TODOS los archivos
+    # Procesar archivos
     for file_idx, file_path in enumerate(jsonl_files):
         if limit is not None and len(products) >= limit:
             logger.info(f"⏹️  Límite alcanzado: {limit} productos")
@@ -62,50 +133,17 @@ def load_raw_products(limit: int = None) -> List[Dict[str, Any]]:
         try:
             logger.info(f"\n📄 Procesando ({file_idx+1}/{len(jsonl_files)}): {file_path.name}")
             
-            with open(file_path, 'r', encoding='utf-8') as f:
-                file_products = []
-                lines_read = 0
-                lines_valid = 0
-                
-                for line in f:
-                    if limit is not None and len(products) >= limit:
-                        break
-                    
-                    lines_read += 1
-                    
-                    try:
-                        data = json.loads(line.strip())
-                        
-                        # Verificar que tenga datos mínimos
-                        if not isinstance(data, dict):
-                            continue
-                        
-                        # Asegurar que tenga título
-                        title = data.get('title')
-                        if not title:
-                            continue
-                        
-                        # Normalizar datos básicos
-                        if 'main_category' not in data:
-                            data['main_category'] = data.get('categories', [''])[0] if data.get('categories') else ''
-                        
-                        # Añadir identificador único si no existe
-                        if 'id' not in data:
-                            data['id'] = f"{file_path.stem}_{lines_read}"
-                        
-                        # Añadir a productos
-                        products.append(data)
-                        file_products.append(data)
-                        lines_valid += 1
-                        
-                    except json.JSONDecodeError:
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Error procesando línea: {e}")
-                        continue
+            # Calcular cuántos productos necesitamos de este archivo
+            remaining = None
+            if limit is not None:
+                remaining = limit - len(products)
+                if remaining <= 0:
+                    break
             
-            logger.info(f"  ✓ Líneas leídas: {lines_read}")
-            logger.info(f"  ✓ Productos válidos: {len(file_products)}")
+            file_products = _load_single_file(str(file_path), limit=remaining)
+            products.extend(file_products)
+            
+            logger.info(f"  ✓ Productos de archivo: {len(file_products)}")
             logger.info(f"  ✓ Total acumulado: {len(products)}")
             
             # Mostrar estadísticas del archivo
@@ -136,10 +174,17 @@ def load_raw_products(limit: int = None) -> List[Dict[str, Any]]:
             cat = product.get('main_category', 'Unknown')
             if isinstance(cat, str):
                 categories[cat] = categories.get(cat, 0) + 1
+            elif isinstance(cat, list) and cat:
+                cat_str = str(cat[0]) if len(cat) > 0 else 'Unknown'
+                categories[cat_str] = categories.get(cat_str, 0) + 1
         
         logger.info(f"\n📊 DISTRIBUCIÓN POR CATEGORÍA:")
-        for cat, count in sorted(categories.items(), key=lambda x: x[1], reverse=True):
+        sorted_cats = sorted(categories.items(), key=lambda x: x[1], reverse=True)
+        for cat, count in sorted_cats[:20]:  # Mostrar top 20
             percentage = (count / len(products)) * 100
-            logger.info(f"  {cat:25s}: {count:6d} ({percentage:5.1f}%)")
+            logger.info(f"  {cat[:30]:30s}: {count:6d} ({percentage:5.1f}%)")
+        
+        if len(sorted_cats) > 20:
+            logger.info(f"  ... y {len(sorted_cats) - 20} categorías más")
     
     return products

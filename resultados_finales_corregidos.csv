@@ -1,0 +1,15 @@
+query,baseline_p@5,rl_p@5,mejora,mejora_porcentual,ranking_cambiado,baseline_relevantes,rl_relevantes,total_relevantes
+car parts,0.6,0.6,0.0,0.0,False,3,3,3
+led lights for truck,0.6,0.6,0.0,0.0,False,3,3,3
+door panel courtesy light,0.6,0.6,0.0,0.0,False,3,3,3
+generator stator,0.6,0.6,0.0,0.0,False,3,3,3
+carburetor rebuild kit,0.6,0.6,0.0,0.0,False,3,3,3
+fake nails,0.6,0.6,0.0,0.0,False,3,3,3
+volumizing conditioner,0.6,0.6,0.0,0.0,False,3,3,3
+acrylic nail tips,0.6,0.6,0.0,0.0,False,3,3,3
+brazilian virgin hair,0.6,0.6,0.0,0.0,False,3,3,3
+curly synthetic wigs,0.6,0.6,0.0,0.0,False,3,3,3
+christian daily devotional,0.6,0.6,0.0,0.0,False,3,3,3
+star trek audiobook,0.6,0.6,0.0,0.0,False,3,3,3
+spanish literature,0.6,0.6,0.0,0.0,False,3,3,3
+horror novel dead sea,0.6,0.6,0.0,0.0,False,3,3,3

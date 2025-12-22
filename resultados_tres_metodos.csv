@@ -1,0 +1,15 @@
+query,total_relevant,baseline_precision,baseline_recall,baseline_ndcg,baseline_relevant,features_precision,features_recall,features_ndcg,features_relevant,rl_precision,rl_recall,rl_ndcg,rl_relevant
+car parts,3,0.6,1.0,1.0,3,0.0,0.0,0.0,0,0.6,1.0,1.0,3
+led lights for truck,3,0.6,1.0,1.0,3,0.2,0.3333333333333333,0.23463936301137822,1,0.6,1.0,1.0,3
+door panel courtesy light,3,0.6,1.0,1.0,3,0.4,0.6666666666666666,0.5307212739772434,2,0.6,1.0,1.0,3
+generator stator,3,0.6,1.0,1.0,3,0.0,0.0,0.0,0,0.6,1.0,1.0,3
+carburetor rebuild kit,3,0.6,1.0,1.0,3,0.0,0.0,0.0,0,0.6,1.0,1.0,3
+fake nails,3,0.6,1.0,1.0,3,0.2,0.3333333333333333,0.2960819109658652,1,0.6,1.0,1.0,3
+volumizing conditioner,3,0.6,1.0,1.0,3,0.2,0.3333333333333333,0.46927872602275644,1,0.6,1.0,1.0,3
+acrylic nail tips,3,0.6,1.0,1.0,3,0.4,0.6666666666666666,0.5307212739772434,2,0.6,1.0,1.0,3
+brazilian virgin hair,3,0.6,1.0,1.0,3,0.4,0.6666666666666666,0.4367467095119258,2,0.6,1.0,1.0,3
+curly synthetic wigs,3,0.6,1.0,1.0,3,0.4,0.6666666666666666,0.38364913903790027,2,0.6,1.0,1.0,3
+christian daily devotional,3,0.6,1.0,1.0,3,0.4,0.6666666666666666,0.7039180890341347,2,0.6,1.0,1.0,3
+star trek audiobook,3,0.6,1.0,1.0,3,0.0,0.0,0.0,0,0.6,1.0,1.0,3
+spanish literature,3,0.6,1.0,1.0,3,0.4,0.6666666666666666,0.6713860725233041,2,0.6,1.0,1.0,3
+horror novel dead sea,3,0.6,1.0,1.0,3,0.0,0.0,0.0,0,0.6,1.0,1.0,3
