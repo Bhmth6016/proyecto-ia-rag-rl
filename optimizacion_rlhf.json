@@ -1,0 +1,185 @@
+{
+  "optimal_parameters": {
+    "learning_rate": 0.2,
+    "match_rating_balance": 3.0,
+    "expected_ratio": 1.4781728823359346,
+    "score": 9.978172882335935
+  },
+  "all_results": [
+    {
+      "learning_rate": 0.2,
+      "match_rating_balance": 3.0,
+      "ratio": 1.4781728823359346,
+      "score": 9.978172882335935,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.3,
+      "match_rating_balance": 3.0,
+      "ratio": 1.4597474893614757,
+      "score": 9.959747489361476,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.4,
+      "match_rating_balance": 3.0,
+      "ratio": 1.4453727125410063,
+      "score": 9.945372712541007,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.5,
+      "match_rating_balance": 3.0,
+      "ratio": 1.4360597406933824,
+      "score": 9.936059740693382,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.6,
+      "match_rating_balance": 3.0,
+      "ratio": 1.4260972249048796,
+      "score": 9.92609722490488,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.2,
+      "match_rating_balance": 2.0,
+      "ratio": 0.9854485882239571,
+      "score": 9.485448588223957,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.3,
+      "match_rating_balance": 2.0,
+      "ratio": 0.9854485882239558,
+      "score": 9.485448588223957,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.4,
+      "match_rating_balance": 2.0,
+      "ratio": 0.9766854330237068,
+      "score": 9.476685433023707,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.5,
+      "match_rating_balance": 2.0,
+      "ratio": 0.9698154911458197,
+      "score": 9.46981549114582,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.6,
+      "match_rating_balance": 2.0,
+      "ratio": 0.9635818083606705,
+      "score": 9.46358180836067,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.2,
+      "match_rating_balance": 1.5,
+      "ratio": 0.7390864411679673,
+      "score": 9.239086441167967,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.3,
+      "match_rating_balance": 1.5,
+      "ratio": 0.7390864411679673,
+      "score": 9.239086441167967,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.4,
+      "match_rating_balance": 1.5,
+      "ratio": 0.7390864411679673,
+      "score": 9.239086441167967,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.5,
+      "match_rating_balance": 1.5,
+      "ratio": 0.7338854227706731,
+      "score": 9.233885422770673,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.6,
+      "match_rating_balance": 1.5,
+      "ratio": 0.7298737446807378,
+      "score": 9.229873744680738,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.2,
+      "match_rating_balance": 1.0,
+      "ratio": 0.49272429411197854,
+      "score": 0.9854485882239571,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.4,
+      "match_rating_balance": 1.0,
+      "ratio": 0.49272429411197854,
+      "score": 0.9854485882239571,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.5,
+      "match_rating_balance": 1.0,
+      "ratio": 0.4927242941119783,
+      "score": 0.9854485882239566,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.3,
+      "match_rating_balance": 1.0,
+      "ratio": 0.4927242941119779,
+      "score": 0.9854485882239558,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.6,
+      "match_rating_balance": 1.0,
+      "ratio": 0.4885247286681348,
+      "score": 0.9770494573362696,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.2,
+      "match_rating_balance": 0.5,
+      "ratio": 0.24636214705598927,
+      "score": 0.49272429411197854,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.4,
+      "match_rating_balance": 0.5,
+      "ratio": 0.24636214705598927,
+      "score": 0.49272429411197854,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.5,
+      "match_rating_balance": 0.5,
+      "ratio": 0.24636214705598916,
+      "score": 0.4927242941119783,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.3,
+      "match_rating_balance": 0.5,
+      "ratio": 0.24636214705598894,
+      "score": 0.4927242941119779,
+      "features": 62
+    },
+    {
+      "learning_rate": 0.6,
+      "match_rating_balance": 0.5,
+      "ratio": 0.2442623643340674,
+      "score": 0.4885247286681348,
+      "features": 62
+    }
+  ]
+}

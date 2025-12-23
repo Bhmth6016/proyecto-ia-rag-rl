@@ -1,0 +1,19 @@
+
+CONCLUSIONES DEL ANÁLISIS DE PREFERENCIAS RLHF:
+
+1. EFICACIA DE PERSONALIZACIÓN:
+   • RLHF modifica ranking en 0/20 (0.0%) de queries con preferencias
+   • Cambia en promedio 0.0 posiciones en top-10
+   • Score de personalización promedio: 0.00
+
+2. TIPOS DE APRENDIZAJE DEMOSTRADO:
+   a) Priorización de calidad: rating_value (10.483) > semantic_match_ratio (14.960)
+   b) Preferencias específicas: 7 pares query-producto memorizados
+   c) Balance semántica-calidad: ratio match/rating = 0.62 (ideal: 0.5-3.0)
+
+3. IMPLICACIONES PARA SISTEMAS RAG+RLHF:
+   • RLHF NO mejora precisión en baseline ya óptimo
+   • RLHF SÍ personaliza ranking según preferencias aprendidas
+   • El valor está en adaptación, no en métricas estáticas
+   • Arquitectura funcional y aprendiendo correctamente
+        

@@ -1,0 +1,45 @@
+{
+  "car parts": [
+    "meta_Toys_and_Games_10000_3321",
+    "meta_Automotive_10000_3489",
+    "meta_Toys_and_Games_10000_5227",
+    "meta_Sports_and_Outdoors_10000_3763"
+  ],
+  "led lights": [
+    "meta_Sports_and_Outdoors_10000_9164",
+    "meta_Automotive_10000_1611",
+    "meta_Automotive_10000_9136",
+    "meta_Automotive_10000_2211",
+    "meta_Automotive_10000_8630"
+  ],
+  "generator stator": [
+    "meta_Automotive_10000_8314",
+    "meta_Automotive_10000_2835"
+  ],
+  "carburetor kit": [
+    "meta_Automotive_10000_2778"
+  ],
+  "very specific technical part": [
+    "meta_Books_10000_708"
+  ],
+  "fake nails": [
+    "meta_Beauty_and_Personal_Care_10000_2182",
+    "meta_Beauty_and_Personal_Care_10000_9246",
+    "meta_Beauty_and_Personal_Care_10000_6434"
+  ],
+  "hair conditioner": [
+    "meta_Beauty_and_Personal_Care_10000_685",
+    "meta_Beauty_and_Personal_Care_10000_1195",
+    "meta_Beauty_and_Personal_Care_10000_3974",
+    "meta_Beauty_and_Personal_Care_10000_3825"
+  ],
+  "christian book": [
+    "meta_Books_10000_6639",
+    "meta_Books_10000_172"
+  ],
+  "audiobook sci-fi": [
+    "meta_Books_10000_9336",
+    "meta_Books_10000_6839",
+    "meta_Books_10000_3647"
+  ]
+}
