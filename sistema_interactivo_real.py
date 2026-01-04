@@ -98,7 +98,7 @@ class SistemaInteractivoReal:
             from src.data.vector_store import ImmutableVectorStore
             
             print("📥 Cargando productos raw...")
-            raw_products = load_raw_products(limit=10000)
+            raw_products = load_raw_products(limit=100000)
             
             if not raw_products:
                 print("❌ No se pudieron cargar productos raw")
@@ -287,7 +287,6 @@ class SistemaInteractivoReal:
                 # Sugerir entrenar RL si hay suficientes clicks
                 if self.interaction_count >= 10:
                     print(f"\n💡 ¡Ya tienes {self.interaction_count} clicks!")
-                    print(f"   Puedes entrenar RL con: python train_rl_simple.py")
                 
             else:
                 print(f"❌ Posición inválida. Usa 1-{len(self.current_results)}")
@@ -324,9 +323,6 @@ class SistemaInteractivoReal:
             
             if clicks > 0:
                 print(f"\n🎯 CONSEJO: Con {clicks} clicks ya puedes:")
-                print(f"   1. Entrenar RL: python train_rl_simple.py")
-                print(f"   2. Crear ground truth: python crear_ground_truth_real.py")
-                print(f"   3. Evaluar: python evaluador_4_metodos.py")
         
         print("-" * 50)
     

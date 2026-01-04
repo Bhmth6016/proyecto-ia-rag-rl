@@ -38,6 +38,7 @@ class UnifiedRAGRLSystem:
         self.query_understanding = None
         self.feature_engineer = None
         self.rl_ranker = None
+        self.baseline_ranker = None
         self.interaction_handler = None
         
         logger.info("🔧 Sistema unificado inicializado")
@@ -51,7 +52,7 @@ class UnifiedRAGRLSystem:
         with open(config_file, 'r') as f:
             return yaml.safe_load(f)
     
-    def initialize_from_raw(self, limit=10000):
+    def initialize_from_raw(self, limit=100000):
         """Inicializa sistema desde datos raw"""
         try:
             from src.data.loader import load_raw_products
@@ -60,6 +61,7 @@ class UnifiedRAGRLSystem:
             from src.query.understanding import QueryUnderstanding
             from features.extractor import FeatureEngineer
             from ranking.rl_ranker_fixed import RLHFRankerFixed
+            from ranking.baseline_ranker import BaselineRanker
             from src.user.interaction_handler import InteractionHandler
             
             logger.info("📥 Cargando productos raw...")
@@ -91,9 +93,15 @@ class UnifiedRAGRLSystem:
             # Inicializar otros componentes
             self.query_understanding = QueryUnderstanding()
             self.feature_engineer = FeatureEngineer()
-            self.rl_ranker_fixed = RLHFRankerFixed(
+            
+            # Usar RLHFRankerFixed (el que realmente existe)
+            self.rl_ranker = RLHFRankerFixed(
                 alpha=self.config.get('rlhf', {}).get('alpha', 0.1)
             )
+            
+            # Baseline ranker para comparación
+            self.baseline_ranker = BaselineRanker()
+            
             self.interaction_handler = InteractionHandler()
             
             logger.info(f"✅ Sistema inicializado: {len(self.canonical_products):,} productos")
@@ -106,17 +114,25 @@ class UnifiedRAGRLSystem:
             return False
     
     def save_to_cache(self, cache_path="data/cache/unified_system.pkl"):
-        """Guarda sistema en caché"""
+        """Guarda sistema en caché - MÉTODO COMPLETO Y CORREGIDO"""
         try:
             cache_file = Path(cache_path)
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             
+            # Asegurarse de que pickle está importado
+            import pickle
+            
             with open(cache_file, 'wb') as f:
                 pickle.dump(self, f)
+            
             logger.info(f"💾 Sistema guardado en caché: {cache_file}")
+            logger.info(f"   • Tamaño estimado: {cache_file.stat().st_size / 1024 / 1024:.2f} MB")
             return True
+            
         except Exception as e:
             logger.error(f"❌ Error guardando caché: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     @staticmethod
@@ -138,6 +154,8 @@ class UnifiedRAGRLSystem:
             
         except Exception as e:
             logger.error(f"❌ Error cargando caché: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def _process_query_mode(self, query_text: str, mode: str = 'with_rlhf'):
@@ -172,28 +190,30 @@ class UnifiedRAGRLSystem:
                 # Ordenar por similitud coseno
                 ranked_products = self._sort_by_cosine_similarity(retrieved_products, query_embedding)
             elif mode == 'with_features':
-                # Ranking con features
-                if hasattr(self.rl_ranker_fixed, 'rank_with_features_only'):
-                    ranked_products = self.rl_ranker_fixed.rank_with_features_only(
+                # Ranking con features usando baseline ranker
+                if self.baseline_ranker and hasattr(self.baseline_ranker, 'rank_with_features_only'):
+                    ranked_products = self.baseline_ranker.rank_with_features_only(
                         retrieved_products, query_features, product_features
                     )
                 else:
                     ranked_products = self._sort_by_cosine_similarity(retrieved_products, query_embedding)
             elif mode == 'with_rlhf':
                 # Ranking con RL
-                if hasattr(self.rl_ranker, 'has_learned') and self.rl_ranker.has_learned:
+                if self.rl_ranker and hasattr(self.rl_ranker, 'has_learned') and self.rl_ranker.has_learned:
                     logger.info("   → Aplicando política RL aprendida")
                     if hasattr(self.rl_ranker, 'rank_with_learning'):
                         ranked_products = self.rl_ranker.rank_with_learning(
                             retrieved_products, query_features, product_features
                         )
-                    else:
+                    elif hasattr(self.rl_ranker, 'rank_with_features_only'):
                         ranked_products = self.rl_ranker.rank_with_features_only(
                             retrieved_products, query_features, product_features
                         )
+                    else:
+                        ranked_products = self._sort_by_cosine_similarity(retrieved_products, query_embedding)
                 else:
                     logger.info("   → Sin aprendizaje aún, usando features")
-                    if hasattr(self.rl_ranker, 'rank_with_features_only'):
+                    if self.rl_ranker and hasattr(self.rl_ranker, 'rank_with_features_only'):
                         ranked_products = self.rl_ranker.rank_with_features_only(
                             retrieved_products, query_features, product_features
                         )
@@ -226,6 +246,8 @@ class UnifiedRAGRLSystem:
             
         except Exception as e:
             logger.error(f"❌ Error procesando query: {e}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
     def _sort_by_cosine_similarity(self, products, query_embedding):
@@ -354,16 +376,14 @@ class UnifiedRAGRLSystem:
             self.query_understanding = QueryUnderstanding()
             self.feature_engineer = FeatureEngineer()
             
-            # RL Ranker con parámetros optimizados
-            self.rl_ranker = RLHFRanker(
+            # Usar RLHFRankerFixed (el que realmente existe)
+            self.rl_ranker = RLHFRankerFixed(
                 alpha=self.config.get('rlhf', {}).get('alpha', 0.15),
                 temperature=0.6
             )
             
-            # Baseline ranker
-            baseline_ranker = BaselineRanker()
-            if hasattr(self.rl_ranker, 'set_baseline_ranker'):
-                self.rl_ranker.set_baseline_ranker(baseline_ranker)
+            # Baseline ranker para compatibilidad
+            self.baseline_ranker = BaselineRanker()
             
             self.interaction_handler = InteractionHandler()
             
@@ -421,3 +441,141 @@ class UnifiedRAGRLSystem:
         except Exception as e:
             logger.error(f"❌ Error procesando feedback: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def process_query(self, query_text: str, mode: str = 'with_rlhf'):
+        """Método público para procesar queries - compatible con ambos sistemas"""
+        return self._process_query_mode(query_text, mode)
+    
+    def get_system_stats(self):
+        """Obtiene estadísticas completas del sistema"""
+        return {
+            'canonical_products': len(self.canonical_products) if self.canonical_products else 0,
+            'has_canonicalizer': self.canonicalizer is not None,
+            'has_vector_store': self.vector_store is not None,
+            'has_rl_ranker': self.rl_ranker is not None,
+            'has_baseline_ranker': self.baseline_ranker is not None,
+            'has_interaction_handler': self.interaction_handler is not None,
+            'rl_stats': self.get_rl_stats() if self.rl_ranker else {'error': 'No RL ranker'},
+            'experiment_id': self.experiment_id
+        }
+    
+    def export_state(self, export_path: str = None):
+        """Exporta el estado del sistema para análisis"""
+        if export_path is None:
+            export_path = f"data/exports/system_state_{self.experiment_id}.json"
+        
+        export_data = {
+            'metadata': {
+                'export_time': datetime.now().isoformat(),
+                'experiment_id': self.experiment_id,
+                'system_class': self.__class__.__name__,
+                'canonical_products_count': len(self.canonical_products) if self.canonical_products else 0
+            },
+            'config': self.config,
+            'system_stats': self.get_system_stats()
+        }
+        
+        # Añadir stats de RL si está disponible
+        if self.rl_ranker:
+            export_data['rl_stats'] = self.get_rl_stats()
+        
+        # Añadir stats de interacciones si está disponible
+        if self.interaction_handler:
+            try:
+                export_data['interaction_stats'] = self.interaction_handler.get_interaction_stats()
+            except:
+                export_data['interaction_stats'] = {'error': 'Could not get interaction stats'}
+        
+        export_file = Path(export_path)
+        export_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(export_file, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"📤 Estado del sistema exportado: {export_file}")
+        return export_path
+    
+    def save_state(self, filepath: str = None):
+        """Alias para save_to_cache - para compatibilidad"""
+        if filepath is None:
+            filepath = f"data/cache/unified_system_{self.experiment_id}.pkl"
+        return self.save_to_cache(filepath)
+
+# Alias para compatibilidad con código que espera RLHFRanker
+class RLHFRanker(RLHFRankerFixed):
+    """Alias para mantener compatibilidad con código existente"""
+    pass
+
+
+# Para ejecutar directamente este archivo y crear/guardar el sistema
+if __name__ == "__main__":
+    print("\n" + "="*80)
+    print("🚀 SISTEMA UNIFICADO RAG+RL")
+    print("="*80)
+    
+    # Crear sistema
+    system = UnifiedRAGRLSystem()
+    
+    # Preguntar al usuario qué quiere hacer
+    print("\n📋 OPCIONES:")
+    print("1. Inicializar desde datos raw")
+    print("2. Cargar desde caché")
+    print("3. Inicializar desde todos los archivos raw")
+    print("4. Solo crear sistema vacío")
+    
+    choice = input("\n🔘 Selecciona opción (1-4): ").strip()
+    
+    if choice == "1":
+        # Inicializar desde datos raw
+        limit = input("   Límite de productos (default 10000): ").strip()
+        limit = int(limit) if limit.isdigit() else 10000
+        
+        if system.initialize_from_raw(limit=limit):
+            save = input("\n💾 ¿Guardar en caché? (s/n): ").strip().lower()
+            if save == 's':
+                cache_path = input("   Ruta de caché (default: data/cache/unified_system.pkl): ").strip()
+                if not cache_path:
+                    cache_path = "data/cache/unified_system.pkl"
+                system.save_to_cache(cache_path)
+    
+    elif choice == "2":
+        # Cargar desde caché
+        cache_path = input("   Ruta de caché (default: data/cache/unified_system.pkl): ").strip()
+        if not cache_path:
+            cache_path = "data/cache/unified_system.pkl"
+        
+        loaded_system = UnifiedRAGRLSystem.load_from_cache(cache_path)
+        if loaded_system:
+            system = loaded_system
+    
+    elif choice == "3":
+        # Inicializar desde todos los archivos
+        limit = input("   Límite de productos (default 30000): ").strip()
+        limit = int(limit) if limit.isdigit() else 30000
+        
+        batch_size = input("   Tamaño de lote (default 2000): ").strip()
+        batch_size = int(batch_size) if batch_size.isdigit() else 2000
+        
+        if system.initialize_from_raw_all_files(limit=limit, batch_size=batch_size):
+            save = input("\n💾 ¿Guardar en caché? (s/n): ").strip().lower()
+            if save == 's':
+                cache_path = input("   Ruta de caché (default: data/cache/unified_system_all.pkl): ").strip()
+                if not cache_path:
+                    cache_path = "data/cache/unified_system_all.pkl"
+                system.save_to_cache(cache_path)
+    
+    elif choice == "4":
+        print("✅ Sistema vacío creado")
+    
+    else:
+        print("❌ Opción inválida")
+    
+    # Mostrar estadísticas finales
+    print("\n" + "="*80)
+    print("📊 ESTADÍSTICAS FINALES:")
+    stats = system.get_system_stats()
+    for key, value in stats.items():
+        print(f"   • {key}: {value}")
+    
+    print("\n✅ Sistema listo para usar")
+    print("="*80)
