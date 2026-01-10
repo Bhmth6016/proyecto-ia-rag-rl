@@ -1,0 +1,108 @@
+{
+  "metadata": {
+    "timestamp": "20260107_182940",
+    "train_queries_count": 13,
+    "test_queries_count": 5,
+    "split_ratio": "75/25",
+    "seed": 42
+  },
+  "summary": {
+    "baseline": {
+      "mrr_mean": 0.5,
+      "mrr_std": 0.5,
+      "precision_mean": 0.24000000000000005,
+      "recall_mean": 0.5333333333333333,
+      "ndcg_mean": 0.4634130563599186,
+      "total_found": 6,
+      "n_queries": 5,
+      "success_rate": 1.0
+    },
+    "ner_enhanced": {
+      "mrr_mean": 0.6,
+      "mrr_std": 0.5477225575051662,
+      "precision_mean": 0.24000000000000005,
+      "recall_mean": 0.5333333333333333,
+      "ndcg_mean": 0.5530721273977244,
+      "total_found": 6,
+      "n_queries": 5,
+      "success_rate": 1.0
+    },
+    "rlhf": {
+      "mrr_mean": 0.33999999999999997,
+      "mrr_std": 0.23021728866442678,
+      "precision_mean": 0.2,
+      "recall_mean": 0.5666666666666667,
+      "ndcg_mean": 0.37004905663009685,
+      "total_found": 5,
+      "n_queries": 5,
+      "success_rate": 1.0
+    },
+    "full_hybrid": {
+      "mrr_mean": 0.33999999999999997,
+      "mrr_std": 0.23021728866442678,
+      "precision_mean": 0.2,
+      "recall_mean": 0.5666666666666667,
+      "ndcg_mean": 0.37004905663009685,
+      "total_found": 5,
+      "n_queries": 5,
+      "success_rate": 1.0
+    }
+  },
+  "statistical_tests": {
+    "ner_enhanced": {
+      "t_statistic": -1.0,
+      "p_value": 0.373900966300059,
+      "significant": false,
+      "cohens_d": 0.2132007163556104,
+      "mean_improvement": 0.09999999999999998,
+      "percent_improvement": 19.999999999999996,
+      "baseline_mean": 0.5,
+      "method_mean": 0.6,
+      "n_samples": 5
+    },
+    "rlhf": {
+      "t_statistic": 0.7112867591590193,
+      "p_value": 0.5161869943521892,
+      "significant": false,
+      "cohens_d": -0.45958799169714093,
+      "mean_improvement": -0.16000000000000003,
+      "percent_improvement": -32.00000000000001,
+      "baseline_mean": 0.5,
+      "method_mean": 0.33999999999999997,
+      "n_samples": 5
+    },
+    "full_hybrid": {
+      "t_statistic": 0.7112867591590193,
+      "p_value": 0.5161869943521892,
+      "significant": false,
+      "cohens_d": -0.45958799169714093,
+      "mean_improvement": -0.16000000000000003,
+      "percent_improvement": -32.00000000000001,
+      "baseline_mean": 0.5,
+      "method_mean": 0.33999999999999997,
+      "n_samples": 5
+    }
+  },
+  "train_queries": [
+    "\"playstation games\"",
+    "\"nintendo switch\"",
+    "electronics parts",
+    "kid toys",
+    "electronics",
+    "kitchen utensils",
+    "zelda videogames",
+    "beauty products",
+    "sports equipment",
+    "mario games",
+    "survival games",
+    "headphones",
+    "car parts"
+  ],
+  "test_queries": [
+    "\"pc gaming\"",
+    "\"xbox console\"",
+    "detective books",
+    "action video games",
+    "sport videogames"
+  ]
+}

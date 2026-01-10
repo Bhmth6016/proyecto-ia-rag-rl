@@ -96,7 +96,7 @@ class InteractiveRAGRLSystem:
             
             # Crear productos canónicos
             self.canonical_products = self.canonicalizer.batch_canonicalize(
-                self.products[:50000]  # Limitar para demo interactiva
+                self.products[:100000]  # Limitar para demo interactiva
             )
             
             # Vector Store

@@ -1,231 +1,45 @@
 # config/config.yaml
-# Configuración del sistema RAG+RL
-# Dataset
-dataset:
-  name: "Amazon 90K Dataset"
-  description: "90,000 productos de Amazon en 9 categorías"
-  batch_size: 1000
-  max_products_per_category: null  # Sin límite
+# config/config.yaml
+system:
+  name: "HybridRAG_NER_RLHF"
+  version: "2.0"
 
-# Embedding model
 embedding:
   model: "all-MiniLM-L6-v2"
   dimension: 384
   normalize: true
-  device: "cpu"
 
-# FAISS vector store
-faiss:
-  index_type: "IVFFlat"
-  nlist: 100
-  nprobe: 10
-  metric: "cosine"
-  use_gpu: false
+ner:
+  use_zero_shot: true
+  confidence_threshold: 0.7
+  cache_enabled: true
 
-# Cache settings
-cache:
-  enabled: true
-  canonical_products_file: "data/cache/canonical_products.pkl"
-  faiss_index_file: "data/cache/faiss_index.bin"
-  embeddings_file: "data/cache/product_embeddings.npy"
-  max_cache_age_hours: 24
-
-# Evaluation settings
-evaluation:
-  use_cached_system: true
-  test_queries_count: 10
-  top_k: 10
-  metrics_at_k: [1, 3, 5, 10]
-  save_results: true
-
-# Retrieval
-retrieval:
-  top_k: 50
-  similarity_threshold: 0.5
-  min_results: 10
-  max_results: 20
-
-# Feature Engineering
-features:
-  # Características de query
-  query_features:
-    - "category_match"
-    - "brand_match"
-    - "price_range"
-    - "rating_threshold"
-    - "specificity_score"
-  
-  # Características de producto
-  product_features:
-    - "content_similarity"
-    - "title_similarity"
-    - "category_exact_match"
-    - "rating_normalized"
-    - "price_available"
-    - "has_brand"
-    - "description_length"
-    - "review_count_normalized"
-  
-  # Pesos por defecto (se ajustan con RL)
-  default_weights:
-    content_similarity: 0.25
-    title_similarity: 0.20
-    category_exact_match: 0.25
-    rating_normalized: 0.15
-    price_available: 0.05
-    has_brand: 0.05
-    description_length: 0.05
-
-# RLHF (Reinforcement Learning from Human Feedback)
 rlhf:
-  alpha: 0.1  # Tasa de aprendizaje
-  gamma: 0.9  # Factor de descuento
-  epsilon: 0.1  # Para exploración epsilon-greedy
-  reward_scale: 1.0
-  negative_reward_multiplier: 0.5
-  batch_size: 32
-  memory_size: 1000
+  learning_rate: 0.5
+  match_rating_balance: 1.5
+  min_feedback_for_learning: 10
+
+ranking:
+  baseline_weights:
+    semantic_similarity: 0.4
+    rating: 0.2
+    price_relevance: 0.1
+    category_match: 0.15
+    ner_match: 0.15
   
-  # Rewards
-  rewards:
-    click: 1.0
-    purchase: 2.0
-    add_to_cart: 1.5
-    save: 1.2
-    ignore: 0.0
-    skip: -0.5
-    back: -1.0
+  ner_enhanced:
+    ner_weight: 0.15
+    min_ner_confidence: 0.6
 
-# Query Understanding
-query_understanding:
-  extract_categories: true
-  extract_brands: true
-  extract_price_range: true
-  extract_intent: true
-  use_ner: false  # Named Entity Recognition
-  min_confidence: 0.5
+evaluation:
+  test_split: 0.25
+  random_seed: 42
+  metrics: ["mrr", "precision@5", "recall@5", "ndcg@5"]
+  k_values: [5, 10, 20]
 
-# Canonicalización
-canonicalization:
-  # Campos a normalizar
-  fields_to_normalize:
-    - "title"
-    - "description"
-    - "brand"
-    - "category"
-  
-  # Limpieza de texto
-  text_cleaning:
-    remove_special_chars: true
-    lowercase: true
-    remove_stopwords: false
-    min_length: 3
-    
-  # Validación
-  validation:
-    require_title: true
-    require_category: true
-    min_description_length: 10
-    max_title_length: 200
-
-# Sistema de logging
-logging:
-  level: "INFO"
-  log_dir: "logs"
-  save_interactions: true
-  interaction_log_dir: "data/interactions"
-  
-  # Formatos
-  formats:
-    console: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    file: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # Rotación de logs
-  rotation:
-    max_size_mb: 10
-    backup_count: 5
-
-# Experimentación
-experiments:
-  results_dir: "results"
-  save_all_results: true
-  comparison_report: true
-  timestamp_format: "%Y%m%d_%H%M%S"
-  
-  # Experimentos por defecto
-  default_experiments:
-    - name: "baseline_real"
-      description: "Solo FAISS + similitud coseno (REAL)"
-      use_rlhf: false
-      use_features: false
-      
-    - name: "with_features_real"
-      description: "FAISS + características heurísticas (REAL)"
-      use_rlhf: false
-      use_features: true
-      
-    - name: "with_rlhf_real"
-      description: "FAISS + características + RLHF (REAL)"
-      use_rlhf: true
-      use_features: true
-
-# Sistema interactivo
-interactive:
-  show_top_n: 10
-  show_scores: true
-  show_explanations: true
-  auto_log_interactions: true
-  user_session_timeout_minutes: 30
-
-# Rendimiento
-performance:
-  batch_size: 100
-  num_threads: 4
-  use_multiprocessing: false
-  chunk_size: 1000
-  
-  # Optimizaciones
-  optimizations:
-    faiss_quantization: true
-    embedding_cache: true
-    feature_cache: true
-
-# Seguridad y validación
-validation:
-  # Principios de arquitectura
-  architecture_principles:
-    - "faiss_immutable"
-    - "no_embedding_modification"
-    - "ranking_only_learning"
-    - "no_data_contamination"
-  
-  # Validaciones automáticas
-  auto_validate: true
-  validate_on_init: true
-  validate_before_learning: true
-  reproducible_seed: 42
-  # Umbrales de validación
-  thresholds:
-    min_architecture_score: 0.8
-    max_violations: 3
-    min_system_health: 0.7
-
-# Sistema de backup
-backup:
-  enabled: true
-  backup_dir: "backups"
-  frequency_hours: 24
-  keep_last_n: 7
-  
-  # Qué hacer backup
-  backup_items:
-    - "config"
-    - "faiss_index"
-    - "rl_model"
-    - "interaction_logs"
-
-# Versión
-version: "1.0.0"
-description: "Sistema RAG+RL para ranking de productos con 3 modos de operación"
-author: "Tu Nombre"
-created_date: "2024-01-01"
+paths:
+  raw_data: "data/raw/"
+  cache_dir: "data/cache/"
+  interactions: "data/interactions/"
+  results: "results/"
+  logs: "logs/"

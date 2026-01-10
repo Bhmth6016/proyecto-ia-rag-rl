@@ -1,0 +1,256 @@
+2026-01-06 10:59:55 - __main__ - INFO - 📝 Log iniciado: logs\experimento_20260106_105955.log
+2026-01-06 10:59:55 - __main__ - INFO - 📂 Cargando ground truth...
+2026-01-06 10:59:55 - __main__ - INFO - 📊 Ground truth cargado: 71 queries
+2026-01-06 10:59:55 - __main__ - INFO -    • Productos relevantes totales: 72
+2026-01-06 10:59:55 - __main__ - INFO - ✂️  Creando split train/test estratificado...
+2026-01-06 10:59:55 - __main__ - INFO - 📚 Split creado: 52 train, 19 test
+2026-01-06 10:59:55 - __main__ - INFO - 🤖 Cargando sistema V2...
+2026-01-06 10:59:55 - src.unified_system - INFO - ✅ RLHFRankerFixed importado correctamente
+2026-01-06 10:59:55 - __main__ - INFO - 📂 Cargando sistema V2 desde cache...
+2026-01-06 10:59:55 - src.unified_system_v2 - INFO - 📂 Cargando sistema V2 desde cache...
+2026-01-06 11:00:01 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-01-06 11:00:01 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-01-06 11:00:01 - src.unified_system_v2 - INFO - ✅ Sistema V2 cargado: 89,990 productos
+2026-01-06 11:00:01 - src.unified_system_v2 - INFO -    • Métodos: baseline, ner_enhanced, rlhf, full_hybrid
+2026-01-06 11:00:01 - src.unified_system_v2 - INFO -    • RLHF: ✅
+2026-01-06 11:00:01 - src.unified_system_v2 - INFO -    • NER: ✅
+2026-01-06 11:00:01 - __main__ - INFO - ✅ Sistema cargado: 89,990 productos
+2026-01-06 11:00:01 - __main__ - WARNING - ⚠️  query_understanding es None, inicializando...
+2026-01-06 11:00:01 - __main__ - ERROR - ❌ No se pudo inicializar query_understanding: No module named 'src.query_understanding'
+2026-01-06 11:00:01 - __main__ - WARNING - ⚠️  Continuando sin query_understanding...
+2026-01-06 11:00:01 - __main__ - ERROR - ❌ El sistema no tiene query_understanding funcional
+2026-01-06 11:00:01 - __main__ - ERROR -    Esto causará errores en el método baseline
+2026-01-06 11:00:01 - __main__ - WARNING - ⚠️  Continuando con evaluación limitada...
+2026-01-06 11:00:01 - src.unified_system - INFO - Procesando query 'glitter trucker hat' (modo: baseline)
+2026-01-06 11:00:01 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.unified_system - INFO - Procesando query 'glitter trucker hat' (modo: baseline)
+2026-01-06 11:00:01 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.unified_system - INFO - Procesando query 'glitter trucker hat' (modo: baseline)
+2026-01-06 11:00:01 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.unified_system - INFO - Procesando query 'fake nails' (modo: baseline)
+2026-01-06 11:00:01 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:01 - src.unified_system - INFO - Procesando query 'fake nails' (modo: baseline)
+2026-01-06 11:00:01 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:01 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'fake nails' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'spark plug' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'spark plug' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'spark plug' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'marvel avengers poster' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'marvel avengers poster' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'marvel avengers poster' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'terrorism thriller' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'terrorism thriller' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'terrorism thriller' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'fishing adhesive' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'fishing adhesive' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:02 - src.unified_system - INFO - Procesando query 'fishing adhesive' (modo: baseline)
+2026-01-06 11:00:02 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'door panel courtesy light' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'door panel courtesy light' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'door panel courtesy light' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'airplane wall hook' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'airplane wall hook' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'airplane wall hook' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'lego ninjago set' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'lego ninjago set' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'lego ninjago set' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'wii console skins' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:03 - src.unified_system - INFO - Procesando query 'wii console skins' (modo: baseline)
+2026-01-06 11:00:03 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'wii console skins' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'zelda games' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'zelda games' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'zelda games' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'carburetor rebuild kit' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'carburetor rebuild kit' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'carburetor rebuild kit' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'nail polish gel' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'nail polish gel' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'nail polish gel' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'car parts' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:04 - src.unified_system - INFO - Procesando query 'car parts' (modo: baseline)
+2026-01-06 11:00:04 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'car parts' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'horror novel dead sea' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'horror novel dead sea' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'horror novel dead sea' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'truck side steps' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'truck side steps' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'truck side steps' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'running wristband wallet' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'running wristband wallet' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'running wristband wallet' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'childrens playhouse' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:05 - src.unified_system - INFO - Procesando query 'childrens playhouse' (modo: baseline)
+2026-01-06 11:00:05 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.unified_system - INFO - Procesando query 'childrens playhouse' (modo: baseline)
+2026-01-06 11:00:06 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.unified_system - INFO - Procesando query 'generator stator' (modo: baseline)
+2026-01-06 11:00:06 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.unified_system - INFO - Procesando query 'generator stator' (modo: baseline)
+2026-01-06 11:00:06 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.unified_system - INFO - Procesando query 'generator stator' (modo: baseline)
+2026-01-06 11:00:06 - src.unified_system - ERROR - Error procesando query: 'NoneType' object has no attribute 'extract'
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - src.ranking.rl_ranker_fixed - INFO -    🧠 Aplicando Human Preferences (65 features)
+2026-01-06 11:00:06 - __main__ - INFO - 💾 Guardando resultados...
+2026-01-06 11:00:06 - __main__ - INFO - 💾 Resultados JSON: results\experimento_4_metodos_20260106_110006.json
+2026-01-06 11:00:06 - __main__ - INFO - 📊 Resultados CSV: results\experimento_4_metodos_20260106_110006.csv
+2026-01-06 11:00:06 - __main__ - INFO - 📝 Resumen: results\resumen_20260106_110006.txt
+2026-01-06 11:00:06 - __main__ - INFO - 🎉 Experimento completado exitosamente

@@ -1,0 +1,160 @@
+2026-01-09 10:47:48 - experimento_completo_4_metodos - INFO - 📝 Log iniciado: logs\experimento_20260109_104748.log
+2026-01-09 10:47:48 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-01-09 10:47:48 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO - 📂 Cargando ground truth...
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO - 📊 Ground truth cargado: 18 queries
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO -    • Productos relevantes totales: 31
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO - ✂️  Creando split train/test estratificado...
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO - 📚 Split creado: 13 train, 5 test
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO - 🤖 Cargando sistema V2...
+2026-01-09 10:48:04 - experimento_completo_4_metodos - INFO - 📂 Cargando sistema V2 desde cache...
+2026-01-09 10:48:06 - src.unified_system_v2 - ERROR - ❌ Error cargando cache: Ran out of input
+2026-01-09 10:48:06 - src.unified_system_v2 - INFO - 🔄 Eliminando cache corrupto y reconstruyendo...
+2026-01-09 10:48:06 - experimento_completo_4_metodos - WARNING - ⚠️  Sistema V2 no encontrado en cache, creando nuevo...
+2026-01-09 10:48:06 - experimento_completo_4_metodos - INFO - 🔨 Creando nuevo sistema V2...
+2026-01-09 10:48:06 - unified_system - INFO - Sistema base inicializado
+2026-01-09 10:48:06 - src.unified_system_v2 - INFO - ✅ UnifiedSystemV2 inicializado
+2026-01-09 10:48:06 - src.unified_system_v2 - INFO - 🚀 Inicializando sistema V2 con NER...
+2026-01-09 10:48:06 - src.unified_system_v2 - INFO - 📥 Cargando sistema base...
+2026-01-09 10:48:06 - src.unified_system_v2 - INFO -    Creando nuevo sistema base...
+2026-01-09 10:48:06 - unified_system - INFO - Cargando productos de todos los archivos raw...
+2026-01-09 10:48:06 - unified_system - INFO - Límite configurado: 100000 productos
+2026-01-09 10:48:06 - data.loader - INFO - 📂 Procesando 9/9 archivos
+2026-01-09 10:48:06 - data.loader - INFO - 
+📄 Procesando (1/9): meta_Automotive_10000.jsonl
+2026-01-09 10:48:06 - data.loader - INFO - 📄 Cargando: meta_Automotive_10000.jsonl
+2026-01-09 10:48:06 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:06 - data.loader - INFO -   ✓ Productos válidos: 10000
+2026-01-09 10:48:06 - data.loader - INFO -   ✓ Productos de archivo: 10000
+2026-01-09 10:48:06 - data.loader - INFO -   ✓ Total acumulado: 10000
+2026-01-09 10:48:06 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:06 - data.loader - INFO -     1. PINIHED 2pcs LED Interior Door Light ...
+2026-01-09 10:48:06 - data.loader - INFO -     2. shamofeng Generator Stator 420W for C...
+2026-01-09 10:48:06 - data.loader - INFO -     3. Genuine Hyundai Parts 82620-3D010 Pas...
+2026-01-09 10:48:06 - data.loader - INFO - 
+📄 Procesando (2/9): meta_Beauty_and_Personal_Care_10000.jsonl
+2026-01-09 10:48:06 - data.loader - INFO - 📄 Cargando: meta_Beauty_and_Personal_Care_10000.jsonl
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Productos válidos: 10000
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Productos de archivo: 10000
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Total acumulado: 20000
+2026-01-09 10:48:07 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:07 - data.loader - INFO -     1. 25 Designs Fake Nails Artificial 24Pc...
+2026-01-09 10:48:07 - data.loader - INFO -     2. Hask Volumizing Conditioner, Chia See...
+2026-01-09 10:48:07 - data.loader - INFO -     3. Monja Almond Shaped Acrylic Nail Tips...
+2026-01-09 10:48:07 - data.loader - INFO - 
+📄 Procesando (3/9): meta_Books_10000.jsonl
+2026-01-09 10:48:07 - data.loader - INFO - 📄 Cargando: meta_Books_10000.jsonl
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Productos válidos: 10000
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Productos de archivo: 10000
+2026-01-09 10:48:07 - data.loader - INFO -   ✓ Total acumulado: 30000
+2026-01-09 10:48:07 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:07 - data.loader - INFO -     1. My Utmost for His Highest: Updated La...
+2026-01-09 10:48:07 - data.loader - INFO -     2. Star Trek: The Entropy Effect (Adapted)
+2026-01-09 10:48:07 - data.loader - INFO -     3. He olvidado tu nombre (Biblioteca de ...
+2026-01-09 10:48:07 - data.loader - INFO - 
+📄 Procesando (4/9): meta_Clothing_Shoes_and_Jewelry_10000.jsonl
+2026-01-09 10:48:07 - data.loader - INFO - 📄 Cargando: meta_Clothing_Shoes_and_Jewelry_10000.jsonl
+2026-01-09 10:48:08 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:08 - data.loader - INFO -   ✓ Productos válidos: 9999
+2026-01-09 10:48:08 - data.loader - INFO -   ✓ Productos de archivo: 9999
+2026-01-09 10:48:08 - data.loader - INFO -   ✓ Total acumulado: 39999
+2026-01-09 10:48:08 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:08 - data.loader - INFO -     1. BEAGIMEG Women's Sexy Bodycon Sleevel...
+2026-01-09 10:48:08 - data.loader - INFO -     2. Tiger Claw Essential Traditional Kara...
+2026-01-09 10:48:08 - data.loader - INFO -     3. White Glitter Ranch Hair Don't Care D...
+2026-01-09 10:48:08 - data.loader - INFO - 
+📄 Procesando (5/9): meta_Electronics_10000.jsonl
+2026-01-09 10:48:08 - data.loader - INFO - 📄 Cargando: meta_Electronics_10000.jsonl
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Productos válidos: 9999
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Productos de archivo: 9999
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Total acumulado: 49998
+2026-01-09 10:48:09 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:09 - data.loader - INFO -     1. 2 Sets AC.6 - Soundstream 6.5" 100W R...
+2026-01-09 10:48:09 - data.loader - INFO -     2. Humminbird 602005-1 LakeMaster Premiu...
+2026-01-09 10:48:09 - data.loader - INFO -     3. 2tb External Hard Drive,USB 3.0 Porta...
+2026-01-09 10:48:09 - data.loader - INFO - 
+📄 Procesando (6/9): meta_Home_and_Kitchen_10000.jsonl
+2026-01-09 10:48:09 - data.loader - INFO - 📄 Cargando: meta_Home_and_Kitchen_10000.jsonl
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Productos válidos: 10000
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Productos de archivo: 10000
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Total acumulado: 59998
+2026-01-09 10:48:09 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:09 - data.loader - INFO -     1. LinenLovers Polyester Gingham Umbrell...
+2026-01-09 10:48:09 - data.loader - INFO -     2. CTSZOOM Ice Cube Tray with Lid and Bi...
+2026-01-09 10:48:09 - data.loader - INFO -     3. Superior Posters Marvels Avengers Iro...
+2026-01-09 10:48:09 - data.loader - INFO - 
+📄 Procesando (7/9): meta_Sports_and_Outdoors_10000.jsonl
+2026-01-09 10:48:09 - data.loader - INFO - 📄 Cargando: meta_Sports_and_Outdoors_10000.jsonl
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Productos válidos: 9998
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Productos de archivo: 9998
+2026-01-09 10:48:09 - data.loader - INFO -   ✓ Total acumulado: 69996
+2026-01-09 10:48:09 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:09 - data.loader - INFO -     1. Aqua Lung Favola Double Lens Dive Mask
+2026-01-09 10:48:09 - data.loader - INFO -     2. Sportline 855 Wristband Wallet
+2026-01-09 10:48:09 - data.loader - INFO -     3. Dallas Cowboys Dez Bryant #88 Nike Na...
+2026-01-09 10:48:09 - data.loader - INFO - 
+📄 Procesando (8/9): meta_Toys_and_Games_10000.jsonl
+2026-01-09 10:48:09 - data.loader - INFO - 📄 Cargando: meta_Toys_and_Games_10000.jsonl
+2026-01-09 10:48:10 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:10 - data.loader - INFO -   ✓ Productos válidos: 9999
+2026-01-09 10:48:10 - data.loader - INFO -   ✓ Productos de archivo: 9999
+2026-01-09 10:48:10 - data.loader - INFO -   ✓ Total acumulado: 79995
+2026-01-09 10:48:10 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:10 - data.loader - INFO -     1. Magic Doorbell Playhouse
+2026-01-09 10:48:10 - data.loader - INFO -     2. New Years Eve Party Supplies 2023 Set...
+2026-01-09 10:48:10 - data.loader - INFO -     3. LEGO NINJAGO Legacy Boulder Blaster 7...
+2026-01-09 10:48:10 - data.loader - INFO - 
+📄 Procesando (9/9): meta_Video_Games_10000.jsonl
+2026-01-09 10:48:10 - data.loader - INFO - 📄 Cargando: meta_Video_Games_10000.jsonl
+2026-01-09 10:48:11 - data.loader - INFO -   ✓ Líneas leídas: 10000
+2026-01-09 10:48:11 - data.loader - INFO -   ✓ Productos válidos: 9999
+2026-01-09 10:48:11 - data.loader - INFO -   ✓ Productos de archivo: 9999
+2026-01-09 10:48:11 - data.loader - INFO -   ✓ Total acumulado: 89994
+2026-01-09 10:48:11 - data.loader - INFO -   📝 Ejemplos del archivo:
+2026-01-09 10:48:11 - data.loader - INFO -     1. EPOMAKER SK71 71 Keys Hot Swappable M...
+2026-01-09 10:48:11 - data.loader - INFO -     2. DJ Star (NDS) [UK IMPORT]
+2026-01-09 10:48:11 - data.loader - INFO -     3. GameSir GTV130 4K HD HDMI USB Type C ...
+2026-01-09 10:48:11 - data.loader - INFO - 
+============================================================
+2026-01-09 10:48:11 - data.loader - INFO - ✅ CARGA COMPLETA
+2026-01-09 10:48:11 - data.loader - INFO -    Total productos: 89994
+2026-01-09 10:48:11 - data.loader - INFO -    Archivos procesados: 9/9
+2026-01-09 10:48:11 - data.loader - INFO - ============================================================
+2026-01-09 10:48:11 - data.loader - INFO - 
+📊 DISTRIBUCIÓN POR CATEGORÍA:
+2026-01-09 10:48:11 - data.loader - INFO -   AMAZON FASHION                :  10797 ( 12.0%)
+2026-01-09 10:48:11 - data.loader - INFO -   Amazon Home                   :   9557 ( 10.6%)
+2026-01-09 10:48:11 - data.loader - INFO -   Books                         :   9244 ( 10.3%)
+2026-01-09 10:48:11 - data.loader - INFO -   Automotive                    :   9024 ( 10.0%)
+2026-01-09 10:48:11 - data.loader - INFO -   Toys & Games                  :   8471 (  9.4%)
+2026-01-09 10:48:11 - data.loader - INFO -   All Beauty                    :   7346 (  8.2%)
+2026-01-09 10:48:11 - data.loader - INFO -   Sports & Outdoors             :   6024 (  6.7%)
+2026-01-09 10:48:11 - data.loader - INFO -   Video Games                   :   5928 (  6.6%)
+2026-01-09 10:48:11 - data.loader - INFO -   Computers                     :   3966 (  4.4%)
+2026-01-09 10:48:11 - data.loader - INFO -   All Electronics               :   3531 (  3.9%)
+2026-01-09 10:48:11 - data.loader - INFO -   Camera & Photo                :   1493 (  1.7%)
+2026-01-09 10:48:11 - data.loader - INFO -   Tools & Home Improvement      :   1336 (  1.5%)
+2026-01-09 10:48:11 - data.loader - INFO -   Cell Phones & Accessories     :   1263 (  1.4%)
+2026-01-09 10:48:11 - data.loader - INFO -   Industrial & Scientific       :   1009 (  1.1%)
+2026-01-09 10:48:11 - data.loader - INFO -   Health & Personal Care        :    924 (  1.0%)
+2026-01-09 10:48:11 - data.loader - INFO -   Home Audio & Theater          :    808 (  0.9%)
+2026-01-09 10:48:11 - data.loader - INFO -   Buy a Kindle                  :    611 (  0.7%)
+2026-01-09 10:48:11 - data.loader - INFO -   Office Products               :    401 (  0.4%)
+2026-01-09 10:48:11 - data.loader - INFO -   Premium Beauty                :    301 (  0.3%)
+2026-01-09 10:48:11 - data.loader - INFO -   Audible Audiobooks            :    206 (  0.2%)
+2026-01-09 10:48:11 - data.loader - INFO -   ... y 19 categorías más
+2026-01-09 10:48:11 - unified_system - INFO - Cargados 89,994 productos
+2026-01-09 10:48:11 - unified_system - INFO - Canonizando productos...
+2026-01-09 10:48:11 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-01-09 10:48:11 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-01-09 10:48:14 - data.canonicalizer - INFO - ✅ Canonicalizer inicializado con modelo: all-MiniLM-L6-v2
+2026-01-09 10:48:14 - unified_system - INFO -    Lote 1/45 (2000 productos)...
+2026-01-09 10:48:24 - data.canonicalizer - INFO - 📦 Procesados 100/2000 productos...
+2026-01-09 10:48:35 - data.canonicalizer - INFO - 📦 Procesados 200/2000 productos...
+2026-01-09 10:48:50 - data.canonicalizer - INFO - 📦 Procesados 300/2000 productos...
+2026-01-09 10:49:00 - data.canonicalizer - INFO - 📦 Procesados 400/2000 productos...
