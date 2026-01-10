@@ -1,14 +1,8 @@
 # sistema_interactivo.py
-"""
-SISTEMA INTERACTIVO REAL para obtener feedback REAL de usuario
-Versión simplificada y optimizada
-"""
 import json
-import pickle
-import sys
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Dict, Any
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +17,6 @@ class SistemaInteractivoReal:
         self.interactions_file = Path("data/interactions/real_interactions.jsonl")
         self.ground_truth_file = Path("data/interactions/ground_truth_REAL.json")
         
-        # Crear directorios si no existen
         self.interactions_file.parent.mkdir(parents=True, exist_ok=True)
         
         self.system = None
@@ -35,11 +28,11 @@ class SistemaInteractivoReal:
         
         self.cargar_sistema()
         
-        print(f"\n🎯 OBJETIVO: Obtener 30+ clicks REALES para entrenar RLHF")
-        print(f"📊 Session ID: {self.session_id}")
-        print(f"📦 Productos cargados: {len(self.canonical_products):,}")
-        print(f"💾 Interacciones se guardarán en: {self.interactions_file}")
-        print("\n📝 COMANDOS: query [texto], click [número], stats, help, exit")
+        print("\nOBJETIVO: Obtener 30+ clicks REALES para entrenar RLHF")
+        print("Session ID: {self.session_id}")
+        print("Productos cargados: {len(self.canonical_products):,}")
+        print("Interacciones se guardarán en: {self.interactions_file}")
+        print("\nCOMANDOS: query [texto], click [número], stats, help, exit")
     
     def cargar_sistema(self):
         print("\nCargando sistema...")
@@ -53,12 +46,12 @@ class SistemaInteractivoReal:
                 
                 if self.system and hasattr(self.system, 'canonical_products'):
                     self.canonical_products = self.system.canonical_products
-                    print(f"✅ Sistema V2 cargado: {len(self.canonical_products):,} productos")
+                    print(f"Sistema V2 cargado: {len(self.canonical_products):,} productos")
                     return True
             except Exception as e:
-                print(f"⚠️  Error cargando sistema V2: {e}")
+                print(f"Error cargando sistema V2: {e}")
         
-        print("⚠️  Sistema V2 no encontrado. Ejecuta primero:")
+        print("Sistema V2 no encontrado. Ejecuta primero:")
         print("   python main.py init")
         return False
     
@@ -103,7 +96,7 @@ class SistemaInteractivoReal:
             return False
     
     def procesar_query(self, query_text: str):
-        print(f"\n🔍 Buscando: '{query_text}'")
+        print(f"\nBuscando: '{query_text}'")
         
         results = self.buscar_productos(query_text, k=20)
         
@@ -111,7 +104,7 @@ class SistemaInteractivoReal:
             print("No se encontraron resultados")
             return
         
-        print(f"📊 {len(results)} resultados encontrados")
+        print(f"{len(results)} resultados encontrados")
         print("-" * 100)
         
         productos_mostrados = []
@@ -127,7 +120,7 @@ class SistemaInteractivoReal:
                 titulo_display = titulo
             
             precio_str = f"${precio:.2f}" if precio else "$  N/A"
-            rating_str = f"{rating:.1f}⭐" if rating else "N/A⭐"
+            rating_str = f"{rating:.1f}" if rating else "N/A"
             
             print(f"{i:2d}. {titulo_display}")
             print(f"    {categoria:20} {precio_str:10} {rating_str}")
@@ -140,9 +133,9 @@ class SistemaInteractivoReal:
             })
         
         print("-" * 100)
-        print(f"🎯 Usa 'click [número]' para seleccionar productos RELEVANTES")
-        print(f"   Ejemplo: 'click 1' para seleccionar el primer producto")
-        print(f"   Objetivo: 30+ clicks para buen entrenamiento RLHF")
+        print("Usa 'click [número]' para seleccionar productos RELEVANTES")
+        print("   Ejemplo: 'click 1' para seleccionar el primer producto")
+        print("   Objetivo: 30+ clicks para buen entrenamiento RLHF")
         
         self.current_query = query_text
         self.current_results = productos_mostrados
@@ -164,11 +157,11 @@ class SistemaInteractivoReal:
             if 0 <= posicion < len(self.current_results):
                 producto = self.current_results[posicion]
                 
-                print(f"\n✅ CLICK REGISTRADO en posición {posicion + 1}")
-                print(f"   Producto: {producto['title'][:80]}...")
-                print(f"   ID: {producto['id']}")
-                print(f"   Query: '{self.current_query}'")
-                print(f"   📈 Este producto fue considerado RELEVANTE para esta búsqueda")
+                print("\nCLICK REGISTRADO en posición {posicion + 1}")
+                print("   Producto: {producto['title'][:80]}...")
+                print("   ID: {producto['id']}")
+                print("   Query: '{self.current_query}'")
+                print("   Este producto fue considerado RELEVANTE para esta búsqueda")
                 
                 self.guardar_interaccion('click', {
                     'query': self.current_query,
@@ -180,13 +173,13 @@ class SistemaInteractivoReal:
                     'feedback_type': 'explicit_click'
                 })
                 
-                print(f"\n📊 Total clicks en esta sesión: {self.interaction_count}")
+                print(f"\nTotal clicks en esta sesión: {self.interaction_count}")
                 
                 if self.interaction_count >= 30:
-                    print(f"\n🎉 ¡Ya tienes {self.interaction_count} clicks! Suficiente para entrenar RLHF.")
-                    print(f"   Puedes ejecutar: python main.py experimento")
+                    print(f"\nYa tienes {self.interaction_count} clicks! Suficiente para entrenar RLHF.")
+                    print("   Puedes ejecutar: python main.py experimento")
                 elif self.interaction_count >= 10:
-                    print(f"\n📈 ¡Ya tienes {self.interaction_count} clicks! Sigue recolectando para mejor entrenamiento.")
+                    print(f"\nYa tienes {self.interaction_count} clicks! Sigue recolectando para mejor entrenamiento.")
                 
             else:
                 print(f"Posición inválida. Usa 1-{len(self.current_results)}")
@@ -195,7 +188,7 @@ class SistemaInteractivoReal:
             print("Posición debe ser un número (ej: 'click 1')")
     
     def mostrar_estadisticas(self):
-        print("\n📊 ESTADÍSTICAS DE LA SESIÓN")
+        print("\nESTADÍSTICAS DE LA SESIÓN")
         print("-" * 50)
         print(f"   Sesión: {self.session_id}")
         print(f"   Total interacciones: {self.interaction_count}")
@@ -213,47 +206,47 @@ class SistemaInteractivoReal:
                             clicks += 1
                         elif data.get('interaction_type') == 'query':
                             queries += 1
-                    except:
+                    except json.JSONDecodeError:
                         continue
             
             print(f"   Queries ejecutadas: {queries}")
             print(f"   Clicks registrados: {clicks}")
             
             if clicks > 0:
-                print(f"\n🎯 Con {clicks} clicks puedes:")
+                print(f"\nCon {clicks} clicks puedes:")
                 if clicks >= 30:
-                    print(f"   ✅ Entrenar RLHF robustamente")
-                    print(f"   ✅ Ejecutar experimento completo")
+                    print("   Entrenar RLHF robustamente")
+                    print("   Ejecutar experimento completo")
                 elif clicks >= 20:
-                    print(f"   ⚠️  Entrenar RLHF básicamente")
-                    print(f"   ⚠️  Ejecutar experimento pequeño")
+                    print("   Entrenar RLHF básicamente")
+                    print("   Ejecutar experimento pequeño")
                 else:
-                    print(f"   ❌ Necesitas más datos (objetivo: 30+ clicks)")
+                    print("   Necesitas más datos (objetivo: 30+ clicks)")
         
         print("-" * 50)
     
     def mostrar_ayuda(self):
         print("\n" + "="*80)
-        print("🎮 AYUDA - COMANDOS DEL SISTEMA INTERACTIVO")
+        print("AYUDA - COMANDOS DEL SISTEMA INTERACTIVO")
         print("="*80)
-        print("\n🎯 OBJETIVO: Obtener datos REALES de usuario para entrenar RL")
+        print("\nOBJETIVO: Obtener datos REALES de usuario para entrenar RL")
         print("   Cada CLICK que hagas se guardará como feedback REAL")
         print()
-        print("📝 COMANDOS:")
+        print("COMANDOS:")
         print("  query [texto]        - Buscar productos (ej: 'query car parts')")
         print("  click [número]       - Click en producto (GUARDA DATO REAL)")
         print("  stats                - Ver estadísticas")
         print("  help                 - Mostrar esta ayuda")
         print("  exit                 - Guardar y salir")
         print()
-        print("🎯 EJEMPLO DE USO:")
+        print("EJEMPLO DE USO:")
         print("  1. query car parts")
         print("  2. Revisa resultados")
         print("  3. click 1 (selecciona el más relevante)")
         print("  4. click 3 (selecciona otro relevante)")
         print("  5. Repite con diferentes búsquedas")
         print()
-        print("💡 RECOMENDACIONES:")
+        print("RECOMENDACIONES:")
         print("  • Haz clicks en productos que realmente sean relevantes")
         print("  • Varía las búsquedas (car parts, beauty products, books, etc.)")
         print("  • Objetivo mínimo: 30 clicks para buen entrenamiento")
@@ -264,7 +257,7 @@ class SistemaInteractivoReal:
             print("No hay interacciones para crear ground truth")
             return
         
-        print("\n📊 Creando ground truth REAL automáticamente...")
+        print("\nCreando ground truth REAL automáticamente...")
         
         ground_truth = {}
         total_clicks = 0
@@ -283,22 +276,22 @@ class SistemaInteractivoReal:
                             if product_id not in ground_truth[query]:
                                 ground_truth[query].append(product_id)
                                 total_clicks += 1
-                except:
+                except json.JSONDecodeError:
                     continue
         
         if ground_truth:
             with open(self.ground_truth_file, 'w', encoding='utf-8') as f:
                 json.dump(ground_truth, f, indent=2, ensure_ascii=False)
             
-            print(f"✅ Ground truth REAL creado:")
-            print(f"   📊 {len(ground_truth)} queries con clicks")
-            print(f"   🎯 {total_clicks} productos relevantes totales")
-            print(f"   💾 Guardado en: {self.ground_truth_file}")
+            print("Ground truth REAL creado:")
+            print("   {len(ground_truth)} queries con clicks")
+            print("   {total_clicks} productos relevantes totales")
+            print("   Guardado en: {self.ground_truth_file}")
         else:
             print("No se pudieron extraer clicks para ground truth")
     
     def ejecutar(self):
-        print("\n🎮 ¡COMIENZA A OBTENER DATOS REALES!")
+        print("\n¡COMIENZA A OBTENER DATOS REALES!")
         print("   Cada CLICK que hagas será feedback REAL para entrenar RLHF")
         print("   Objetivo: 30+ clicks para experimento robusto")
         
@@ -311,11 +304,11 @@ class SistemaInteractivoReal:
                 
                 elif comando.lower() == "exit":
                     self.crear_ground_truth_automatico()
-                    print(f"\n👋 ¡Adiós! Sesión guardada.")
-                    print(f"📊 Total interacciones: {self.interaction_count}")
-                    print(f"💾 Archivo: {self.interactions_file}")
+                    print("\n¡Adiós! Sesión guardada.")
+                    print(f"Total interacciones: {self.interaction_count}")
+                    print(f"Archivo: {self.interactions_file}")
                     if self.ground_truth_file.exists():
-                        print(f"🎯 Ground truth: {self.ground_truth_file}")
+                        print(f"Ground truth: {self.ground_truth_file}")
                     break
                 
                 elif comando.lower() == "help":
@@ -341,7 +334,7 @@ class SistemaInteractivoReal:
                         print("   Ejemplo: click 1")
                 
                 else:
-                    print(f"Comando no reconocido. Asumiendo que es una búsqueda...")
+                    print("Comando no reconocido. Asumiendo que es una búsqueda...")
                     self.procesar_query(comando)
                     
             except KeyboardInterrupt:
@@ -352,7 +345,7 @@ class SistemaInteractivoReal:
                 print(f"Error: {e}")
 
 def main():
-    print("\n🎮 INICIANDO SISTEMA INTERACTIVO REAL")
+    print("\nINICIANDO SISTEMA INTERACTIVO REAL")
     print("   Versión: 2.0 - Para obtención de datos REALES")
     
     try:
@@ -360,7 +353,7 @@ def main():
         if sistema.canonical_products:
             sistema.ejecutar()
         else:
-            print("\n❌ Sistema no cargado. Ejecuta primero:")
+            print("\nSistema no cargado. Ejecuta primero:")
             print("   python main.py init")
     except Exception as e:
         print(f"\nError crítico: {e}")
