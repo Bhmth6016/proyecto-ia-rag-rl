@@ -51,7 +51,7 @@ CPU with AVX2 support (for FAISS)
 
 ## 2. Installation
 ### Clone repository
-git clone <your-repository>
+git clone <Bhmth6016/proyecto-ia-rag-rl>
 cd proyecto-ia-rag-rl
 
 ### Create virtual environment
@@ -67,9 +67,9 @@ pip install -r requirements.txt
 Download Amazon product metadata from: https://amazon-reviews-2023.github.io
 Place JSONL files in data/raw/:
 
-meta_Video_Games_10000.jsonl
-meta_Electronics_10000.jsonl
-meta_Books_10000.jsonl
+meta_Video_Games.jsonl
+meta_Electronics.jsonl
+meta_Books.jsonl
 (and other categories)
 
 ### Expected format:
@@ -122,6 +122,7 @@ Allows:
 * Interactive RLHF training
 
 ### Extract NER Attributes
+python extraer_ner_incremental.py
 Processes products for attribute extraction:
 
 * Brand, color, size, material
