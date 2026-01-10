@@ -90,11 +90,11 @@ def main():
         print("   Objetivo: Obtener 30+ clicks REALES para entrenar RLHF")
         
         try:
-            from sistema_interactivo_real import main as interactivo_main
+            from sistema_interactivo import main as interactivo_main
             interactivo_main()
         except ImportError as e:
             print(f"❌ Error: {e}")
-            print("   Asegúrate de que sistema_interactivo_real.py existe")
+            print("   Asegúrate de que sistema_interactivo.py existe")
     
     elif command == "experimento":
         print("\n🔬 EJECUTANDO EXPERIMENTO COMPLETO...")

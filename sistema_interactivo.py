@@ -1,4 +1,4 @@
-# sistema_interactivo_real.py
+# sistema_interactivo.py
 """
 SISTEMA INTERACTIVO REAL para obtener feedback REAL de usuario
 Versión simplificada y optimizada
