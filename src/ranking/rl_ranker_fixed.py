@@ -1,7 +1,7 @@
-# src/ranking/rl_ranker_fixed.py
 """
 RLHFRankerFixed - Sistema de Pesos Dinámicos y Adaptativos
 Aprende automáticamente cuánto peso dar a cada tipo de feature
+VERSIÓN CORREGIDA - Fix de pickle con lambda
 """
 import numpy as np
 from typing import Dict, Any, List, Tuple
@@ -10,6 +10,11 @@ import pickle
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ✅ FIX: Función auxiliar fuera de la clase para que pickle funcione
+def _default_feature_stats():
+    """Retorna estadísticas por defecto para features"""
+    return {'hits': 0, 'total': 0}
 
 class RLHFRankerFixed:
     """RLHF con pesos dinámicos que se ajustan según éxito real"""
@@ -38,8 +43,9 @@ class RLHFRankerFixed:
             'specific_weight': 0.2    # Peso inicial para preferencias específicas
         }
         
+        # ✅ FIX: Usar función auxiliar en vez de lambda
         # Historial de éxito por tipo de feature
-        self.feature_success = defaultdict(lambda: {'hits': 0, 'total': 0})
+        self.feature_success = defaultdict(_default_feature_stats)
         
         # Estadísticas
         self.learning_history = []
