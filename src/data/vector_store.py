@@ -69,7 +69,7 @@ class ImmutableVectorStore:
         self.is_locked = True
         self.construction_time = np.datetime64('now')
         
-        logger.info(f"✅ Índice inmutable construido:")
+        logger.info(" Índice inmutable construido:")
         logger.info(f"   • Vectores: {self.index.ntotal}")
         logger.info(f"   • Dimensión: {self.dimension}")
         logger.info(f"   • Bloqueado: {self.is_locked}")
