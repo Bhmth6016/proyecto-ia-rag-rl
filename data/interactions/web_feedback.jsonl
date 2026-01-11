@@ -1,0 +1,6 @@
+{"timestamp": "2026-01-11T16:28:42.066990", "user_id": "user_kbe4v3vfj", "type": "query", "query": "playstation games", "method": "full_hybrid", "results_count": 10}
+{"timestamp": "2026-01-11T16:28:42.089604", "user_id": "user_kbe4v3vfj", "type": "query", "query": "playstation games", "method": "full_hybrid", "results_count": 10}
+{"timestamp": "2026-01-11T16:29:06.822598", "user_id": "user_kbe4v3vfj", "type": "query", "query": "playstation games", "method": "baseline", "results_count": 10}
+{"timestamp": "2026-01-11T16:29:10.493369", "user_id": "user_kbe4v3vfj", "type": "query", "query": "playstation games", "method": "ner_enhanced", "results_count": 10}
+{"timestamp": "2026-01-11T16:29:14.417993", "user_id": "user_kbe4v3vfj", "type": "query", "query": "playstation games", "method": "rlhf", "results_count": 10}
+{"timestamp": "2026-01-11T16:29:18.058933", "user_id": "user_kbe4v3vfj", "type": "query", "query": "playstation games", "method": "full_hybrid", "results_count": 10}

@@ -1,0 +1,159 @@
+
+================================================================================
+ SISTEMA HÍBRIDO RAG + NER + RLHF - VERIFICACIÓN COMPLETA
+================================================================================
+Fecha: 2026-01-11 16:10:56
+Directorio de trabajo: C:\Users\evill\OneDrive\Documentos\Github\proyecto-ia-rag-rl
+
+================================================================================
+ VERIFICANDO ESTRUCTURA DE DIRECTORIOS
+================================================================================
+   ✓ Directorio data/raw existe
+   ✓ Directorio data/cache existe
+   ✓ Directorio data/interactions existe
+   ✓ Directorio results existe
+   ✓ Directorio logs existe
+   ✓ Archivos raw en data/raw (mínimo 1)
+
+================================================================================
+ VERIFICANDO DEPENDENCIAS DE PYTHON
+================================================================================
+   ✓ Paquete numpy disponible
+   ✓ Paquete pandas disponible
+   ✓ Paquete faiss disponible
+   ✓ Paquete sentence_transformers disponible
+   ✓ Paquete scipy disponible
+   ✓ Paquete tqdm disponible
+   ✓ Paquete transformers disponible
+   ✓ Paquete torch disponible
+   ✓ Paquete dataclasses disponible
+   ✓ Paquete typing disponible
+   ✓ Paquete logging disponible
+   ✓ Paquete json disponible
+   ✓ Paquete pathlib disponible
+
+================================================================================
+ VERIFICANDO ESTRUCTURA DE MÓDULOS
+================================================================================
+   ✓ Módulo src/__init__.py existe
+   ✓ Módulo src/unified_system.py existe
+   ✓ Módulo src/unified_system_v2.py existe
+   ✓ Módulo src/data/loader.py existe
+   ✓ Módulo src/data/canonicalizer.py existe
+   ✓ Módulo src/data/vector_store.py existe
+   ✓ Módulo src/ranking/baseline_ranker.py existe
+   ✓ Módulo sistema_interactivo.py existe
+   ✓ Módulo main.py existe
+   ✓ Módulo experimento_completo_4_metodos.py existe
+   ✓ Módulo extraer_ner_incremental.py existe
+
+================================================================================
+ VERIFICANDO PIPELINE DE DATOS
+================================================================================
+Advertencia: No se pudieron importar todos los módulos: No module named 'unified_system'
+   ✓ Módulo data.loader puede importarse
+   ✓ Archivos raw encontrados: 9
+   ✓ Archivo meta_Automotive_10000.jsonl es válido JSONL
+
+================================================================================
+ VERIFICANDO CACHE DEL SISTEMA
+================================================================================
+   ✓ Cache data/cache/unified_system_v2.pkl existe
+   ⚠  Error cargando data/cache/unified_system_v2.pkl: No module named 'unified_system'
+   ⚠  Cache data/cache/unified_system_v2.pkl puede cargarse
+   ✓ Cache data/cache/ner_cache_incremental.pkl existe
+   ✓ Cache data/cache/ner_cache_incremental.pkl puede cargarse
+   ✓ Interacciones reales existen
+   ✓ Interacciones: 73 líneas
+
+================================================================================
+ VERIFICANDO SISTEMA DE EMBEDDINGS
+================================================================================
+   ✓ SentenceTransformers puede cargarse
+   ✓ Embedding generado (dimensión: 384)
+
+================================================================================
+ VERIFICANDO SISTEMA NER
+================================================================================
+   ✓ Módulo NER src/enrichment/ner_zero_shot_optimized.py existe
+   ✓ Módulo NER src/ranking/ner_enhanced_ranker.py existe
+   ✓ OptimizedNERExtractor puede importarse
+
+================================================================================
+ VERIFICANDO SISTEMA RLHF
+================================================================================
+   ✓ Módulo RLHF src/ranking/rl_ranker_fixed.py existe
+   ✓ Interacciones para RLHF: 33 clicks
+
+================================================================================
+ VERIFICANDO SISTEMA DE EXPERIMENTOS
+================================================================================
+   ✓ Ground truth existe
+   ✓ Ground truth: 20 queries, 33 relevantes
+
+================================================================================
+ VERIFICANDO FUNCIONALIDAD DEL SISTEMA
+================================================================================
+   ✗ Error importando UnifiedSystemV2: No module named 'unified_system'
+   ✗ UnifiedSystemV2 puede importarse (CRÍTICO)
+   ⚠  Error cargando cache: No module named 'unified_system'
+   ⚠  Sistema puede cargarse desde cache
+
+================================================================================
+ VERIFICANDO INTERFAZ DE LÍNEA DE COMANDOS
+================================================================================
+   ✓ main.py puede ejecutarse con --help
+   ⚠  Comando init timeout
+   ⚠  Comando init --help responde
+   ✓ Comando interactivo --help responde
+   ⚠  Comando experimento timeout
+   ⚠  Comando experimento --help responde
+   ✓ Comando stats --help responde
+
+================================================================================
+ RESUMEN DE VERIFICACIÓN
+================================================================================
+
+ ESTADÍSTICAS:
+   • Checks totales: 55
+   • Checks exitosos: 50
+   • Checks fallidos: 5
+   • Errores críticos: 1
+   • Advertencias: 4
+   • Tasa de éxito: 90.9%
+
+   ✗ 1 ERRORES CRÍTICOS - Sistema necesita reparación
+
+================================================================================
+ ERRORES CRÍTICOS DETECTADOS
+================================================================================
+   1. CRÍTICO: UnifiedSystemV2 puede importarse
+
+================================================================================
+ ADVERTENCIAS
+================================================================================
+   1. ADVERTENCIA: Cache data/cache/unified_system_v2.pkl puede cargarse
+   2. ADVERTENCIA: Sistema puede cargarse desde cache
+   3. ADVERTENCIA: Comando init --help responde
+   4. ADVERTENCIA: Comando experimento --help responde
+
+================================================================================
+ RECOMENDACIONES
+================================================================================
+
+   ACCIONES REQUERIDAS:
+   1. Resolver errores críticos primero
+   2. Verificar dependencias faltantes: pip install -r requirements.txt
+   3. Asegurar que data/raw tenga archivos JSONL
+
+   SISTEMA EN BUEN ESTADO:
+   1. Puedes ejecutar: python main.py interactivo
+   2. Luego: python main.py experimento
+   3. Revisar resultados en directorio results/
+
+================================================================================
+ ESTADO PARA EXPERIMENTOS
+================================================================================
+   ✓ Datos suficientes para experimento completo
+      • 20 queries, 33 productos relevantes
+   ✓ Sistema cacheado disponible

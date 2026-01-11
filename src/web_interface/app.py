@@ -1,13 +1,18 @@
 # src/web_interface/app.py
 """
-Interfaz Web para Sistema RAG+RL - Permite queries y feedback para RLHF
+Interfaz Web para Sistema RAG+NER+RLHF - Versión Corregida
 """
-from flask import Flask, render_template, request, jsonify, session
 import sys
-from pathlib import Path
 import json
-from datetime import datetime
-import numpy as np
+import base64
+import re
+import time
+import urllib.parse
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Tuple
+from collections import OrderedDict
+from io import BytesIO
 
 # Configurar paths
 current_dir = Path(__file__).parent
@@ -15,540 +20,784 @@ project_root = current_dir.parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(current_dir.parent))
 
-app = Flask(__name__)
-app.secret_key = 'rag_rl_secret_key_2024'
+# Configuración
+CONFIG = {
+    'image_proxy_enabled': True,
+    'image_cache_dir': Path("data/cache/images"),
+    'image_cache_max_size': 100,  # MB
+    'image_cache_max_age': 30,  # días
+    'image_cache_max_files': 1000,
+    'max_products': 100000,
+    'results_per_page': 10,
+    'request_timeout': 10,
+    'max_image_size': 5 * 1024 * 1024,  # 5MB
+}
 
-# Importar componentes del sistema
+# Importar dependencias con manejo de errores
 try:
-    from data.canonicalizer import ProductCanonicalizer
-    from data.vector_store import VectorStore
-    from src.query.understanding import QueryUnderstanding
-    from ranking.ranking_engine import StaticRankingEngine
-    from src.ranking.rl_ranker import RLHFAgent, LinUCB
-    from consistency_checker import ConsistencyChecker
-    import yaml
+    from flask import Flask, render_template, request, jsonify, send_file, abort
+    import requests
+    HAS_REQUIREMENTS = True
 except ImportError as e:
-    print(f"Error de importación: {e}")
-    # Crear stubs para desarrollo
-    class MockComponent:
-        pass
-    ProductCanonicalizer = MockComponent
-    VectorStore = MockComponent
-    QueryUnderstanding = MockComponent
-    StaticRankingEngine = MockComponent
-    RLHFAgent = MockComponent
-    LinUCB = MockComponent
+    print(f"⚠️ Dependencias faltantes: {e}")
+    print("   Instalar: pip install flask requests")
+    HAS_REQUIREMENTS = False
+
+# Importar PIL opcionalmente
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    print("⚠️ Pillow no instalado. La validación de imágenes será limitada.")
+    print("   Instalar: pip install pillow")
+
+if HAS_REQUIREMENTS:
+    app = Flask(__name__)
+    app.secret_key = 'rag_ner_rlhf_secret_key_2024_v2'
+else:
+    print("❌ No se puede ejecutar sin Flask y requests")
+    sys.exit(1)
 
 
-class InteractiveRAGRLSystem:
-    """Sistema interactivo para interfaz web"""
+class LRUImageCache:
+    """Cache LRU para imágenes con límite de tamaño"""
     
-    def __init__(self, config_path: str = "config/paper_experiment.yaml"):
-        self.config = self._load_config(config_path)
-        self.user_sessions = {}  # user_id -> session_data
-        self.interaction_log = []
+    def __init__(self, max_size_mb: int = 100, max_files: int = 1000, max_age_days: int = 30):
+        self.cache_dir = CONFIG['image_cache_dir']
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.max_size_mb = max_size_mb
+        self.max_files = max_files
+        self.max_age_seconds = max_age_days * 24 * 3600
+        self.access_order = OrderedDict()
+        self._initialize_cache()
         
-        # Inicializar componentes
-        self._initialize_components()
+    def _initialize_cache(self):
+        """Inicializa el cache escaneando directorio"""
+        print(f"🔄 Inicializando LRU cache (máx: {self.max_size_mb}MB, {self.max_files} archivos)")
         
-        # Estadísticas
+        # Escanear archivos existentes
+        files = []
+        for cache_file in self.cache_dir.glob("*.jpg"):
+            try:
+                stat = cache_file.stat()
+                files.append({
+                    'path': cache_file,
+                    'size': stat.st_size,
+                    'mtime': stat.st_mtime,
+                    'atime': stat.st_atime
+                })
+            except OSError:
+                continue
+        
+        # Ordenar por último acceso
+        files.sort(key=lambda x: x['atime'], reverse=True)
+        
+        # Mantener solo los más recientes
+        total_size = 0
+        kept_files = 0
+        
+        for file_info in files:
+            # Verificar si el archivo es muy viejo
+            if time.time() - file_info['mtime'] > self.max_age_seconds:
+                try:
+                    file_info['path'].unlink()
+                except:
+                    pass
+                continue
+                
+            # Verificar límites
+            if (total_size + file_info['size'] <= self.max_size_mb * 1024 * 1024 and 
+                kept_files < self.max_files):
+                # Mantener en cache
+                self.access_order[str(file_info['path'].relative_to(self.cache_dir))] = {
+                    'size': file_info['size'],
+                    'last_access': file_info['atime']
+                }
+                total_size += file_info['size']
+                kept_files += 1
+            else:
+                # Eliminar archivo excedente
+                try:
+                    file_info['path'].unlink()
+                except:
+                    pass
+        
+        print(f"✅ Cache inicializado: {kept_files} archivos, {total_size/1024/1024:.2f}MB")
+    
+    def get(self, product_id: str) -> Optional[Path]:
+        """Obtiene una imagen del cache"""
+        cache_key = f"{product_id}.jpg"
+        
+        if cache_key in self.access_order:
+            # Actualizar orden de acceso
+            self.access_order.move_to_end(cache_key)
+            self.access_order[cache_key]['last_access'] = time.time()
+            
+            cache_file = self.cache_dir / cache_key
+            
+            # Verificar que el archivo existe y no es muy viejo
+            try:
+                if (cache_file.exists() and 
+                    time.time() - cache_file.stat().st_mtime < self.max_age_seconds):
+                    return cache_file
+            except OSError:
+                pass
+        
+        return None
+    
+    def put(self, product_id: str, image_data: bytes) -> Path:
+        """Agrega una imagen al cache"""
+        cache_key = f"{product_id}.jpg"
+        cache_file = self.cache_dir / cache_key
+        
+        # Guardar archivo
+        with open(cache_file, 'wb') as f:
+            f.write(image_data)
+        
+        # Actualizar cache LRU
+        self.access_order[cache_key] = {
+            'size': len(image_data),
+            'last_access': time.time()
+        }
+        
+        # Limpiar si excede límites
+        self._cleanup()
+        
+        return cache_file
+    
+    def _cleanup(self):
+        """Limpia el cache si excede límites"""
+        current_size = sum(info['size'] for info in self.access_order.values())
+        current_count = len(self.access_order)
+        
+        # Verificar si necesita limpieza
+        needs_cleanup = (current_size > self.max_size_mb * 1024 * 1024 or 
+                        current_count > self.max_files)
+        
+        if not needs_cleanup:
+            return
+        
+        print(f"🧹 Limpiando cache: {current_count} archivos, {current_size/1024/1024:.2f}MB")
+        
+        # Eliminar archivos más antiguos primero
+        removed_size = 0
+        removed_count = 0
+        
+        while (self.access_order and 
+               (current_size - removed_size > self.max_size_mb * 1024 * 1024 * 0.9 or 
+                current_count - removed_count > self.max_files * 0.9)):
+            
+            cache_key, info = self.access_order.popitem(last=False)
+            cache_file = self.cache_dir / cache_key
+            
+            try:
+                cache_file.unlink()
+                removed_size += info['size']
+                removed_count += 1
+            except OSError:
+                pass
+        
+        print(f"✅ Cache limpiado: eliminados {removed_count} archivos, {removed_size/1024/1024:.2f}MB")
+
+
+class SecureProductImageManager:
+    """Gestor seguro de imágenes de productos"""
+    
+    def __init__(self):
+        self.cache = LRUImageCache(
+            max_size_mb=CONFIG['image_cache_max_size'],
+            max_files=CONFIG['image_cache_max_files'],
+            max_age_days=CONFIG['image_cache_max_age']
+        )
+        self.session = self._create_secure_session()
+        self.allowed_content_types = {
+            'image/jpeg', 'image/jpg', 'image/png', 
+            'image/gif', 'image/webp', 'image/svg+xml'
+        }
+        
+    def _create_secure_session(self):
+        """Crea una sesión HTTP segura"""
+        session = requests.Session()
+        
+        # Configurar headers para evitar bloqueos
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        })
+        
+        # Usar adapter con timeout
+        from requests.adapters import HTTPAdapter
+        from requests.packages.urllib3.util.retry import Retry
+        
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=10,
+            pool_maxsize=10
+        )
+        
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        
+        return session
+    
+    def get_product_image(self, product_data: Dict) -> str:
+        """Obtiene imagen para un producto de forma segura"""
+        try:
+            # Verificar si está en cache
+            product_id = self._sanitize_id(product_data.get('id', 'unknown'))
+            cached_file = self.cache.get(product_id)
+            
+            if cached_file:
+                return f"/api/image/{product_id}"
+            
+            # Intentar obtener imagen del producto
+            image_url = self._extract_image_url(product_data)
+            
+            if not image_url:
+                return self._generate_placeholder(product_data)
+            
+            # Descargar y cachear imagen
+            image_data = self._download_image_safely(image_url, product_id)
+            
+            if image_data:
+                self.cache.put(product_id, image_data)
+                return f"/api/image/{product_id}"
+            else:
+                return self._generate_placeholder(product_data)
+                
+        except Exception as e:
+            print(f"⚠️ Error obteniendo imagen: {e}")
+            return self._generate_placeholder(product_data)
+    
+    def _sanitize_id(self, product_id: str) -> str:
+        """Sanitiza un ID de producto para uso seguro en rutas"""
+        # Solo permitir letras, números, guiones y guiones bajos
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '', str(product_id))
+        # Limitar longitud
+        return sanitized[:50] if sanitized else 'unknown'
+    
+    def _extract_image_url(self, product_data: Dict) -> Optional[str]:
+        """Extrae URL de imagen del producto de forma segura"""
+        # Prioridad 1: Campo 'images' (como en tu ejemplo)
+        if 'images' in product_data and isinstance(product_data['images'], list):
+            for image_info in product_data['images']:
+                if isinstance(image_info, dict):
+                    # Probar diferentes campos de imagen
+                    for field in ['large', 'hi_res', 'thumb', 'url', 'image']:
+                        if field in image_info and image_info[field]:
+                            url = str(image_info[field])
+                            if self._is_safe_url(url):
+                                return url
+        
+        # Prioridad 2: Campos directos
+        image_fields = ['image', 'image_url', 'imageURL', 'thumbnail', 'primary_image']
+        for field in image_fields:
+            if field in product_data and product_data[field]:
+                url = str(product_data[field])
+                if self._is_safe_url(url):
+                    return url
+        
+        # Prioridad 3: En 'details' o metadata
+        if 'details' in product_data and isinstance(product_data['details'], dict):
+            details = product_data['details']
+            for field in ['Image', 'image', 'ImageURL', 'thumbnail']:
+                if field in details and details[field]:
+                    url = str(details[field])
+                    if self._is_safe_url(url):
+                        return url
+        
+        return None
+    
+    def _is_safe_url(self, url: str) -> bool:
+        """Verifica si una URL es segura para descargar"""
+        try:
+            # Validar que es string
+            if not isinstance(url, str):
+                return False
+            
+            # Validar esquema
+            if not url.startswith(('http://', 'https://')):
+                return False
+            
+            # Parsear URL
+            parsed = urllib.parse.urlparse(url)
+            if not parsed.netloc:
+                return False
+            
+            # Validar dominio
+            domain = parsed.netloc.lower()
+            
+            # Lista de dominios permitidos (puedes expandirla)
+            allowed_domains = [
+                'amazon.com', 'm.media-amazon.com', 'media-amazon.com',
+                'images-na.ssl-images-amazon.com', 'i.ebayimg.com',
+                'target.scene7.com', 'walmartimages.com', 'bestbuy.com'
+            ]
+            
+            # Verificar si el dominio está en la lista permitida
+            if not any(allowed_domain in domain for allowed_domain in allowed_domains):
+                print(f"⚠️ Dominio no permitido: {domain}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Error validando URL {url}: {e}")
+            return False
+    
+    def _download_image_safely(self, image_url: str, product_id: str) -> Optional[bytes]:
+        """Descarga una imagen de forma segura"""
+        try:
+            print(f"📥 Descargando imagen para {product_id}: {image_url[:80]}...")
+            
+            # Configurar timeout
+            timeout = (5, 10)  # (connect timeout, read timeout)
+            
+            response = self.session.get(
+                image_url,
+                stream=True,
+                timeout=timeout,
+                allow_redirects=True,
+                verify=True
+            )
+            
+            response.raise_for_status()
+            
+            # Verificar content-type
+            content_type = response.headers.get('content-type', '').lower()
+            if not any(ct in content_type for ct in ['image', 'svg', 'octet-stream']):
+                print(f"⚠️ Content-type no es imagen: {content_type}")
+                return None
+            
+            # Leer con límite de tamaño
+            image_data = BytesIO()
+            size = 0
+            
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:  # Filtrar keep-alive chunks
+                    image_data.write(chunk)
+                    size += len(chunk)
+                    
+                    # Verificar tamaño máximo
+                    if size > CONFIG['max_image_size']:
+                        print(f"⚠️ Imagen demasiado grande: {size} bytes")
+                        return None
+            
+            image_bytes = image_data.getvalue()
+            
+            # Verificar tamaño mínimo
+            if size < 100:  # Menos de 100 bytes probablemente no es una imagen válida
+                print(f"⚠️ Imagen demasiado pequeña: {size} bytes")
+                return None
+            
+            # Verificar que es una imagen válida (si PIL está disponible)
+            if HAS_PIL:
+                try:
+                    img = Image.open(BytesIO(image_bytes))
+                    img.verify()  # Verificar integridad
+                    print(f"✅ Imagen válida: {size} bytes, formato: {img.format}")
+                except Exception as e:
+                    print(f"⚠️ Imagen corrupta o formato no soportado: {e}")
+                    # Aún así la aceptamos si tiene el content-type correcto
+            else:
+                print(f"✅ Imagen descargada: {size} bytes (PIL no disponible para validación)")
+            
+            return image_bytes
+            
+        except requests.exceptions.Timeout:
+            print(f"❌ Timeout descargando imagen: {image_url}")
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error de red: {e}")
+        except Exception as e:
+            print(f"❌ Error procesando imagen: {e}")
+        
+        return None
+    
+    def _generate_placeholder(self, product_data: Dict) -> str:
+        """Genera un placeholder SVG seguro basado en el producto"""
+        try:
+            category = str(product_data.get('category', 'General')).lower()[:20]
+            product_id = self._sanitize_id(product_data.get('id', 'unknown'))[:10]
+            title = str(product_data.get('title', ''))[:30]
+            
+            # Colores por categoría
+            category_colors = {
+                'electronics': '#4facfe',
+                'books': '#38b2ac', 
+                'clothing': '#ed8936',
+                'home': '#9f7aea',
+                'sports': '#f56565',
+                'beauty': '#ed64a6',
+                'automotive': '#48bb78',
+                'toys': '#ecc94b',
+                'video games': '#ed8936',
+                'general': '#667eea'
+            }
+            
+            # Buscar color por categoría
+            color = category_colors.get(category, '#667eea')
+            for cat_key in category_colors:
+                if cat_key in category:
+                    color = category_colors[cat_key]
+                    break
+            
+            # Crear SVG seguro
+            svg_template = '''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+                <rect width="300" height="300" fill="{color}" opacity="0.1"/>
+                <rect x="20" y="20" width="260" height="180" rx="10" fill="white"/>
+                <text x="150" y="110" font-family="Arial, sans-serif" font-size="14" 
+                      fill="#666" text-anchor="middle">{category}</text>
+                <text x="150" y="230" font-family="Arial, sans-serif" font-size="12" 
+                      fill="#888" text-anchor="middle">{title}</text>
+                <text x="150" y="250" font-family="Arial, sans-serif" font-size="10" 
+                      fill="#aaa" text-anchor="middle">{product_id}</text>
+            </svg>'''
+            
+            svg = svg_template.format(
+                color=color,
+                category=category.upper(),
+                title=title,
+                product_id=f"ID: {product_id}"
+            )
+            
+            return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
+            
+        except Exception:
+            # Fallback simple
+            svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
+                <rect width="100%" height="100%" fill="#f8f9fa"/>
+                <text x="150" y="150" font-family="Arial" font-size="16" 
+                      fill="#666" text-anchor="middle">No image</text>
+            </svg>'''
+            return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
+
+
+class WebUnifiedSystem:
+    """Sistema unificado para web con mejoras"""
+    
+    def __init__(self):
+        self.system = None
+        self.image_manager = SecureProductImageManager()
+        self.user_sessions = {}
+        self.interactions = []
         self.stats = {
             'total_queries': 0,
             'total_feedback': 0,
-            'users': set(),
-            'avg_rating': 0.0
+            'active_users': set(),
+            'cache_hits': 0,
+            'cache_misses': 0
         }
-    
-    def _load_config(self, config_path: str):
-        """Carga configuración"""
-        try:
-            with open(config_path, 'r') as f:
-                return yaml.safe_load(f)
-        except:
-            # Configuración por defecto
-            return {
-                'experiment': {'name': 'Interactive RAG+RL'},
-                'embedding': {'model': 'all-MiniLM-L6-v2', 'dimension': 384},
-                'ranking': {
-                    'baseline_weights': {
-                        'content_similarity': 0.4,
-                        'title_similarity': 0.2,
-                        'category_exact_match': 0.15,
-                        'rating_normalized': 0.1,
-                        'price_available': 0.05
-                    }
-                },
-                'rlhf': {'alpha': 0.1}
-            }
-    
-    def _initialize_components(self):
-        """Inicializa componentes del sistema"""
-        print("🔄 Inicializando componentes del sistema interactivo...")
         
+    def load_system(self):
+        """Carga el sistema unificado"""
         try:
-            # Canonicalizer y Vector Store
-            self.canonicalizer = ProductCanonicalizer(
-                embedding_model=self.config['embedding']['model']
-            )
+            if self.system is not None:
+                return True
             
-            # Cargar datos REALES
-            self.products = self._load_real_products()
+            from unified_system_v2 import UnifiedSystemV2
             
-            # Crear productos canónicos
-            self.canonical_products = self.canonicalizer.batch_canonicalize(
-                self.products[:100000]  # Limitar para demo interactiva
-            )
+            system_cache = Path("data/cache/unified_system_v2.pkl")
+            if system_cache.exists():
+                print("🔄 Cargando sistema desde cache...")
+                self.system = UnifiedSystemV2.load_from_cache()
+            else:
+                print("⚠️ Sistema no encontrado en cache")
+                return False
             
-            # Vector Store
-            self.vector_store = VectorStore(
-                dimension=self.config['embedding']['dimension']
-            )
-            self.vector_store.build_index(self.canonical_products)
+            if self.system and hasattr(self.system, 'canonical_products'):
+                print(f"✅ Sistema cargado: {len(self.system.canonical_products):,} productos")
+                
+                # Verificar datos de ejemplo
+                if self.system.canonical_products:
+                    sample = self.system.canonical_products[0]
+                    print(f"   • Ejemplo: {getattr(sample, 'title', 'N/A')[:50]}...")
+                    print(f"   • Categoría: {getattr(sample, 'category', 'N/A')}")
+                    print(f"   • ID: {getattr(sample, 'id', 'N/A')}")
+                
+                return True
             
-            # Query Understanding
-            self.query_understanding = QueryUnderstanding()
-            
-            # Ranking Engine
-            weights = self.config['ranking']['baseline_weights']
-            self.ranking_engine = StaticRankingEngine(weights=weights)
-            
-            # RLHF Agent
-            self.rlhf_agent = self._create_rlhf_agent()
-            
-            print(f"✅ Sistema interactivo inicializado:")
-            print(f"   • Productos: {len(self.canonical_products)}")
-            print(f"   • Dimensiones: {self.config['embedding']['dimension']}")
-            print(f"   • RLHF alpha: {self.config['rlhf'].get('alpha', 0.1)}")
-            
+        except ImportError as e:
+            print(f"❌ Error importando: {e}")
         except Exception as e:
-            print(f"⚠️  Error inicializando componentes: {e}")
-            print("   Creando componentes simulados para demo...")
-            self._create_mock_components()
+            print(f"❌ Error cargando sistema: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
     
-    def _load_real_products(self):
-        """Carga productos REALES de los archivos .jsonl"""
-        print("📥 Cargando productos reales...")
-        
-        products = []
-        raw_dir = Path("data/raw")
-        jsonl_files = list(raw_dir.glob("*.jsonl"))
-        
-        if not jsonl_files:
-            print("⚠️  No hay archivos .jsonl, creando datos de ejemplo")
-            return self._create_sample_products()
-        
-        # Procesar primeros 2 archivos
-        for file_path in jsonl_files[:2]:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    for i, line in enumerate(f):
-                        if i >= 250:  # 250 productos por archivo
-                            break
-                        
-                        try:
-                            data = json.loads(line.strip())
-                            product = {
-                                'id': data.get('asin') or f"prod_{i:06d}",
-                                'title': data.get('title', '')[:100],
-                                'description': data.get('description', '')[:200],
-                                'price': self._extract_price(data),
-                                'category': self._extract_category(data),
-                                'brand': data.get('brand', ''),
-                                'rating': self._extract_rating(data),
-                                'rating_count': data.get('rating_count')
-                            }
-                            
-                            if product['title']:
-                                products.append(product)
-                                
-                        except json.JSONDecodeError:
-                            continue
-                
-                print(f"   ✓ {file_path.name}: {min(250, i)} productos")
-                
-            except Exception as e:
-                print(f"   ✗ Error en {file_path.name}: {e}")
-        
-        print(f"✅ Total productos cargados: {len(products)}")
-        return products
-    
-    def _extract_price(self, data):
-        """Extrae precio"""
-        price_keys = ['price', 'Price', 'list_price']
-        for key in price_keys:
-            if key in data and data[key]:
-                try:
-                    price_str = str(data[key])
-                    import re
-                    match = re.search(r'(\d+\.?\d*)', price_str.replace(',', ''))
-                    if match:
-                        return float(match.group(1))
-                except:
-                    continue
-        return None
-    
-    def _extract_category(self, data):
-        """Extrae categoría"""
-        category_keys = ['main_category', 'category']
-        for key in category_keys:
-            if key in data and data[key]:
-                cat = data[key]
-                if isinstance(cat, str):
-                    return cat.split('|')[0].strip() if '|' in cat else cat.strip()
-        return "General"
-    
-    def _extract_rating(self, data):
-        """Extrae rating"""
-        rating_keys = ['rating', 'average_rating']
-        for key in rating_keys:
-            if key in data and data[key]:
-                try:
-                    rating = float(data[key])
-                    return max(0.0, min(5.0, rating))
-                except:
-                    continue
-        return None
-    
-    def _create_sample_products(self):
-        """Crea productos de ejemplo si no hay datos reales"""
-        products = []
-        for i in range(100):
-            products.append({
-                'id': f"sample_{i:03d}",
-                'title': f"Producto de Ejemplo {i+1}",
-                'description': f"Descripción del producto de ejemplo {i+1}",
-                'price': 10.0 + i * 5,
-                'category': ['Electronics', 'Books', 'Home'][i % 3],
-                'brand': f"Brand{(i % 5) + 1}",
-                'rating': 3.5 + (i % 15) * 0.1,
-                'rating_count': i * 10
-            })
-        return products
-    
-    def _create_rlhf_agent(self):
-        """Crea agente RLHF para aprendizaje interactivo"""
-        
-        def feature_extractor(query_features, product):
-            """Extrae características para RLHF"""
-            features = {}
-            
-            # Características del producto
-            if hasattr(product, 'price'):
-                features['price_available'] = 1.0 if product.price else 0.0
-            
-            if hasattr(product, 'rating'):
-                features['has_rating'] = 1.0 if product.rating else 0.0
-                if product.rating:
-                    features['rating_value'] = product.rating / 5.0
-            
-            # Match con query
-            if 'category' in query_features and hasattr(product, 'category'):
-                features['category_match'] = 1.0 if query_features['category'] == product.category else 0.0
-            
-            # Similitud (si está disponible)
-            if 'query_embedding' in query_features and hasattr(product, 'content_embedding'):
-                sim = np.dot(query_features['query_embedding'], product.content_embedding)
-                features['content_similarity'] = float(sim)
-            
-            return features
-        
-        return RLHFAgent(
-            feature_extractor=feature_extractor,
-            alpha=self.config['rlhf'].get('alpha', 0.1)
-        )
-    
-    def _create_mock_components(self):
-        """Crea componentes simulados para demo"""
-        class MockProduct:
-            def __init__(self, data):
-                for key, value in data.items():
-                    setattr(self, key, value)
-                self.title_embedding = np.random.randn(384)
-                self.content_embedding = np.random.randn(384)
-        
-        # Productos simulados
-        self.products = self._create_sample_products()
-        self.canonical_products = [MockProduct(p) for p in self.products[:100]]
-        
-        # Componentes mock
-        self.canonicalizer = type('MockCanonicalizer', (), {
-            'embedding_model': type('MockModel', (), {
-                'encode': lambda self, text, **kwargs: np.random.randn(384)
-            })()
-        })()
-        
-        self.query_understanding = type('MockQueryUnderstanding', (), {
-            'analyze': lambda self, query: {
-                'category': 'General',
-                'intent': 'search',
-                'entities': [],
-                'keywords': query.split()
-            }
-        })()
-        
-        self.ranking_engine = type('MockRankingEngine', (), {
-            'rank_products': lambda self, **kwargs: self.canonical_products[:10]
-        })()
-        
-        self.rlhf_agent = self._create_rlhf_agent()
-    
-    def process_query(self, query_text, user_id="anonymous", use_rlhf=True):
-        """Procesa una query del usuario"""
+    def search_products(self, query: str, method: str = 'full_hybrid', k: int = 20) -> Dict:
+        """Busca productos"""
         self.stats['total_queries'] += 1
-        self.stats['users'].add(user_id)
         
-        # 1. Análisis de la query
-        query_analysis = self.query_understanding.analyze(query_text)
+        if not self.system:
+            return {
+                'success': False, 
+                'error': 'Sistema no inicializado',
+                'code': 'SYSTEM_NOT_LOADED'
+            }
         
-        # 2. Generar embedding de la query
-        query_embedding = self.canonicalizer.embedding_model.encode(
-            query_text, normalize_embeddings=True
-        )
-        
-        # 3. Recuperación
-        retrieved = self.vector_store.search(query_embedding, k=50)
-        
-        if not retrieved:
+        if not query or len(query) < 2:
             return {
                 'success': False,
-                'error': 'No se encontraron productos',
-                'query_analysis': query_analysis
+                'error': 'Query demasiado corta',
+                'code': 'QUERY_TOO_SHORT'
             }
         
-        # 4. Ranking
-        if use_rlhf and self.rlhf_agent and user_id in self.user_sessions:
-            # Usar RLHF si el usuario tiene sesión de aprendizaje
-            user_session = self.user_sessions[user_id]
+        try:
+            # Usar el sistema para buscar
+            results = self.system.query_four_methods(query, k=k)
             
-            # Extraer características de la query para RLHF
-            query_features = {
-                'category': query_analysis.get('category'),
-                'intent': query_analysis.get('intent'),
-                'query_embedding': query_embedding
-            }
+            if method not in results['methods']:
+                method = 'baseline'
             
-            # Obtener ranking con RLHF
-            baseline_indices = list(range(len(retrieved)))
-            rlhf_ranking = self.rlhf_agent.select_ranking(
-                query_features=query_features,
-                products=retrieved,
-                baseline_ranking=baseline_indices
-            )
+            products = results['methods'].get(method, [])
             
-            # Ordenar productos según ranking RLHF
-            ranked_products = [retrieved[idx] for idx in rlhf_ranking[:10]]
-            ranking_method = "RLHF (personalizado)"
+            # Formatear productos para la web
+            formatted_products = []
+            for i, product in enumerate(products[:CONFIG['results_per_page']]):
+                product_data = self._format_product_for_web(product, i+1)
+                
+                # Añadir imagen
+                product_data['image'] = self.image_manager.get_product_image(product_data)
+                
+                formatted_products.append(product_data)
             
-        else:
-            # Ranking tradicional
-            ranked_products = self.ranking_engine.rank_products(
-                query_embedding=query_embedding,
-                query_category=query_analysis.get('category', 'General'),
-                products=retrieved,
-                top_k=10
-            )
-            ranking_method = "Baseline"
-        
-        # 5. Formatear resultados para la interfaz
-        formatted_results = []
-        for i, product in enumerate(ranked_products[:10]):
-            formatted_results.append({
-                'position': i + 1,
-                'id': getattr(product, 'id', 'N/A'),
-                'title': getattr(product, 'title', 'Sin título'),
-                'description': getattr(product, 'description', '')[:100] + '...',
-                'price': f"${getattr(product, 'price', 0):.2f}" if hasattr(product, 'price') and product.price else "N/A",
-                'category': getattr(product, 'category', 'General'),
-                'rating': f"⭐{getattr(product, 'rating', 0):.1f}" if hasattr(product, 'rating') and product.rating else "Sin rating",
-                'brand': getattr(product, 'brand', ''),
-                'features': getattr(product, 'features_dict', {})
-            })
-        
-        # 6. Guardar interacción para RLHF
-        interaction_id = len(self.interaction_log)
-        interaction = {
-            'id': interaction_id,
-            'timestamp': datetime.now().isoformat(),
-            'user_id': user_id,
-            'query': query_text,
-            'query_analysis': query_analysis,
-            'results_count': len(ranked_products),
-            'ranking_method': ranking_method,
-            'shown_products': [p['id'] for p in formatted_results[:5]],  # IDs de productos mostrados
-            'feedback_received': False
-        }
-        
-        self.interaction_log.append(interaction)
-        
-        # 7. Preparar respuesta
-        response = {
-            'success': True,
-            'query': query_text,
-            'query_analysis': query_analysis,
-            'results': formatted_results,
-            'stats': {
-                'total_found': len(retrieved),
-                'shown': len(formatted_results),
-                'ranking_method': ranking_method
-            },
-            'interaction_id': interaction_id,
-            'user_id': user_id
-        }
-        
-        return response
-    
-    def process_feedback(self, interaction_id, product_id, rating, user_id="anonymous"):
-        """Procesa feedback del usuario para RLHF"""
-        self.stats['total_feedback'] += 1
-        
-        # Actualizar promedio de ratings
-        old_avg = self.stats['avg_rating']
-        n = self.stats['total_feedback']
-        self.stats['avg_rating'] = (old_avg * (n-1) + rating) / n if n > 0 else rating
-        
-        # Buscar la interacción
-        if interaction_id >= len(self.interaction_log):
-            return {'success': False, 'error': 'Interacción no encontrada'}
-        
-        interaction = self.interaction_log[interaction_id]
-        
-        # Verificar que el usuario coincida
-        if interaction['user_id'] != user_id:
-            return {'success': False, 'error': 'Usuario no autorizado'}
-        
-        # Buscar el producto en los resultados mostrados
-        if product_id not in interaction['shown_products']:
-            return {'success': False, 'error': 'Producto no mostrado en esta interacción'}
-        
-        # Obtener embedding de la query original
-        query_text = interaction['query']
-        query_embedding = self.canonicalizer.embedding_model.encode(
-            query_text, normalize_embeddings=True
-        )
-        
-        # Buscar productos recuperados originalmente
-        retrieved = self.vector_store.search(query_embedding, k=50)
-        
-        # Encontrar el índice del producto seleccionado
-        selected_idx = -1
-        for i, product in enumerate(retrieved):
-            if hasattr(product, 'id') and product.id == product_id:
-                selected_idx = i
-                break
-        
-        if selected_idx == -1:
-            return {'success': False, 'error': 'Producto no encontrado en resultados originales'}
-        
-        # Preparar características de la query para RLHF
-        query_features = {
-            'category': interaction['query_analysis'].get('category'),
-            'intent': interaction['query_analysis'].get('intent'),
-            'query_embedding': query_embedding
-        }
-        
-        # Actualizar RLHF agent con el feedback
-        if self.rlhf_agent:
-            # Inicializar sesión de usuario si no existe
-            if user_id not in self.user_sessions:
-                self.user_sessions[user_id] = {
-                    'queries_count': 0,
-                    'feedbacks_count': 0,
-                    'preferences': {}
+            return {
+                'success': True,
+                'query': query,
+                'method': method,
+                'products': formatted_products,
+                'stats': {
+                    'total_found': len(products),
+                    'shown': len(formatted_products),
+                    'methods_available': list(results['methods'].keys()),
+                    'timing': results.get('timing', {})
                 }
+            }
             
-            user_session = self.user_sessions[user_id]
-            user_session['queries_count'] = user_session.get('queries_count', 0) + 1
-            user_session['feedbacks_count'] = user_session.get('feedbacks_count', 0) + 1
+        except Exception as e:
+            print(f"❌ Error en búsqueda: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False, 
+                'error': 'Error interno del sistema',
+                'code': 'INTERNAL_ERROR'
+            }
+    
+    def _format_product_for_web(self, product, position: int) -> Dict:
+        """Formatea un producto para la web"""
+        try:
+            # Obtener atributos básicos
+            title = getattr(product, 'title', 'Sin título')
+            description = getattr(product, 'description', '')
+            category = getattr(product, 'category', 'General')
+            product_id = getattr(product, 'id', f'prod_{position}')
+            price = getattr(product, 'price', None)
+            rating = getattr(product, 'rating', None)
+            brand = getattr(product, 'brand', '')
             
-            # Guardar preferencia
-            if 'preferences' not in user_session:
-                user_session['preferences'] = {}
+            # Extraer más datos si existen
+            additional_data = {}
+            if hasattr(product, 'raw_data'):
+                try:
+                    additional_data = getattr(product, 'raw_data', {})
+                except:
+                    pass
             
-            # Actualizar RLHF
-            shown_indices = list(range(min(10, len(retrieved))))
-            self.rlhf_agent.update_with_feedback(
-                query_features=query_features,
-                products=retrieved,
-                shown_indices=shown_indices,
-                selected_idx=selected_idx,
-                rating=rating
-            )
+            # Construir datos del producto
+            product_dict = {
+                'position': position,
+                'id': str(product_id),
+                'title': str(title)[:100],
+                'description': self._truncate_text(str(description), 150),
+                'price': self._format_price(price),
+                'category': str(category)[:30],
+                'rating': self._format_rating(rating),
+                'rating_count': getattr(product, 'rating_count', 0),
+                'brand': str(brand)[:50],
+                'has_ner': hasattr(product, 'ner_attributes') and bool(getattr(product, 'ner_attributes', {})),
+                'features': getattr(product, 'features_dict', {})
+            }
             
-            # Guardar preferencia del usuario
-            category = interaction['query_analysis'].get('category', 'General')
-            if category not in user_session['preferences']:
-                user_session['preferences'][category] = []
+            # Añadir atributos NER si existen
+            if product_dict['has_ner']:
+                ner_attrs = getattr(product, 'ner_attributes', {})
+                product_dict['ner_attributes'] = ner_attrs
+                product_dict['ner_tags'] = [
+                    f"{key}: {', '.join(values[:2])}" 
+                    for key, values in ner_attrs.items() 
+                    if values and isinstance(values, list)
+                ][:5]
             
-            user_session['preferences'][category].append({
-                'product_id': product_id,
+            # Añadir datos adicionales para extracción de imágenes
+            if additional_data:
+                product_dict.update({
+                    'images': additional_data.get('images', []),
+                    'details': additional_data.get('details', {}),
+                    'raw_data': additional_data  # Para depuración
+                })
+            
+            return product_dict
+            
+        except Exception as e:
+            print(f"⚠️ Error formateando producto: {e}")
+            # Producto mínimo
+            return {
+                'position': position,
+                'id': f'prod_{position}',
+                'title': 'Producto',
+                'description': '',
+                'price': 'N/A',
+                'category': 'General',
+                'rating': 'Sin rating',
+                'brand': '',
+                'image': ''
+            }
+    
+    def _truncate_text(self, text: str, max_length: int) -> str:
+        """Trunca texto"""
+        if not text:
+            return ""
+        if len(text) <= max_length:
+            return text
+        
+        truncated = text[:max_length].rsplit(' ', 1)[0]
+        return truncated + '...' if truncated else text[:max_length-3] + '...'
+    
+    def _format_price(self, price) -> str:
+        """Formatea precio"""
+        if price is None:
+            return "No disponible"
+        
+        try:
+            price_float = float(price)
+            if price_float < 0:
+                return "No disponible"
+            return f"${price_float:.2f}"
+        except:
+            return "No disponible"
+    
+    def _format_rating(self, rating) -> str:
+        """Formatea rating"""
+        if rating is None:
+            return "Sin rating"
+        
+        try:
+            rating_float = float(rating)
+            if rating_float < 0 or rating_float > 5:
+                return "Sin rating"
+            
+            full_stars = int(rating_float)
+            half_star = rating_float - full_stars >= 0.5
+            
+            stars = '★' * full_stars
+            if half_star:
+                stars += '½'
+            
+            return f"{stars} ({rating_float:.1f}/5)"
+        except:
+            return "Sin rating"
+    
+    def record_feedback(self, user_id: str, interaction_data: Dict) -> Tuple[bool, str]:
+        """Registra feedback del usuario"""
+        try:
+            # Validar feedback
+            required_fields = ['product_id', 'rating', 'query']
+            for field in required_fields:
+                if field not in interaction_data:
+                    return False, f"Campo requerido faltante: {field}"
+            
+            # Validar rating
+            try:
+                rating = float(interaction_data['rating'])
+                if rating < 1 or rating > 5:
+                    return False, "Rating debe estar entre 1 y 5"
+            except:
+                return False, "Rating inválido"
+            
+            # Crear interacción
+            interaction = {
+                'timestamp': datetime.now().isoformat(),
+                'user_id': user_id,
+                'product_id': interaction_data['product_id'],
                 'rating': rating,
-                'timestamp': datetime.now().isoformat()
-            })
-        
-        # Actualizar interacción
-        interaction['feedback_received'] = True
-        interaction['feedback'] = {
-            'product_id': product_id,
-            'rating': rating,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # Guardar feedback en archivo para análisis
-        self._save_feedback_to_file(interaction_id, product_id, rating, user_id)
-        
-        return {
-            'success': True,
-            'message': f'Feedback recibido: Rating {rating} para producto {product_id}',
-            'rlhf_updated': self.rlhf_agent is not None,
-            'user_session': self.user_sessions.get(user_id, {})
-        }
+                'query': interaction_data['query'],
+                'product_category': interaction_data.get('product_category', 'General'),
+                'type': 'feedback'
+            }
+            
+            self.interactions.append(interaction)
+            self.stats['total_feedback'] += 1
+            self.stats['active_users'].add(user_id)
+            
+            # Guardar en archivo
+            feedback_file = Path("data/interactions/web_feedback.jsonl")
+            feedback_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(feedback_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(interaction, ensure_ascii=False) + '\n')
+            
+            return True, "Feedback registrado exitosamente"
+            
+        except Exception as e:
+            print(f"❌ Error registrando feedback: {e}")
+            return False, "Error interno del sistema"
     
-    def _save_feedback_to_file(self, interaction_id, product_id, rating, user_id):
-        """Guarda feedback en archivo para análisis posterior"""
-        feedback_dir = Path("data/feedback")
-        feedback_dir.mkdir(exist_ok=True)
-        
-        feedback_file = feedback_dir / f"feedback_{datetime.now().strftime('%Y%m%d')}.jsonl"
-        
-        feedback_data = {
-            'timestamp': datetime.now().isoformat(),
-            'interaction_id': interaction_id,
-            'product_id': product_id,
-            'rating': rating,
-            'user_id': user_id,
-            'rlhf_alpha': self.config['rlhf'].get('alpha', 0.1)
-        }
-        
-        with open(feedback_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(feedback_data) + '\n')
-    
-    def get_system_stats(self):
+    def get_system_stats(self) -> Dict:
         """Obtiene estadísticas del sistema"""
-        return {
-            'total_queries': self.stats['total_queries'],
-            'total_feedback': self.stats['total_feedback'],
-            'unique_users': len(self.stats['users']),
-            'average_rating': self.stats['avg_rating'],
-            'total_products': len(self.canonical_products),
-            'rlhf_initialized': self.rlhf_agent is not None,
-            'user_sessions': len(self.user_sessions)
-        }
-    
-    def get_user_session(self, user_id):
-        """Obtiene sesión de un usuario"""
-        return self.user_sessions.get(user_id, {})
-    
-    def get_rlhf_learning_curve(self, user_id=None):
-        """Obtiene curva de aprendizaje RLHF"""
-        if not self.rlhf_agent:
-            return []
+        if not self.system:
+            return {
+                'system_loaded': False,
+                'total_products': 0,
+                'active_users': len(self.stats['active_users']),
+                'total_interactions': len(self.interactions)
+            }
         
-        return self.rlhf_agent.get_learning_curve()
+        try:
+            stats = self.system.get_system_stats()
+            
+            return {
+                'system_loaded': True,
+                'total_products': len(self.system.canonical_products) if hasattr(self.system, 'canonical_products') else 0,
+                'has_ner': stats.get('has_ner_ranker', False),
+                'has_rlhf': stats.get('has_learned_rlhf', False),
+                'ner_enriched': stats.get('ner_enriched_count', 0),
+                'active_users': len(self.stats['active_users']),
+                'total_queries': self.stats['total_queries'],
+                'total_feedback': self.stats['total_feedback'],
+                'total_interactions': len(self.interactions),
+                'methods_available': ['baseline', 'ner_enhanced', 'rlhf', 'full_hybrid']
+            }
+        except Exception as e:
+            print(f"❌ Error obteniendo estadísticas: {e}")
+            return {'system_loaded': False, 'error': str(e)}
+    
+    def get_user_stats(self, user_id: str) -> Dict:
+        """Obtiene estadísticas de usuario"""
+        session = self.user_sessions.get(user_id, {})
+        
+        return {
+            'user_id': user_id,
+            'session_created': session.get('created', datetime.now().isoformat()),
+            'feedback_count': session.get('feedback_count', 0),
+            'preferences': session.get('preferences', {}),
+            'total_interactions': len([i for i in self.interactions if i.get('user_id') == user_id])
+        }
 
 
 # Inicializar sistema global
-rag_rl_system = InteractiveRAGRLSystem()
-
+web_system = WebUnifiedSystem()
 
 # Rutas de la API
 @app.route('/')
@@ -556,103 +805,257 @@ def index():
     """Página principal"""
     return render_template('index.html')
 
-
-@app.route('/api/query', methods=['POST'])
-def api_query():
-    """API para procesar queries"""
-    data = request.json
+@app.route('/api/search', methods=['POST'])
+def api_search():
+    """API para buscar productos"""
+    if not request.is_json:
+        return jsonify({
+            'success': False, 
+            'error': 'Content-Type debe ser application/json'
+        }), 415
+    
+    data = request.get_json()
     
     if not data or 'query' not in data:
-        return jsonify({'success': False, 'error': 'Query requerida'})
+        return jsonify({
+            'success': False, 
+            'error': 'Query requerida'
+        }), 400
     
-    query_text = data['query']
+    query = data['query'].strip()
+    method = data.get('method', 'full_hybrid')
     user_id = data.get('user_id', 'anonymous')
-    use_rlhf = data.get('use_rlhf', True)
     
-    try:
-        result = rag_rl_system.process_query(query_text, user_id, use_rlhf)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
+    if not query:
+        return jsonify({
+            'success': False, 
+            'error': 'Query vacía'
+        }), 400
+    
+    # Cargar sistema si no está cargado
+    if not web_system.system:
+        if not web_system.load_system():
+            return jsonify({
+                'success': False, 
+                'error': 'Sistema no disponible'
+            }), 503
+    
+    # Buscar productos
+    result = web_system.search_products(query, method)
+    
+    return jsonify(result)
 
 @app.route('/api/feedback', methods=['POST'])
 def api_feedback():
     """API para recibir feedback"""
-    data = request.json
+    if not request.is_json:
+        return jsonify({
+            'success': False, 
+            'error': 'Content-Type debe ser application/json'
+        }), 415
     
-    required_fields = ['interaction_id', 'product_id', 'rating']
-    for field in required_fields:
-        if field not in data:
-            return jsonify({'success': False, 'error': f'Campo {field} requerido'})
+    data = request.get_json()
     
-    interaction_id = data['interaction_id']
+    if not data:
+        return jsonify({
+            'success': False, 
+            'error': 'JSON inválido'
+        }), 400
+    
+    required_fields = ['product_id', 'rating', 'query']
+    missing_fields = [field for field in required_fields if field not in data]
+    
+    if missing_fields:
+        return jsonify({
+            'success': False, 
+            'error': f'Campos requeridos faltantes: {", ".join(missing_fields)}'
+        }), 400
+    
     product_id = data['product_id']
-    rating = float(data['rating'])
+    rating = data['rating']
+    query = data['query']
     user_id = data.get('user_id', 'anonymous')
+    product_category = data.get('product_category', 'General')
     
-    # Validar rating
-    if rating < 1 or rating > 5:
-        return jsonify({'success': False, 'error': 'Rating debe estar entre 1 y 5'})
+    # Registrar feedback
+    success, message = web_system.record_feedback(user_id, {
+        'product_id': product_id,
+        'rating': rating,
+        'query': query,
+        'product_category': product_category
+    })
     
-    try:
-        result = rag_rl_system.process_feedback(interaction_id, product_id, rating, user_id)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
+    if success:
+        return jsonify({
+            'success': True,
+            'message': message,
+            'user_stats': web_system.get_user_stats(user_id)
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': message
+        }), 400
 
 @app.route('/api/stats', methods=['GET'])
 def api_stats():
     """API para obtener estadísticas del sistema"""
-    stats = rag_rl_system.get_system_stats()
+    stats = web_system.get_system_stats()
     return jsonify({'success': True, 'stats': stats})
-
 
 @app.route('/api/user/<user_id>', methods=['GET'])
 def api_user(user_id):
-    """API para obtener información de usuario"""
-    session_data = rag_rl_system.get_user_session(user_id)
-    learning_curve = rag_rl_system.get_rlhf_learning_curve(user_id)
+    """API para obtener estadísticas de usuario"""
+    if not user_id:
+        return jsonify({
+            'success': False,
+            'error': 'User ID requerido'
+        }), 400
     
+    stats = web_system.get_user_stats(user_id)
+    return jsonify({'success': True, 'user': stats})
+
+@app.route('/api/methods', methods=['GET'])
+def api_methods():
+    """API para obtener métodos disponibles"""
+    methods = [
+        {
+            'id': 'baseline',
+            'name': 'Baseline (FAISS)',
+            'description': 'Búsqueda vectorial básica',
+            'icon': '🔍',
+            'color': '#4facfe'
+        },
+        {
+            'id': 'ner_enhanced',
+            'name': 'NER Enhanced',
+            'description': 'Mejorado con reconocimiento de entidades',
+            'icon': '🏷️',
+            'color': '#38b2ac'
+        },
+        {
+            'id': 'rlhf',
+            'name': 'RLHF',
+            'description': 'Aprendizaje por refuerzo con feedback humano',
+            'icon': '🧠',
+            'color': '#9f7aea'
+        },
+        {
+            'id': 'full_hybrid',
+            'name': 'Full Hybrid',
+            'description': 'Combinación de NER + RLHF',
+            'icon': '⚡',
+            'color': '#f56565'
+        }
+    ]
+    
+    return jsonify({'success': True, 'methods': methods})
+
+@app.route('/api/image/<product_id>', methods=['GET'])
+def api_image(product_id):
+    """API para servir imágenes de productos"""
+    try:
+        # Sanitizar product_id
+        product_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(product_id))
+        
+        if not product_id:
+            return generate_placeholder_svg(), 200, {'Content-Type': 'image/svg+xml'}
+        
+        # Verificar cache
+        cache_file = CONFIG['image_cache_dir'] / f"{product_id}.jpg"
+        
+        # Verificar path traversal
+        try:
+            cache_file = cache_file.resolve()
+            cache_dir = CONFIG['image_cache_dir'].resolve()
+            
+            if not cache_file.is_relative_to(cache_dir):
+                return generate_placeholder_svg(), 200, {'Content-Type': 'image/svg+xml'}
+        except:
+            return generate_placeholder_svg(), 200, {'Content-Type': 'image/svg+xml'}
+        
+        # Servir archivo si existe
+        if cache_file.exists():
+            return send_file(cache_file, mimetype='image/jpeg')
+        else:
+            return generate_placeholder_svg(), 200, {'Content-Type': 'image/svg+xml'}
+            
+    except Exception as e:
+        print(f"❌ Error sirviendo imagen: {e}")
+        return generate_placeholder_svg(), 200, {'Content-Type': 'image/svg+xml'}
+
+def generate_placeholder_svg() -> str:
+    """Genera un placeholder SVG"""
+    svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
+        <rect width="100%" height="100%" fill="#f8f9fa"/>
+        <text x="150" y="150" font-family="Arial, sans-serif" font-size="16" 
+              fill="#666" text-anchor="middle">No image</text>
+    </svg>'''
+    return svg
+
+@app.route('/api/init_system', methods=['POST'])
+def api_init_system():
+    """API para inicializar el sistema"""
+    try:
+        if web_system.load_system():
+            return jsonify({
+                'success': True,
+                'message': 'Sistema inicializado correctamente',
+                'stats': web_system.get_system_stats()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Error inicializando sistema'
+            }), 500
+    except Exception as e:
+        print(f"❌ Error en inicialización: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """API de salud del sistema"""
     return jsonify({
         'success': True,
-        'user_id': user_id,
-        'session': session_data,
-        'learning_curve': learning_curve
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'version': '2.0.0',
+        'system_loaded': web_system.system is not None
     })
-
-
-@app.route('/api/debug/products', methods=['GET'])
-def api_debug_products():
-    """API de debug para ver productos (solo desarrollo)"""
-    products_info = []
-    for i, product in enumerate(rag_rl_system.canonical_products[:20]):
-        products_info.append({
-            'id': getattr(product, 'id', f'product_{i}'),
-            'title': getattr(product, 'title', 'Sin título'),
-            'category': getattr(product, 'category', 'General'),
-            'price': getattr(product, 'price', None),
-            'rating': getattr(product, 'rating', None)
-        })
-    
-    return jsonify({
-        'success': True,
-        'total_products': len(rag_rl_system.canonical_products),
-        'sample': products_info
-    })
-
 
 if __name__ == '__main__':
-    print("🚀 Iniciando servidor web RAG+RL...")
+    print("🚀 Iniciando servidor web RAG+NER+RLHF...")
     print("📊 Accede en: http://localhost:5000")
-    print("⚙️  Sistema inicializado con RLHF para aprendizaje en tiempo real")
     
-    # Mostrar estadísticas iniciales
-    stats = rag_rl_system.get_system_stats()
-    print(f"\n📈 Estadísticas iniciales:")
-    print(f"   • Productos cargados: {stats['total_products']}")
-    print(f"   • RLHF inicializado: {stats['rlhf_initialized']}")
-    print(f"   • Alpha RLHF: {rag_rl_system.config['rlhf'].get('alpha', 0.1)}")
+    # Mostrar configuración
+    print(f"\n⚙️ Configuración:")
+    print(f"   • Cache imágenes: {CONFIG['image_cache_max_size']}MB")
+    print(f"   • Tiempo vida cache: {CONFIG['image_cache_max_age']} días")
+    print(f"   • Máximo productos: {CONFIG['max_products']:,}")
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Intentar cargar el sistema
+    if web_system.load_system():
+        stats = web_system.get_system_stats()
+        print(f"\n✅ Sistema listo:")
+        print(f"   • Productos: {stats['total_products']:,}")
+        print(f"   • NER: {'✅' if stats.get('has_ner') else '❌'}")
+        print(f"   • RLHF: {'✅' if stats.get('has_rlhf') else '❌'}")
+    else:
+        print("\n⚠️ Sistema no cargado. Usa la opción 'Inicializar Sistema' en la web.")
+    
+    print("\n📈 Rutas disponibles:")
+    print("   • GET  /                    - Interfaz web")
+    print("   • POST /api/search          - Buscar productos")
+    print("   • POST /api/feedback        - Enviar feedback")
+    print("   • GET  /api/stats           - Estadísticas del sistema")
+    print("   • GET  /api/health          - Salud del sistema")
+    
+    app.run(
+        debug=True, 
+        host='0.0.0.0', 
+        port=5000,
+        threaded=True
+    )
