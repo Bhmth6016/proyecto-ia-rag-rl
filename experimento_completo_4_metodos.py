@@ -1,10 +1,5 @@
 # experimento_completo_4_metodos.py
-"""
-EXPERIMENTO COMPLETO VERIFICADO - 4 MÉTODOS DE RANKING
-Versión consolidada y optimizada
-"""
 import json
-import pickle
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -14,14 +9,7 @@ import logging
 from datetime import datetime
 import sys
 import traceback
-import os
-
-# ============================================================================
-# INICIALIZACIÓN PRINCIPAL
-# ============================================================================
-
 def setup_directories():
-    """Crea todos los directorios necesarios"""
     directories = [
         'data/cache',
         'results',
@@ -42,7 +30,6 @@ def setup_directories():
     return created_dirs
 
 def setup_logging():
-    """Configura logging robustamente"""
     logs_dir = Path("logs")
     logs_dir.mkdir(parents=True, exist_ok=True)
     
@@ -53,33 +40,29 @@ def setup_logging():
         logger = logging.getLogger()
         logger.setLevel(logging.INFO)
         
-        # Remover handlers existentes
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
         
-        # Formato del log
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # Handler para archivo
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
         
-        # Handler para consola
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
         
         app_logger = logging.getLogger(__name__)
-        app_logger.info(f"📝 Log iniciado: {log_file}")
+        app_logger.info(f" Log iniciado: {log_file}")
         
         return app_logger
     except Exception as e:
-        print(f"⚠️  Error configurando logging: {e}")
-        print(f"⚠️  Usando logging básico...")
+        print(f"  Error configurando logging: {e}")
+        print("  Usando logging básico...")
         
         logging.basicConfig(
             level=logging.INFO,
@@ -87,19 +70,17 @@ def setup_logging():
             stream=sys.stdout
         )
         logger = logging.getLogger(__name__)
-        logger.warning(f"Logging alternativo activado")
+        logger.warning("Logging alternativo activado")
         return logger
 
 def check_dependencies():
-    """Verifica que las dependencias estén instaladas"""
     required = ['numpy', 'pandas', 'faiss']
     optional = ['scipy', 'tqdm', 'sentence_transformers']
     missing_required = []
     missing_optional = []
     
-    print("🔍 Verificando dependencias...")
+    print(" Verificando dependencias...")
     
-    # Verificar requeridos
     for package in required:
         try:
             __import__(package)
@@ -108,74 +89,59 @@ def check_dependencies():
             missing_required.append(package)
             print(f"  ✗ {package} (REQUERIDO)")
     
-    # Verificar opcionales
     for package in optional:
         try:
             __import__(package)
             print(f"  ✓ {package} (opcional)")
         except ImportError:
             missing_optional.append(package)
-            print(f"  ⚠️  {package} (opcional, faltante)")
+            print(f"    {package} (opcional, faltante)")
     
     if missing_required:
-        print(f"\n❌ Paquetes REQUERIDOS faltantes: {', '.join(missing_required)}")
-        print(f"💡 Ejecutar: pip install {' '.join(missing_required)}")
+        print(f"\n Paquetes REQUERIDOS faltantes: {', '.join(missing_required)}")
+        print(f" Ejecutar: pip install {' '.join(missing_required)}")
         return False
     
     if missing_optional:
-        print(f"\n⚠️  Paquetes opcionales faltantes: {', '.join(missing_optional)}")
-        print(f"💡 Para funcionalidad completa: pip install scipy tqdm sentence-transformers")
+        print(f"\n  Paquetes opcionales faltantes: {', '.join(missing_optional)}")
+        print(" Para funcionalidad completa: pip install scipy tqdm sentence-transformers")
     
     return True
-
-# ============================================================================
-# EJECUCIÓN INICIAL
-# ============================================================================
-
 print("\n" + "="*60)
-print("🔧 INICIALIZANDO EXPERIMENTO - 4 MÉTODOS")
+print(" INICIALIZANDO EXPERIMENTO - 4 MÉTODOS")
 print("="*60)
 
-# 1. Crear directorios primero
-print("\n📁 Creando estructura de directorios...")
+print("\n Creando estructura de directorios...")
 dirs = setup_directories()
-print(f"   ✅ Directorios creados/verificados: {len(dirs)}")
+print(f"    Directorios creados/verificados: {len(dirs)}")
 
-# 2. Configurar logging
-print("\n📝 Configurando sistema de logging...")
+print("\n Configurando sistema de logging...")
 logger = setup_logging()
 
-# 3. Verificar dependencias
-print("\n🔍 Verificando dependencias de Python...")
+print("\n Verificando dependencias de Python...")
 deps_ok = check_dependencies()
 
 if not deps_ok:
-    print("\n❌ No se pueden continuar sin las dependencias requeridas")
+    print("\n No se pueden continuar sin las dependencias requeridas")
     sys.exit(1)
 
 print("\n" + "="*60)
-print("✅ SISTEMA INICIALIZADO CORRECTAMENTE")
+print(" SISTEMA INICIALIZADO CORRECTAMENTE")
 print("="*60 + "\n")
 
-# ============================================================================
-# FUNCIONES PRINCIPALES DEL EXPERIMENTO
-# ============================================================================
-
 def load_ground_truth() -> Dict[str, List[str]]:
-    """Carga ground truth REAL"""
     gt_file = Path("data/interactions/ground_truth_REAL.json")
     
     if not gt_file.exists():
-        logger.error(f"❌ Ground truth no encontrado: {gt_file}")
+        logger.error(f" Ground truth no encontrado: {gt_file}")
         logger.info("   Ejecuta primero: python main.py interactivo")
         sys.exit(1)
     
     with open(gt_file, 'r', encoding='utf-8') as f:
         ground_truth = json.load(f)
     
-    logger.info(f"📊 Ground truth cargado: {len(ground_truth)} queries")
+    logger.info(f" Ground truth cargado: {len(ground_truth)} queries")
     
-    # Estadísticas
     total_relevantes = sum(len(ids) for ids in ground_truth.values())
     logger.info(f"   • Productos relevantes totales: {total_relevantes}")
     
@@ -183,12 +149,8 @@ def load_ground_truth() -> Dict[str, List[str]]:
 
 def split_train_test_stratified(ground_truth: Dict, test_size: float = 0.25, 
                                seed: int = 42) -> Tuple[List[str], List[str]]:
-    """
-    Split estratificado por número de productos relevantes
-    """
     random.seed(seed)
     
-    # Agrupar por cantidad de relevantes
     queries_by_count = {}
     for query, ids in ground_truth.items():
         count = len(ids)
@@ -199,7 +161,6 @@ def split_train_test_stratified(ground_truth: Dict, test_size: float = 0.25,
     train_queries = []
     test_queries = []
     
-    # Split dentro de cada grupo
     for count, queries in queries_by_count.items():
         random.shuffle(queries)
         split_idx = int(len(queries) * (1 - test_size))
@@ -207,125 +168,113 @@ def split_train_test_stratified(ground_truth: Dict, test_size: float = 0.25,
         train_queries.extend(queries[:split_idx])
         test_queries.extend(queries[split_idx:])
     
-    # Mezclar final
     random.shuffle(train_queries)
     random.shuffle(test_queries)
     
-    logger.info(f"📚 Split creado: {len(train_queries)} train, {len(test_queries)} test")
+    logger.info(f" Split creado: {len(train_queries)} train, {len(test_queries)} test")
     
-    # Verificar que no haya overlap
     overlap = set(train_queries) & set(test_queries)
     if overlap:
-        logger.warning(f"⚠️  Overlap detectado: {len(overlap)} queries")
+        logger.warning(f"  Overlap detectado: {len(overlap)} queries")
     
     return train_queries, test_queries
 
 def load_or_create_system_v2() -> Any:
-    """Carga o crea sistema V2"""
     try:
         from src.unified_system_v2 import UnifiedSystemV2
     except ImportError as e:
-        logger.error(f"❌ No se pudo importar UnifiedSystemV2: {e}")
+        logger.error(f" No se pudo importar UnifiedSystemV2: {e}")
         logger.error("   Asegúrate de que el archivo src/unified_system_v2.py existe")
         sys.exit(1)
     
     system_cache = Path("data/cache/unified_system_v2.pkl")
     
     if system_cache.exists():
-        logger.info("📂 Cargando sistema V2 desde cache...")
+        logger.info(" Cargando sistema V2 desde cache...")
         try:
             system = UnifiedSystemV2.load_from_cache()
             
             if system:
-                logger.info(f"✅ Sistema cargado: {len(system.canonical_products):,} productos")
-                logger.info(f"   • RLHF: {'✅ Disponible' if system.rl_ranker else '❌ No disponible'}")
-                logger.info(f"   • NER: {'✅ Disponible' if system.ner_ranker else '❌ No disponible'}")
+                logger.info(f" Sistema cargado: {len(system.canonical_products):,} productos")
+                logger.info(f"   • RLHF: {' Disponible' if system.rl_ranker else '❌ No disponible'}")
+                logger.info(f"   • NER: {' Disponible' if system.ner_ranker else '❌ No disponible'}")
                 return system
             else:
-                logger.warning("⚠️  Sistema V2 no encontrado en cache, creando nuevo...")
+                logger.warning("  Sistema V2 no encontrado en cache, creando nuevo...")
         except Exception as e:
-            logger.error(f"❌ Error cargando sistema desde cache: {e}")
-            logger.warning("⚠️  Creando nuevo sistema...")
+            logger.error(f" Error cargando sistema desde cache: {e}")
+            logger.warning("  Creando nuevo sistema...")
     
-    # Crear nuevo sistema
-    logger.info("🔨 Creando nuevo sistema V2...")
+    logger.info(" Creando nuevo sistema V2...")
     system = UnifiedSystemV2()
     
     try:
         success = system.initialize_with_ner(
             limit=100000,  # Límite para experimentos rápidos
             use_cache=True,
-            use_zero_shot=False
+            use_zero_shot=True
         )
         
         if not success:
-            logger.error("❌ Error inicializando sistema V2")
+            logger.error(" Error inicializando sistema V2")
             sys.exit(1)
         
         return system
     except Exception as e:
-        logger.error(f"❌ Error al inicializar sistema: {e}")
+        logger.error(f" Error al inicializar sistema: {e}")
         traceback.print_exc()
         sys.exit(1)
 
 def train_rlhf_on_system(system, train_queries: List[str]) -> bool:
-    """Entrena RLHF en el sistema"""
     interactions_file = Path("data/interactions/real_interactions.jsonl")
     
     if not interactions_file.exists():
-        logger.warning("⚠️  No hay interacciones para entrenar RLHF")
+        logger.warning("  No hay interacciones para entrenar RLHF")
         return False
     
-    logger.info(f"🎯 Entrenando RLHF con {len(train_queries)} queries de entrenamiento...")
+    logger.info(f" Entrenando RLHF con {len(train_queries)} queries de entrenamiento...")
     
     try:
         success = system.train_rlhf_with_queries(train_queries, interactions_file)
         
         if success:
-            logger.info("✅ RLHF entrenado exitosamente")
+            logger.info(" RLHF entrenado exitosamente")
             
-            # Mostrar estadísticas
             if hasattr(system, 'rl_ranker') and system.rl_ranker:
                 stats = system.rl_ranker.get_stats()
                 logger.info(f"   • Feedback procesado: {stats.get('feedback_count', 0)}")
                 logger.info(f"   • Features aprendidas: {stats.get('weights_count', 0)}")
         else:
-            logger.warning("⚠️  RLHF no pudo ser entrenado (pocos datos?)")
+            logger.warning("  RLHF no pudo ser entrenado (pocos datos?)")
         
         return success
     except Exception as e:
-        logger.error(f"❌ Error entrenando RLHF: {e}")
+        logger.error(f" Error entrenando RLHF: {e}")
         traceback.print_exc()
         return False
 
 def calculate_ranking_metrics(ranked_ids: List[str], relevant_ids: List[str], 
                             k: int = 5) -> Dict[str, float]:
-    """Calcula métricas de ranking"""
     if not relevant_ids or k == 0:
         return {'mrr': 0.0, 'precision@k': 0.0, 'recall@k': 0.0, 'ndcg@k': 0.0}
     
-    # MRR (Mean Reciprocal Rank)
     mrr = 0.0
     for i, pid in enumerate(ranked_ids):
         if pid in relevant_ids:
             mrr = 1.0 / (i + 1)
             break
     
-    # Precision@k
     top_k = ranked_ids[:k]
     relevant_in_top = [pid for pid in top_k if pid in relevant_ids]
     precision = len(relevant_in_top) / k if k > 0 else 0.0
     
-    # Recall@k
     recall = len(relevant_in_top) / len(relevant_ids)
     
-    # NDCG@k
     dcg = 0.0
     for i, pid in enumerate(top_k):
         if pid in relevant_ids:
             dcg += 1.0 / np.log2(i + 2)
     
-    # Ideal DCG
     ideal_relevance = [1] * min(len(relevant_ids), k)
     idcg = sum(1.0 / np.log2(i + 2) for i in range(len(ideal_relevance)))
     ndcg = dcg / idcg if idcg > 0 else 0.0
@@ -340,9 +289,7 @@ def calculate_ranking_metrics(ranked_ids: List[str], relevant_ids: List[str],
 
 def evaluate_method_on_query(system, method: str, query: str, 
                            relevant_ids: List[str], k: int = 5) -> Dict[str, Any]:
-    """Evalúa un método específico en una query"""
     try:
-        # Ejecutar método
         results = system.query_four_methods(query, k=k*2)
         method_results = results['methods'].get(method, [])
         
@@ -356,21 +303,19 @@ def evaluate_method_on_query(system, method: str, query: str,
                 'success': False
             }
         
-        # Convertir a IDs
         ranked_ids = []
         for product in method_results[:k]:
             product_id = getattr(product, 'id', None)
             if product_id:
                 ranked_ids.append(product_id)
         
-        # Calcular métricas
         metrics = calculate_ranking_metrics(ranked_ids, relevant_ids, k)
         metrics['success'] = True
         
         return metrics
         
     except Exception as e:
-        logger.error(f"❌ Error evaluando {method} en '{query}': {e}")
+        logger.error(f" Error evaluando {method} en '{query}': {e}")
         return {
             'mrr': 0.0,
             'precision@k': 0.0,
@@ -381,7 +326,6 @@ def evaluate_method_on_query(system, method: str, query: str,
         }
 
 def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
-    """Ejecuta análisis estadístico"""
     try:
         from scipy import stats
         
@@ -389,7 +333,7 @@ def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
         baseline_key = 'baseline'
         
         if baseline_key not in results or len(results[baseline_key]) < 3:
-            logger.warning("⚠️  Insuficientes datos para análisis estadístico")
+            logger.warning("  Insuficientes datos para análisis estadístico")
             return {}
         
         baseline_metrics = [r['mrr'] for r in results[baseline_key] if 'mrr' in r]
@@ -401,23 +345,19 @@ def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
             method_metrics = [r['mrr'] for r in results[method] if 'mrr' in r]
             
             if len(baseline_metrics) != len(method_metrics):
-                logger.warning(f"⚠️  Número de muestras diferente para {method}")
+                logger.warning(f"  Número de muestras diferente para {method}")
                 continue
             
             if len(baseline_metrics) > 2:
-                # Test t pareado
                 t_stat, p_value = stats.ttest_rel(baseline_metrics, method_metrics)
                 
-                # Calcular mejoras
                 baseline_mean = np.mean(baseline_metrics)
                 method_mean = np.mean(method_metrics)
                 mean_diff = method_mean - baseline_mean
                 
-                # Cohen's d
                 pooled_std = np.sqrt((np.std(baseline_metrics)**2 + np.std(method_metrics)**2) / 2)
                 cohens_d = mean_diff / pooled_std if pooled_std != 0 else 0
                 
-                # Porcentaje de mejora
                 percent_improvement = (mean_diff / baseline_mean * 100) if baseline_mean > 0 else 0
                 
                 tests[method] = {
@@ -435,42 +375,33 @@ def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
         return tests
         
     except ImportError:
-        logger.warning("⚠️  SciPy no instalado. Skipping tests estadísticos.")
+        logger.warning("  SciPy no instalado. Skipping tests estadísticos.")
         logger.info("   Instalar: pip install scipy")
         return {}
     except Exception as e:
-        logger.error(f"❌ Error en análisis estadístico: {e}")
+        logger.error(f" Error en análisis estadístico: {e}")
         return {}
-
 class EnhancedJSONEncoder(json.JSONEncoder):
-    """JSON encoder mejorado"""
-    def default(self, obj):
-        if isinstance(obj, np.float32):
-            return float(obj)
-        if isinstance(obj, np.float64):
-            return float(obj)
-        if isinstance(obj, np.int32):
-            return int(obj)
-        if isinstance(obj, np.int64):
-            return int(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (bool, np.bool_)):
-            return bool(obj)
-        if pd.isna(obj):
+    def default(self, o: Any) -> Any:
+        if isinstance(o, np.integer):  
+            return int(o)
+        if isinstance(o, np.floating):  
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        if isinstance(o, (bool, np.bool_)):
+            return bool(o)
+        if pd.isna(o):
             return None
-        return str(obj)
+        return super().default(o)
 
 def save_results(results: Dict[str, Any], summary: Dict[str, Any], 
                 tests: Dict[str, Any], train_queries: List[str], 
                 test_queries: List[str]):
-    """Guarda resultados del experimento"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # JSON con todos los datos
     json_file = Path(f"results/experimento_4_metodos_{timestamp}.json")
     
-    # Preparar datos
     save_data = {
         'metadata': {
             'timestamp': timestamp,
@@ -485,41 +416,36 @@ def save_results(results: Dict[str, Any], summary: Dict[str, Any],
         'test_queries': test_queries
     }
     
-    # Convertir summary
+    def normalize_json_value(value: Any) -> Any:
+        if isinstance(value, np.floating):  
+            return float(value)
+        if isinstance(value, np.integer):   
+            return int(value)
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        if pd.isna(value):
+            return None
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        return value
+    
     for method, stats in summary.items():
-        save_data['summary'][method] = {}
-        for key, value in stats.items():
-            if isinstance(value, (np.float32, np.float64)):
-                save_data['summary'][method][key] = float(value)
-            elif isinstance(value, (np.int32, np.int64)):
-                save_data['summary'][method][key] = int(value)
-            elif pd.isna(value):
-                save_data['summary'][method][key] = None
-            else:
-                save_data['summary'][method][key] = value
+        save_data['summary'][method] = {
+            key: normalize_json_value(value)
+            for key, value in stats.items()
+        }
     
-    # Convertir tests
     for method, test in tests.items():
-        save_data['statistical_tests'][method] = {}
-        for key, value in test.items():
-            if isinstance(value, (np.float32, np.float64)):
-                save_data['statistical_tests'][method][key] = float(value)
-            elif isinstance(value, (np.int32, np.int64)):
-                save_data['statistical_tests'][method][key] = int(value)
-            elif isinstance(value, bool):
-                save_data['statistical_tests'][method][key] = bool(value)
-            elif pd.isna(value):
-                save_data['statistical_tests'][method][key] = None
-            else:
-                save_data['statistical_tests'][method][key] = value
+        save_data['statistical_tests'][method] = {
+            key: normalize_json_value(value)
+            for key, value in test.items()
+        }
     
-    # Guardar JSON
     with open(json_file, 'w', encoding='utf-8') as f:
         json.dump(save_data, f, indent=2, ensure_ascii=False, cls=EnhancedJSONEncoder)
     
-    logger.info(f"💾 Resultados JSON: {json_file}")
+    logger.info(f" Resultados JSON: {json_file}")
     
-    # CSV para análisis
     csv_file = Path(f"results/experimento_4_metodos_{timestamp}.csv")
     
     rows = []
@@ -531,20 +457,19 @@ def save_results(results: Dict[str, Any], summary: Dict[str, Any],
                 rows.append({
                     'method': method,
                     'query_idx': i,
-                    'mrr': metrics.get('mrr', 0),
-                    'precision@5': metrics.get('precision@k', 0),
-                    'recall@5': metrics.get('recall@k', 0),
-                    'ndcg@5': metrics.get('ndcg@k', 0),
-                    'found': metrics.get('found', 0),
-                    'success': bool(metrics.get('success', False))
+                    'mrr': normalize_json_value(metrics.get('mrr', 0)),
+                    'precision@5': normalize_json_value(metrics.get('precision@k', 0)),
+                    'recall@5': normalize_json_value(metrics.get('recall@k', 0)),
+                    'ndcg@5': normalize_json_value(metrics.get('ndcg@k', 0)),
+                    'found': normalize_json_value(metrics.get('found', 0)),
+                    'success': normalize_json_value(metrics.get('success', False))
                 })
     
     if rows:
         df = pd.DataFrame(rows)
         df.to_csv(csv_file, index=False)
-        logger.info(f"📊 Resultados CSV: {csv_file}")
+        logger.info(f" Resultados CSV: {csv_file}")
     
-    # Resumen en texto
     txt_file = Path(f"results/resumen_{timestamp}.txt")
     
     with open(txt_file, 'w', encoding='utf-8') as f:
@@ -552,107 +477,103 @@ def save_results(results: Dict[str, Any], summary: Dict[str, Any],
         f.write("RESUMEN DEL EXPERIMENTO - 4 MÉTODOS DE RANKING\n")
         f.write("=" * 80 + "\n\n")
         
-        f.write("📊 MÉTRICAS PROMEDIO (MRR):\n")
+        f.write(" MÉTRICAS PROMEDIO (MRR):\n")
         f.write("-" * 50 + "\n")
         for method in methods:
             if method in summary:
-                f.write(f"{method.replace('_', ' ').title():20} {summary[method]['mrr_mean']:.4f} ± {summary[method]['mrr_std']:.4f}\n")
+                mrr_mean = normalize_json_value(summary[method]['mrr_mean'])
+                mrr_std = normalize_json_value(summary[method]['mrr_std'])
+                f.write(f"{method.replace('_', ' ').title():20} {mrr_mean:.4f} ± {mrr_std:.4f}\n")
         
-        f.write("\n📈 TESTS ESTADÍSTICOS (vs Baseline):\n")
+        f.write("\n TESTS ESTADÍSTICOS (vs Baseline):\n")
         f.write("-" * 50 + "\n")
         for method in ['ner_enhanced', 'rlhf', 'full_hybrid']:
             if method in tests:
-                sig = "✅ SIGNIFICATIVO" if tests[method].get('significant', False) else "⚠️  NO SIGNIFICATIVO"
-                f.write(f"{method.replace('_', ' ').title():20} p={tests[method].get('p_value', 1.0):.4f} {sig}\n")
-                f.write(f"                     Mejora: {tests[method].get('percent_improvement', 0.0):+.2f}% (d={tests[method].get('cohens_d', 0.0):.3f})\n")
+                p_value = normalize_json_value(tests[method].get('p_value', 1.0))
+                significant = normalize_json_value(tests[method].get('significant', False))
+                percent_improvement = normalize_json_value(tests[method].get('percent_improvement', 0.0))
+                cohens_d = normalize_json_value(tests[method].get('cohens_d', 0.0))
+                
+                sig = " SIGNIFICATIVO" if significant else "  NO SIGNIFICATIVO"
+                f.write(f"{method.replace('_', ' ').title():20} p={p_value:.4f} {sig}\n")
+                f.write(f"                     Mejora: {percent_improvement:+.2f}% (d={cohens_d:.3f})\n")
         
         f.write("\n" + "=" * 80 + "\n")
         f.write("CONCLUSIONES\n")
         f.write("=" * 80 + "\n\n")
         
-        # Determinar mejor método
         valid_methods = {k: v for k, v in summary.items() if v.get('mrr_mean', 0) > 0}
         if valid_methods:
-            best_method = max(valid_methods.items(), key=lambda x: x[1]['mrr_mean'])[0]
+            best_method = max(valid_methods.items(), key=lambda x: normalize_json_value(x[1]['mrr_mean']))[0]
             
-            if 'baseline' in summary and summary['baseline']['mrr_mean'] > 0:
-                baseline_mrr = summary['baseline']['mrr_mean']
-                best_mrr = summary[best_method]['mrr_mean']
+            if 'baseline' in summary and normalize_json_value(summary['baseline']['mrr_mean']) > 0:
+                baseline_mrr = normalize_json_value(summary['baseline']['mrr_mean'])
+                best_mrr = normalize_json_value(summary[best_method]['mrr_mean'])
                 improvement = ((best_mrr / baseline_mrr) - 1) * 100
                 
-                f.write(f"🏆 MEJOR MÉTODO: {best_method.replace('_', ' ').title()}\n")
+                f.write(f" MEJOR MÉTODO: {best_method.replace('_', ' ').title()}\n")
                 f.write(f"   • MRR Baseline: {baseline_mrr:.4f}\n")
                 f.write(f"   • MRR Mejor:    {best_mrr:.4f}\n")
                 f.write(f"   • Mejora:       {improvement:+.2f}%\n\n")
                 
-                is_significant = best_method in tests and tests[best_method].get('significant', False)
+                is_significant = best_method in tests and normalize_json_value(tests[best_method].get('significant', False))
                 
                 if improvement > 5 and is_significant:
-                    f.write("✅ ¡MEJORA SIGNIFICATIVA Y RELEVANTE!\n")
+                    f.write(" ¡MEJORA SIGNIFICATIVA Y RELEVANTE!\n")
                     f.write("   El sistema funciona correctamente.\n")
                 elif improvement > 0:
-                    f.write("⚠️  MEJORA PEQUEÑA\n")
+                    f.write("  MEJORA PEQUEÑA\n")
                     f.write("   Considera recolectar más datos.\n")
                 else:
-                    f.write("❌ SIN MEJORA\n")
+                    f.write(" SIN MEJORA\n")
                     f.write("   Revisa la implementación.\n")
             else:
-                f.write(f"🏆 MEJOR MÉTODO: {best_method.replace('_', ' ').title()}\n")
-                f.write(f"   • MRR: {summary[best_method]['mrr_mean']:.4f}\n")
+                f.write(f" MEJOR MÉTODO: {best_method.replace('_', ' ').title()}\n")
+                f.write(f"   • MRR: {normalize_json_value(summary[best_method]['mrr_mean']):.4f}\n")
                 f.write("   • Baseline no funcionó (MRR=0)\n")
         else:
-            f.write("❌ NINGÚN MÉTODO FUNCIONÓ CORRECTAMENTE\n")
+            f.write(" NINGÚN MÉTODO FUNCIONÓ CORRECTAMENTE\n")
             f.write("   • Todos los métodos tuvieron MRR=0\n")
             f.write("   • Verifica los errores en los logs\n")
     
-    logger.info(f"📝 Resumen: {txt_file}")
+    logger.info(f" Resumen: {txt_file}")
     
     return json_file, csv_file, txt_file
 
-# ============================================================================
-# FUNCIÓN PRINCIPAL
-# ============================================================================
 
 def main():
-    """Función principal del experimento"""
     try:
         print("\n" + "="*80)
-        print("🔬 EXPERIMENTO COMPLETO: 4 MÉTODOS DE RANKING")
+        print(" EXPERIMENTO COMPLETO: 4 MÉTODOS DE RANKING")
         print("="*80)
         
-        # 1. Cargar ground truth
-        logger.info("📂 Cargando ground truth...")
+        logger.info(" Cargando ground truth...")
         ground_truth = load_ground_truth()
         
-        # 2. Split train/test
-        logger.info("✂️  Creando split train/test estratificado...")
+        logger.info("  Creando split train/test estratificado...")
         train_queries, test_queries = split_train_test_stratified(
             ground_truth, test_size=0.25, seed=42
         )
         
-        # Limitar test queries para velocidad
         max_test_queries = min(30, len(test_queries))
         test_queries = test_queries[:max_test_queries]
         
-        print(f"\n📊 DATASET:")
+        print("\n DATASET:")
         print(f"   • Total queries: {len(ground_truth)}")
         print(f"   • Train queries: {len(train_queries)}")
         print(f"   • Test queries: {len(test_queries)}")
         
-        # 3. Cargar sistema
-        logger.info("🤖 Cargando sistema V2...")
+        logger.info(" Cargando sistema V2...")
         system = load_or_create_system_v2()
         
-        print(f"\n🤖 SISTEMA:")
+        print("\n SISTEMA:")
         print(f"   • Productos: {len(system.canonical_products):,}")
-        print(f"   • RLHF: {'✅ Disponible' if hasattr(system, 'rl_ranker') and system.rl_ranker else '❌ No entrenado'}")
-        print(f"   • NER: {'✅ Disponible' if hasattr(system, 'ner_ranker') and system.ner_ranker else '❌ No disponible'}")
+        print(f"   • RLHF: {' Disponible' if hasattr(system, 'rl_ranker') and system.rl_ranker else ' No entrenado'}")
+        print(f"   • NER: {' Disponible' if hasattr(system, 'ner_ranker') and system.ner_ranker else ' No disponible'}")
         
-        # 4. Entrenar RLHF
         train_rlhf_on_system(system, train_queries)
         
-        # 5. Evaluar métodos
-        print(f"\n🧪 EVALUANDO 4 MÉTODOS...")
+        print("\n EVALUANDO 4 MÉTODOS...")
         
         methods = ['baseline', 'ner_enhanced', 'rlhf', 'full_hybrid']
         results = {method: [] for method in methods}
@@ -670,8 +591,7 @@ def main():
                 metrics = evaluate_method_on_query(system, method, query, relevant_ids, k=5)
                 results[method].append(metrics)
         
-        # 6. Calcular resumen
-        print(f"\n📊 CALCULANDO RESULTADOS...")
+        print("\n CALCULANDO RESULTADOS...")
         
         summary = {}
         for method in methods:
@@ -702,12 +622,10 @@ def main():
                         'success_rate': 0.0
                     }
         
-        # 7. Análisis estadístico
         tests = run_statistical_analysis(results)
         
-        # 8. Mostrar resultados
         print("\n" + "="*80)
-        print("📈 RESULTADOS FINALES")
+        print(" RESULTADOS FINALES")
         print("="*80)
         
         print(f"\n{'Método':<20} {'MRR':<8} {'P@5':<8} {'R@5':<8} {'NDCG@5':<8} {'Found':<8}")
@@ -724,25 +642,23 @@ def main():
                       f"{stats['total_found']:>6}")
         
         if tests:
-            print(f"\n📊 SIGNIFICANCIA ESTADÍSTICA (vs Baseline)")
+            print("\n SIGNIFICANCIA ESTADÍSTICA (vs Baseline)")
             print("-" * 50)
             
             for method in ['ner_enhanced', 'rlhf', 'full_hybrid']:
                 if method in tests:
                     test = tests[method]
-                    sig = "✅" if test.get('significant', False) else "⚠️ "
+                    sig = "Significante" if test.get('significant', False) else "No significante"
                     print(f"{method.replace('_', ' ').title():20} "
                           f"p={test.get('p_value', 1.0):.4f} {sig} "
                           f"Mejora: {test.get('percent_improvement', 0.0):+.2f}%")
         
-        # 9. Guardar resultados
-        logger.info("💾 Guardando resultados...")
+        logger.info(" Guardando resultados...")
         json_file, csv_file, txt_file = save_results(results, summary, tests, 
                                                     train_queries, test_queries)
         
-        # 10. Conclusiones
         print("\n" + "="*80)
-        print("💡 CONCLUSIONES Y RECOMENDACIONES")
+        print(" CONCLUSIONES Y RECOMENDACIONES")
         print("="*80)
         
         if 'full_hybrid' in summary and summary['full_hybrid']['mrr_mean'] > 0:
@@ -751,7 +667,7 @@ def main():
                 hybrid_mrr = summary['full_hybrid']['mrr_mean']
                 improvement = ((hybrid_mrr / baseline_mrr) - 1) * 100
                 
-                print(f"\n🏆 FULL HYBRID vs BASELINE:")
+                print("\n FULL HYBRID vs BASELINE:")
                 print(f"   • Baseline MRR:  {baseline_mrr:.4f}")
                 print(f"   • Hybrid MRR:    {hybrid_mrr:.4f}")
                 print(f"   • Mejora:        {improvement:+.2f}%")
@@ -759,43 +675,39 @@ def main():
                 is_significant = 'full_hybrid' in tests and tests['full_hybrid'].get('significant', False)
                 
                 if improvement > 5 and is_significant:
-                    print(f"\n✅ ¡EXCELENTE! MEJORA SIGNIFICATIVA (>5%)")
-                    print(f"   • Tu sistema funciona correctamente")
-                    print(f"   • RLHF y NER están aportando valor")
-                    print(f"   • Puedes proceder con paper IEEE")
+                    print("\n ¡EXCELENTE! MEJORA SIGNIFICATIVA (>5%)")
+                    print("   • Tu sistema funciona correctamente")
+                    print("   • RLHF y NER están aportando valor")
+                    print("   • Puedes proceder con paper IEEE")
                 elif improvement > 0:
-                    print(f"\n⚠️  MEJORA PEQUEÑA ({improvement:+.2f}%)")
-                    print(f"   • Recomendado: Recolectar más datos")
+                    print("\n  MEJORA PEQUEÑA ({improvement:+.2f}%)")
+                    print("   • Recomendado: Recolectar más datos")
                 else:
-                    print(f"\n❌ SIN MEJORA ({improvement:+.2f}%)")
-                    print(f"   • Posibles causas:")
-                    print(f"     1. Baseline demasiado bueno")
-                    print(f"     2. Insuficientes datos de entrenamiento")
+                    print("\n SIN MEJORA ({improvement:+.2f}%)")
+                    print("   • Posibles causas:")
+                    print("     1. Baseline demasiado bueno")
+                    print("     2. Insuficientes datos de entrenamiento")
         
-        print(f"\n📋 PRÓXIMOS PASOS:")
+        print("\n PRÓXIMOS PASOS:")
         print(f"1. Revisar resultados: {txt_file}")
         if 'full_hybrid' in summary and summary['full_hybrid']['mrr_mean'] > 0.1:
-            print(f"2. Si MRR > 0.1: ¡Prepara paper!")
+            print("2. Si MRR > 0.1: ¡Prepara paper!")
         else:
-            print(f"2. Si MRR < 0.1: Recolectar más feedback")
-        print(f"3. Ejecutar: python main.py interactivo (más clicks)")
+            print("2. Si MRR < 0.1: Recolectar más feedback")
+        print("3. Ejecutar: python main.py interactivo (más clicks)")
         
-        print(f"\n✅ EXPERIMENTO COMPLETADO")
-        print(f"   • Archivos guardados en: results/")
+        print("\n EXPERIMENTO COMPLETADO")
+        print("   • Archivos guardados en: results/")
         
-        logger.info("🎉 Experimento completado exitosamente")
+        logger.info(" Experimento completado exitosamente")
         
     except KeyboardInterrupt:
-        print("\n\n⚠️  Experimento interrumpido por el usuario")
+        print("\n\n  Experimento interrumpido por el usuario")
         logger.warning("Experimento interrumpido por el usuario")
     except Exception as e:
-        logger.error(f"❌ Error en experimento: {e}")
+        logger.error(f" Error en experimento: {e}")
         traceback.print_exc()
         sys.exit(1)
-
-# ============================================================================
-# EJECUCIÓN PRINCIPAL
-# ============================================================================
 
 if __name__ == "__main__":
     main()

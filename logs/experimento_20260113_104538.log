@@ -1,0 +1,3 @@
+2026-01-13 10:45:38 - experimento_completo_4_metodos - INFO -  Log iniciado: logs\experimento_20260113_104538.log
+2026-01-13 10:45:38 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-01-13 10:45:39 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
