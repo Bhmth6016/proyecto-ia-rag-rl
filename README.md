@@ -122,6 +122,7 @@ Allows:
 * Interactive RLHF training
 
 ### Extract NER Attributes
+python extraer_ner_incremental.py
 Processes products for attribute extraction:
 
 * Brand, color, size, material
