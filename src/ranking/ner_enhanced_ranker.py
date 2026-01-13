@@ -1,35 +1,55 @@
 # src/ranking/ner_enhanced_ranker.py
-from typing import List, Dict, Any
+"""
+NER Enhanced Ranker - VERSIÓN CORREGIDA Y VERIFICADA
+"""
+import numpy as np
+from typing import List, Dict, Any, Optional
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 class NEREnhancedRanker:
-
+    """
+    Ranker mejorado con atributos NER
+    VERSIÓN CORREGIDA: Aplica bonus correctamente
+    """
+    
     def __init__(self, ner_weight: float = 0.25):
-
+        """
+        Args:
+            ner_weight: Peso del bonus NER (0.25 = 25%)
+        """
         self.ner_weight = ner_weight
         self.feature_weights = {}
         self.has_learned = False
         self.bonus_applied_count = 0
         
-        logger.info(f" NER Enhanced Ranker (weight={ner_weight})")
+        logger.info(f"📊 NER Enhanced Ranker (weight={ner_weight})")
     
     def _clean_query(self, query: str) -> str:
+        """Limpia query de caracteres problemáticos"""
+        # Remover comillas dobles y simples
         cleaned = query.replace('"', '').replace("'", "")
+        # Remover puntos suspensivos
         cleaned = cleaned.replace('...', '')
+        # Normalizar espacios
         cleaned = ' '.join(cleaned.split())
         return cleaned.strip().lower()
     
     def rank_with_ner(self, products: List, query: str,
                     baseline_scores: List[float]) -> List:
+        """Re-rankea usando baseline + bonus NER"""
         if not products:
             return []
         
+        # Limpiar query
         query_cleaned = self._clean_query(query)
         
+        # Extraer intención
         query_intent = self._extract_query_intent_aggressive(query_cleaned)
         
+        # Debug
         if query_intent:
             logger.info(f"   🎯 Query: '{query_cleaned}' → Intent: {list(query_intent.keys())}")
         
@@ -39,6 +59,7 @@ class NEREnhancedRanker:
         for i, product in enumerate(products):
             baseline_score = baseline_scores[i] if i < len(baseline_scores) else 0.0
             
+            # Calcular bonus NER
             ner_bonus = self._calculate_ner_bonus_improved(
                 product, query_cleaned, query_intent
             )
@@ -46,24 +67,29 @@ class NEREnhancedRanker:
             if ner_bonus > 0:
                 bonus_applied += 1
             
+            # Score final
             final_score = baseline_score + (ner_bonus * self.ner_weight)
             final_score = max(0.0, min(1.0, final_score))
             
             scored.append((product, final_score, ner_bonus))
         
+        # Ordenar
         scored.sort(key=lambda x: x[1], reverse=True)
         
+        # Logging (SIN incrementar contador global)
         if bonus_applied > 0:
-            logger.info(f"    NER bonus aplicado a {bonus_applied}/{len(products)} productos")
+            logger.info(f"   ✅ NER bonus aplicado a {bonus_applied}/{len(products)} productos")
         else:
-            logger.warning(f"     NER bonus NO aplicado para: '{query_cleaned}'")
+            logger.warning(f"   ⚠️  NER bonus NO aplicado para: '{query_cleaned}'")
         
         return [product for product, _, _ in scored]
     
     def _extract_query_intent_aggressive(self, query: str) -> Dict[str, List[str]]:
+        """Extracción de intención MÁS AGRESIVA"""
         query_lower = query.lower()
         intent = {}
         
+        # Categorías amplias
         categories = {
             'gaming': ['game', 'gaming', 'play', 'nintendo', 'playstation', 'xbox', 'switch', 'pc gaming'],
             'electronics': ['electronic', 'computer', 'laptop', 'pc', 'phone', 'tablet', 'device'],
@@ -82,6 +108,7 @@ class NEREnhancedRanker:
         if found_categories:
             intent['category'] = found_categories
         
+        # Plataformas gaming
         platforms = {
             'playstation': ['playstation', 'ps4', 'ps5', 'ps3', 'ps '],
             'xbox': ['xbox', 'x-box', 'xb'],
@@ -98,6 +125,7 @@ class NEREnhancedRanker:
         if found_platforms:
             intent['platform'] = found_platforms
         
+        # Géneros
         genres_keywords = {
             'action': ['action', 'fighting', 'combat'],
             'adventure': ['adventure', 'exploration'],
@@ -118,6 +146,7 @@ class NEREnhancedRanker:
         if found_genres:
             intent['genre'] = found_genres
         
+        # Nombres específicos
         franchises = {
             'mario': ['mario'],
             'zelda': ['zelda'],
@@ -140,11 +169,13 @@ class NEREnhancedRanker:
     
     def _calculate_ner_bonus_improved(self, product, query: str, 
                                      query_intent: Dict) -> float:
+        """Calcula bonus NER MEJORADO"""
         product_attrs = getattr(product, 'ner_attributes', {})
         
         if not product_attrs:
             return 0.0
         
+        # MODO 1: Match por intención
         intent_score = 0.0
         if query_intent:
             for intent_key, intent_values in query_intent.items():
@@ -156,6 +187,7 @@ class NEREnhancedRanker:
                             if self._fuzzy_match(str(intent_val), str(product_val)):
                                 intent_score += 0.3
         
+        # MODO 2: Match por keywords
         keyword_score = 0.0
         query_lower = query.lower()
         title = getattr(product, 'title', '').lower()
@@ -168,13 +200,16 @@ class NEREnhancedRanker:
                 elif any(word in title for word in attr_lower.split() if len(word) > 3):
                     keyword_score += 0.1
         
+        # MODO 3: Bonus por especificidad
         specificity_score = min(0.2, len(product_attrs) * 0.05)
         
+        # Score total
         total_score = intent_score + keyword_score + specificity_score
         
         return min(1.0, total_score)
     
     def _fuzzy_match(self, str1: str, str2: str) -> bool:
+        """Match fuzzy entre strings"""
         s1_lower = str1.lower().strip()
         s2_lower = str2.lower().strip()
         
@@ -193,6 +228,7 @@ class NEREnhancedRanker:
         overlap = len(words1 & words2)
         return overlap / min(len(words1), len(words2)) >= 0.5
     
+    # Métodos de compatibilidad
     def rank_products(self, products: List, query: str, 
                      baseline_scores: List[float]) -> List:
         return self.rank_with_ner(products, query, baseline_scores)
@@ -212,6 +248,6 @@ class NEREnhancedRanker:
     def get_learning_health(self) -> Dict[str, Any]:
         return {
             'score': 3,
-            'status': ' Estático',
+            'status': '✅ Estático',
             'issues': ['No learning model, only rule-based NER']
         }

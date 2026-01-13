@@ -1,0 +1,31 @@
+================================================================================
+RESUMEN DEL EXPERIMENTO - 4 MÉTODOS DE RANKING
+================================================================================
+
+ MÉTRICAS PROMEDIO (MRR):
+--------------------------------------------------
+Baseline             0.6667 ± 0.4082
+Ner Enhanced         0.6667 ± 0.4082
+Rlhf                 0.4556 ± 0.2986
+Full Hybrid          0.6944 ± 0.3402
+
+ TESTS ESTADÍSTICOS (vs Baseline):
+--------------------------------------------------
+Ner Enhanced         p=1.0000 ⚠️  NO SIGNIFICATIVO
+                     Mejora: +0.00% (d=0.000)
+Rlhf                 p=0.3315 ⚠️  NO SIGNIFICATIVO
+                     Mejora: -31.67% (d=-0.647)
+Full Hybrid          p=0.8560 ⚠️  NO SIGNIFICATIVO
+                     Mejora: +4.17% (d=0.081)
+
+================================================================================
+CONCLUSIONES
+================================================================================
+
+ MEJOR MÉTODO: Full Hybrid
+   • MRR Baseline: 0.6667
+   • MRR Mejor:    0.6944
+   • Mejora:       +4.17%
+
+  MEJORA PEQUEÑA
+   Considera recolectar más datos.

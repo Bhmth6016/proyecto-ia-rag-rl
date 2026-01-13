@@ -1,10 +1,10 @@
-<!-- src/web_interface/templates/index.html -->
+# src/web_interface/templates/index.html
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema RAG+NER+RLHF - Interfaz Web</title>
+    <title>Sistema RAG+RL - Interfaz Interactiva</title>
     <style>
         * {
             margin: 0;
@@ -21,7 +21,7 @@
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
             background: white;
             border-radius: 20px;
@@ -42,28 +42,9 @@
             text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
         }
         
-        .subtitle {
+        header p {
             font-size: 1.1rem;
             opacity: 0.9;
-            margin-bottom: 15px;
-        }
-        
-        .tech-badges {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-top: 15px;
-        }
-        
-        .badge {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            display: flex;
-            align-items: center;
-            gap: 5px;
         }
         
         .stats-bar {
@@ -96,14 +77,12 @@
             padding: 30px;
             border-right: 1px solid #e9ecef;
             background: #f8fafc;
-            min-width: 300px;
         }
         
         .right-panel {
             flex: 2;
             padding: 30px;
             background: white;
-            min-width: 0; /* Para que flex funcione correctamente */
         }
         
         .query-section {
@@ -147,53 +126,6 @@
             background: #6c757d;
         }
         
-        .btn-success {
-            background: #38b2ac;
-        }
-        
-        .btn-danger {
-            background: #f56565;
-        }
-        
-        .method-selector {
-            margin: 20px 0;
-            padding: 15px;
-            background: white;
-            border-radius: 10px;
-            border: 1px solid #e9ecef;
-        }
-        
-        .method-options {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .method-option {
-            flex: 1;
-            min-width: 120px;
-        }
-        
-        .method-option input[type="radio"] {
-            display: none;
-        }
-        
-        .method-option label {
-            display: block;
-            padding: 10px;
-            text-align: center;
-            border: 2px solid #e9ecef;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .method-option input[type="radio"]:checked + label {
-            border-color: #667eea;
-            background: rgba(102, 126, 234, 0.1);
-        }
-        
         .results-section {
             margin-top: 30px;
         }
@@ -209,9 +141,9 @@
         
         .results-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-            gap: 25px;
-            max-height: 600px;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            max-height: 500px;
             overflow-y: auto;
             padding: 10px;
         }
@@ -219,57 +151,16 @@
         .product-card {
             background: white;
             border: 1px solid #e9ecef;
-            border-radius: 15px;
+            border-radius: 10px;
             padding: 20px;
             transition: all 0.3s;
             position: relative;
-            display: flex;
-            flex-direction: column;
         }
         
         .product-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             border-color: #4facfe;
-        }
-        
-        .product-image {
-            width: 100%;
-            height: 200px;
-            object-fit: cover;
-            border-radius: 10px;
-            margin-bottom: 15px;
-            background: #f8f9fa;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-        }
-        
-        .product-image img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        
-        .product-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 10px;
-        }
-        
-        .product-position {
-            background: #667eea;
-            color: white;
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 0.9rem;
         }
         
         .product-title {
@@ -277,8 +168,6 @@
             font-weight: 600;
             margin-bottom: 10px;
             color: #2d3748;
-            flex: 1;
-            margin-left: 10px;
         }
         
         .product-category {
@@ -291,7 +180,7 @@
         }
         
         .product-price {
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             font-weight: bold;
             color: #2d3748;
             margin: 10px 0;
@@ -300,29 +189,10 @@
         .product-rating {
             color: #f6ad55;
             margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        
-        .ner-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
-            margin: 10px 0;
-        }
-        
-        .ner-tag {
-            background: #e6fffa;
-            color: #234e52;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.75rem;
-            border: 1px solid #81e6d9;
         }
         
         .feedback-section {
-            margin-top: auto;
+            margin-top: 15px;
             padding-top: 15px;
             border-top: 1px dashed #e9ecef;
         }
@@ -350,18 +220,26 @@
             color: #f6ad55;
         }
         
-        .system-info {
+        .analysis-section {
             background: #f1f5f9;
             padding: 20px;
             border-radius: 10px;
             margin-top: 30px;
         }
         
-        .system-info h3 {
+        .analysis-title {
             font-size: 1.1rem;
             font-weight: 600;
             margin-bottom: 15px;
             color: #2d3748;
+        }
+        
+        .analysis-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            border-left: 4px solid #4facfe;
         }
         
         .loading {
@@ -370,28 +248,12 @@
             color: #666;
         }
         
-        .loading-spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
         .error {
             background: #fed7d7;
             color: #c53030;
             padding: 15px;
             border-radius: 10px;
             margin: 20px 0;
-            border-left: 4px solid #c53030;
         }
         
         .success {
@@ -400,7 +262,6 @@
             padding: 15px;
             border-radius: 10px;
             margin: 20px 0;
-            border-left: 4px solid #38a169;
         }
         
         .user-info {
@@ -409,17 +270,6 @@
             border-radius: 10px;
             margin-top: 20px;
             border-left: 4px solid #38b2ac;
-        }
-        
-        .image-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .btn-sm {
-            padding: 5px 10px;
-            font-size: 0.85rem;
         }
         
         @media (max-width: 768px) {
@@ -435,25 +285,14 @@
             .results-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .method-options {
-                flex-direction: column;
-            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🔍 Sistema RAG + NER + RLHF</h1>
-            <p class="subtitle">Búsqueda híbrida con Reconocimiento de Entidades y Aprendizaje por Refuerzo</p>
-            
-            <div class="tech-badges">
-                <div class="badge">🔍 RAG (Retrieval Augmented Generation)</div>
-                <div class="badge">🏷️ NER (Named Entity Recognition)</div>
-                <div class="badge">🧠 RLHF (Reinforcement Learning from Human Feedback)</div>
-                <div class="badge">⚡ 4 Métodos de Ranking</div>
-            </div>
+            <h1>🔍 Sistema RAG+RL Interactivo</h1>
+            <p>Búsqueda de productos con Aprendizaje por Refuerzo (RLHF) en tiempo real</p>
         </header>
         
         <div class="stats-bar" id="statsBar">
@@ -470,8 +309,8 @@
                 <div>Feedback</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value" id="systemStatus">❓</div>
-                <div>Sistema</div>
+                <div class="stat-value" id="avgRating">0.0</div>
+                <div>Rating Promedio</div>
             </div>
         </div>
         
@@ -479,55 +318,47 @@
             <div class="left-panel">
                 <div class="query-section">
                     <h2>🔍 Buscar Productos</h2>
-                    <p style="color: #666; margin-bottom: 15px;">Prueba el sistema con 4 métodos diferentes de ranking.</p>
+                    <p class="description">Escribe lo que buscas. El sistema aprenderá de tu feedback.</p>
                     
                     <input type="text" 
                            class="query-input" 
                            id="queryInput" 
-                           placeholder="Ej: juego de playstation, laptop gaming, maquillaje vegano..."
+                           placeholder="Ej: smartphone con buena cámara, laptop para programar..."
                            onkeypress="if(event.keyCode==13) searchProducts()">
                     
-                    <div class="method-selector">
-                        <h3>⚙️ Método de Ranking:</h3>
-                        <div class="method-options" id="methodOptions">
-                            <!-- Los métodos se cargan dinámicamente -->
-                        </div>
-                    </div>
-                    
-                    <div style="display: flex; gap: 10px; margin-top: 15px;">
-                        <button class="btn" onclick="searchProducts()" style="flex: 2;">
-                            🔍 Buscar con método seleccionado
+                    <div style="display: flex; gap: 10px; margin-top: 10px;">
+                        <button class="btn" onclick="searchProducts()">
+                            🔍 Buscar
                         </button>
                         <button class="btn btn-secondary" onclick="clearResults()">
-                            🗑️
+                            🗑️ Limpiar
                         </button>
                     </div>
                     
-                    <button class="btn btn-success" onclick="initSystem()" style="margin-top: 10px; width: 100%;">
-                        🔄 Inicializar Sistema
-                    </button>
+                    <div style="margin-top: 20px;">
+                        <label style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" id="useRlhf" checked>
+                            Usar RLHF (aprendizaje personalizado)
+                        </label>
+                        <small style="color: #666; display: block; margin-top: 5px;">
+                            El sistema ajustará resultados basado en tu feedback anterior
+                        </small>
+                    </div>
                 </div>
                 
                 <div class="user-info">
                     <h3>👤 Tu Sesión</h3>
                     <p><strong>ID:</strong> <span id="userId">anonymous</span></p>
+                    <p><strong>Queries:</strong> <span id="userQueries">0</span></p>
                     <p><strong>Feedback dado:</strong> <span id="userFeedback">0</span></p>
                     <button class="btn btn-secondary" style="margin-top: 10px; width: 100%;" onclick="newUserSession()">
                         🔄 Nueva Sesión
                     </button>
                 </div>
                 
-                <div class="system-info">
-                    <h3>📊 Sistema RAG+NER+RLHF</h3>
-                    <p style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
-                        Este sistema combina 4 métodos de búsqueda:
-                    </p>
-                    <ul style="font-size: 0.9rem; color: #666; padding-left: 20px;">
-                        <li><strong>Baseline:</strong> Búsqueda vectorial tradicional</li>
-                        <li><strong>NER Enhanced:</strong> Mejorado con reconocimiento de entidades</li>
-                        <li><strong>RLHF:</strong> Aprendizaje por refuerzo con feedback</li>
-                        <li><strong>Full Hybrid:</strong> Combinación completa</li>
-                    </ul>
+                <div class="analysis-section" id="queryAnalysis" style="display: none;">
+                    <h3>📊 Análisis de Query</h3>
+                    <div id="analysisContent"></div>
                 </div>
             </div>
             
@@ -540,28 +371,15 @@
                     
                     <div id="resultsContainer">
                         <div class="loading" id="loadingIndicator" style="display: none;">
-                            <div class="loading-spinner"></div>
                             <p>🔍 Buscando productos...</p>
-                            <p id="loadingMethod"></p>
+                            <p>Analizando query y aplicando RLHF</p>
                         </div>
                         
                         <div id="resultsGrid" class="results-grid">
                             <!-- Los productos aparecerán aquí -->
-                            <div style="text-align: center; padding: 60px 20px; color: #666; grid-column: 1 / -1;">
-                                <div style="font-size: 3rem; margin-bottom: 20px;">🔍</div>
-                                <h3 style="margin-bottom: 10px;">¡Bienvenido al Sistema RAG+NER+RLHF!</h3>
-                                <p>Escribe una query para buscar entre miles de productos.</p>
-                                <p>Prueba diferentes métodos de ranking y da feedback para mejorar el sistema.</p>
-                                
-                                <div style="margin-top: 30px; background: #f8f9fa; padding: 20px; border-radius: 10px; display: inline-block;">
-                                    <p style="font-weight: bold; margin-bottom: 10px;">Ejemplos para probar:</p>
-                                    <ul style="text-align: left; display: inline-block;">
-                                        <li onclick="setQuery('juego de playstation 5')" style="cursor: pointer; padding: 5px;">🎮 juego de playstation 5</li>
-                                        <li onclick="setQuery('laptop gaming')" style="cursor: pointer; padding: 5px;">💻 laptop gaming</li>
-                                        <li onclick="setQuery('maquillaje vegano')" style="cursor: pointer; padding: 5px;">💄 maquillaje vegano</li>
-                                        <li onclick="setQuery('libro de ciencia ficción')" style="cursor: pointer; padding: 5px;">📚 libro de ciencia ficción</li>
-                                    </ul>
-                                </div>
+                            <div style="text-align: center; padding: 40px; color: #666;">
+                                <p>👆 Escribe una query para buscar productos</p>
+                                <p>🎯 Dale rating a los productos para mejorar el sistema</p>
                             </div>
                         </div>
                     </div>
@@ -571,57 +389,14 @@
     </div>
     
     <script>
-    // ============================================================================
-        // VERSIÓN CORREGIDA DEL JAVASCRIPT - Reemplaza la sección <script> completa
-        // ============================================================================
-
         // Variables globales
         let currentUserId = 'user_' + Math.random().toString(36).substr(2, 9);
-        let currentMethod = 'full_hybrid';
-        let currentQuery = '';
-        let userStats = { feedback: 0 };
-
-        // Inicializar página
-        document.addEventListener('DOMContentLoaded', function() {
-            loadMethods();
-            loadSystemStats();
-            loadUserStats();
-            updateUserId();
-        });
-
-        // Cargar métodos disponibles
-        function loadMethods() {
-            fetch('/api/methods')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        const container = document.getElementById('methodOptions');
-                        container.innerHTML = '';
-                        
-                        data.methods.forEach(method => {
-                            const methodDiv = document.createElement('div');
-                            methodDiv.className = 'method-option';
-                            methodDiv.innerHTML = `
-                                <input type="radio" id="method_${method.id}" name="method" 
-                                    value="${method.id}" ${method.id === currentMethod ? 'checked' : ''}>
-                                <label for="method_${method.id}">
-                                    <div style="font-size: 1.2rem; margin-bottom: 5px;">${method.icon}</div>
-                                    <div style="font-weight: bold;">${method.name}</div>
-                                    <div style="font-size: 0.8rem; color: #666;">${method.description}</div>
-                                </label>
-                            `;
-                            
-                            methodDiv.querySelector('input').addEventListener('change', function() {
-                                currentMethod = this.value;
-                            });
-                            
-                            container.appendChild(methodDiv);
-                        });
-                    }
-                })
-                .catch(error => console.error('Error cargando métodos:', error));
-        }
-
+        let currentInteractionId = null;
+        let userStats = { queries: 0, feedback: 0 };
+        
+        // Actualizar ID de usuario en la interfaz
+        document.getElementById('userId').textContent = currentUserId;
+        
         // Cargar estadísticas del sistema
         function loadSystemStats() {
             fetch('/api/stats')
@@ -629,83 +404,68 @@
                 .then(data => {
                     if (data.success) {
                         const stats = data.stats;
-                        document.getElementById('totalProducts').textContent = 
-                            stats.total_products.toLocaleString();
-                        document.getElementById('totalQueries').textContent = 
-                            stats.total_queries || 0;
-                        document.getElementById('totalFeedback').textContent = 
-                            stats.total_feedback || 0;
-                        document.getElementById('systemStatus').textContent = 
-                            stats.system_loaded ? '✅' : '❌';
+                        document.getElementById('totalProducts').textContent = stats.total_products;
+                        document.getElementById('totalQueries').textContent = stats.total_queries;
+                        document.getElementById('totalFeedback').textContent = stats.total_feedback;
+                        document.getElementById('avgRating').textContent = stats.average_rating.toFixed(1);
                     }
                 })
                 .catch(error => console.error('Error cargando estadísticas:', error));
         }
-
-        // Cargar estadísticas del usuario - ✅ CORREGIDO
+        
+        // Cargar estadísticas del usuario
         function loadUserStats() {
-            fetch(`/api/user/${currentUserId}`)  // ← Paréntesis añadidos
+            fetch(`/api/user/${currentUserId}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        userStats.feedback = data.user.feedback_count || 0;
+                        const session = data.session;
+                        userStats.queries = session.queries_count || 0;
+                        userStats.feedback = session.feedbacks_count || 0;
+                        
+                        document.getElementById('userQueries').textContent = userStats.queries;
                         document.getElementById('userFeedback').textContent = userStats.feedback;
                     }
                 })
                 .catch(error => console.error('Error cargando estadísticas de usuario:', error));
         }
-
-        // Actualizar ID de usuario en la interfaz
-        function updateUserId() {
-            document.getElementById('userId').textContent = currentUserId;
-        }
-
-        // Establecer query de ejemplo
-        function setQuery(query) {
-            document.getElementById('queryInput').value = query;
-            searchProducts();
-        }
-
+        
         // Buscar productos
         function searchProducts() {
             const query = document.getElementById('queryInput').value.trim();
             if (!query) {
-                showError('Por favor, escribe una búsqueda');
+                alert('Por favor, escribe una búsqueda');
                 return;
             }
             
-            currentQuery = query;
-            
-            // Actualizar método seleccionado
-            const selectedMethod = document.querySelector('input[name="method"]:checked');
-            if (selectedMethod) {
-                currentMethod = selectedMethod.value;
-            }
+            const useRlhf = document.getElementById('useRlhf').checked;
             
             // Mostrar loading
             document.getElementById('loadingIndicator').style.display = 'block';
-            document.getElementById('loadingMethod').textContent = 
-                `Usando método: ${currentMethod.toUpperCase()}`;
             document.getElementById('resultsGrid').innerHTML = '';
             
             // Hacer request a la API
-            fetch('/api/search', {
+            fetch('/api/query', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
                     query: query,
-                    method: currentMethod,
-                    user_id: currentUserId
+                    user_id: currentUserId,
+                    use_rlhf: useRlhf
                 })
             })
             .then(response => response.json())
             .then(data => {
+                // Ocultar loading
                 document.getElementById('loadingIndicator').style.display = 'none';
                 
                 if (data.success) {
+                    currentInteractionId = data.interaction_id;
                     displayResults(data);
+                    displayQueryAnalysis(data.query_analysis);
+                    updateStats();
                 } else {
                     showError(data.error || 'Error en la búsqueda');
                 }
@@ -715,73 +475,47 @@
                 showError('Error de conexión: ' + error.message);
             });
         }
-
+        
         // Mostrar resultados
         function displayResults(data) {
             const resultsGrid = document.getElementById('resultsGrid');
             const resultsInfo = document.getElementById('resultsInfo');
             
+            // Actualizar información de resultados
             resultsInfo.innerHTML = `
-                <div style="background: #e6fffa; padding: 8px 20px; border-radius: 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                    <span>🔍 "${data.query}"</span>
-                    <span style="background: #667eea; color: white; padding: 2px 10px; border-radius: 10px; font-size: 0.9rem;">
-                        ${data.method.toUpperCase()}
-                    </span>
-                    <span style="color: #666; font-size: 0.9rem;">
-                        ${data.stats.total_found} encontrados • ${data.stats.shown} mostrados
-                    </span>
+                <div style="background: #e6fffa; padding: 5px 15px; border-radius: 15px;">
+                    ${data.stats.total_found} encontrados • ${data.stats.shown} mostrados • ${data.stats.ranking_method}
                 </div>
             `;
             
+            // Limpiar grid
             resultsGrid.innerHTML = '';
             
-            data.products.forEach(product => {
+            // Mostrar cada producto
+            data.results.forEach(product => {
                 const productCard = document.createElement('div');
                 productCard.className = 'product-card';
-                
-                // ✅ CORREGIDO: Escapar comillas en onerror
-                const placeholderSvg = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2Y4ZjlmYSIvPjx0ZXh0IHg9IjE1MCIgeT0iMTUwIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9IiM2NjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiPk5vIEltYWdlPC90ZXh0Pjwvc3ZnPg==';
-                
                 productCard.innerHTML = `
-                    <div class="product-image" id="image_${product.id}">
-                        <img src="${product.image}" 
-                            alt="${product.title}"
-                            onerror="handleImageError(this)"
-                            loading="lazy"
-                            data-product-id="${product.id}">
-                    </div>
-                    
-                    <div class="product-header">
-                        <div class="product-position">${product.position}</div>
-                        <h3 class="product-title">${product.title}</h3>
-                    </div>
-                    
                     <div class="product-category">${product.category}</div>
+                    <h3 class="product-title">${product.position}. ${product.title}</h3>
+                    <p style="color: #666; margin-bottom: 10px;">${product.description}</p>
                     
-                    ${product.has_ner && product.ner_tags && product.ner_tags.length > 0 ? `
-                        <div class="ner-tags">
-                            ${product.ner_tags.map(tag => `<span class="ner-tag">${escapeHtml(tag)}</span>`).join('')}
-                        </div>
-                    ` : ''}
-                    
-                    <p style="color: #666; margin: 10px 0; font-size: 0.9rem; line-height: 1.4;">
-                        ${escapeHtml(product.description)}
-                    </p>
-                    
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 15px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <div class="product-price">${product.price}</div>
                         <div class="product-rating">${product.rating}</div>
                     </div>
                     
-                    ${product.brand ? `<div style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">🏷️ ${escapeHtml(product.brand)}</div>` : ''}
+                    ${product.brand ? `<div style="font-size: 0.9rem; color: #666;">Marca: ${product.brand}</div>` : ''}
                     
                     <div class="feedback-section">
-                        <div class="feedback-title">¿Es relevante este producto?</div>
-                        <div class="rating-stars" data-product-id="${product.id}">
+                        <div class="feedback-title">¿Te gusta este producto?</div>
+                        <div class="rating-stars">
                             ${[1, 2, 3, 4, 5].map(star => `
-                                <span class="star" 
-                                    data-rating="${star}"
-                                    onclick="rateProduct('${product.id}', ${star})">★</span>
+                                <span class="star" onclick="rateProduct('${product.id}', ${star})"
+                                      onmouseover="highlightStars(${star}, '${product.id}')"
+                                      onmouseout="resetStars('${product.id}')">
+                                    ★
+                                </span>
                             `).join('')}
                         </div>
                     </div>
@@ -789,57 +523,41 @@
                 
                 resultsGrid.appendChild(productCard);
             });
+        }
+        
+        // Mostrar análisis de query
+        function displayQueryAnalysis(analysis) {
+            const analysisSection = document.getElementById('queryAnalysis');
+            const analysisContent = document.getElementById('analysisContent');
             
-            if (data.products.length === 0) {
-                resultsGrid.innerHTML = `
-                    <div style="text-align: center; padding: 60px 20px; color: #666; grid-column: 1 / -1;">
-                        <div style="font-size: 3rem; margin-bottom: 20px;">😕</div>
-                        <h3 style="margin-bottom: 10px;">No se encontraron productos</h3>
-                        <p>Intenta con una búsqueda diferente o prueba otro método.</p>
+            analysisSection.style.display = 'block';
+            analysisContent.innerHTML = `
+                <div class="analysis-item">
+                    <strong>Categoría:</strong> ${analysis.category || 'General'}
+                </div>
+                <div class="analysis-item">
+                    <strong>Intención:</strong> ${analysis.intent || 'search'}
+                </div>
+                <div class="analysis-item">
+                    <strong>Específica:</strong> ${analysis.is_specific ? 'Sí' : 'No'}
+                </div>
+                ${analysis.entities && analysis.entities.length > 0 ? `
+                    <div class="analysis-item">
+                        <strong>Entidades encontradas:</strong> ${analysis.entities.length}
+                        <div style="margin-top: 5px; font-size: 0.9rem;">
+                            ${analysis.entities.map(e => `<span style="background: #e2e8f0; padding: 2px 6px; border-radius: 10px; margin-right: 5px;">${e.text}</span>`).join('')}
+                        </div>
                     </div>
-                `;
-            }
-        }
-
-        // ✅ NUEVO: Función para manejar errores de carga de imágenes
-        function handleImageError(img) {
-            console.log('Error cargando imagen:', img.src);
-            
-            // Generar SVG placeholder basado en producto
-            const productId = img.getAttribute('data-product-id') || 'unknown';
-            const placeholderSvg = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
-                    <rect width="300" height="300" fill="#f8f9fa"/>
-                    <rect x="20" y="20" width="260" height="180" rx="10" fill="white" stroke="#e0e0e0" stroke-width="2"/>
-                    <text x="150" y="110" font-family="Arial, sans-serif" font-size="14" 
-                        fill="#999" text-anchor="middle">📦</text>
-                    <text x="150" y="140" font-family="Arial, sans-serif" font-size="12" 
-                        fill="#999" text-anchor="middle">No disponible</text>
-                    <text x="150" y="250" font-family="Arial, sans-serif" font-size="10" 
-                        fill="#ccc" text-anchor="middle">ID: ${productId.substring(0, 15)}</text>
-                </svg>
+                ` : ''}
             `;
-            
-            const encodedSvg = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(placeholderSvg)));
-            img.src = encodedSvg;
-            img.onerror = null; // Prevenir loop infinito
         }
-
-        // ✅ NUEVO: Función para escapar HTML
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
+        
         // Calificar producto
         function rateProduct(productId, rating) {
-            if (!currentQuery) {
-                showError('Primero realiza una búsqueda');
+            if (!currentInteractionId) {
+                alert('Primero realiza una búsqueda');
                 return;
             }
-            
-            console.log(`Rating producto ${productId} con ${rating} estrellas`);
             
             fetch('/api/feedback', {
                 method: 'POST',
@@ -847,112 +565,120 @@
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
+                    interaction_id: currentInteractionId,
                     product_id: productId,
                     rating: rating,
-                    query: currentQuery,
-                    user_id: currentUserId,
-                    product_category: 'General'
+                    user_id: currentUserId
                 })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showSuccess(`¡Gracias! Rating ${rating} estrellas registrado.`);
-                    loadSystemStats();
+                    showSuccess(`¡Gracias! Rating ${rating} registrado. El sistema está aprendiendo...`);
+                    updateStats();
                     loadUserStats();
                     
-                    // ✅ CORREGIDO: Selector correcto
-                    const starsContainer = document.querySelector(`[data-product-id="${productId}"]`);
-                    if (starsContainer) {
-                        const stars = starsContainer.querySelectorAll('.star');
-                        stars.forEach((star, index) => {
-                            if (index < rating) {
-                                star.classList.add('active');
-                            }
-                        });
-                        
+                    // Animar la estrella seleccionada
+                    const stars = document.querySelectorAll(`[onclick="rateProduct('${productId}', ${rating})"]`);
+                    stars.forEach(star => {
+                        star.classList.add('active');
                         setTimeout(() => {
-                            stars.forEach(star => star.classList.remove('active'));
-                        }, 2000);
-                    }
+                            star.classList.remove('active');
+                        }, 1000);
+                    });
                 } else {
                     showError(data.error || 'Error al registrar rating');
                 }
             })
             .catch(error => {
-                console.error('Error en feedback:', error);
                 showError('Error de conexión: ' + error.message);
             });
         }
-
-        // Inicializar sistema
-        function initSystem() {
-            showMessage('Inicializando sistema... Esto puede tomar unos minutos.', 'info');
-            
-            fetch('/api/init_system', {
-                method: 'POST'
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showSuccess('Sistema inicializado correctamente');
-                    loadSystemStats();
-                    loadMethods();
-                } else {
-                    showError(data.error || 'Error inicializando sistema');
+        
+        // Resaltar estrellas al pasar el mouse
+        function highlightStars(upTo, productId) {
+            const stars = document.querySelectorAll(`[onclick^="rateProduct('${productId}'"]`);
+            stars.forEach((star, index) => {
+                if (index < upTo) {
+                    star.classList.add('active');
                 }
-            })
-            .catch(error => {
-                showError('Error de conexión: ' + error.message);
             });
         }
-
+        
+        function resetStars(productId) {
+            const stars = document.querySelectorAll(`[onclick^="rateProduct('${productId}'"]`);
+            stars.forEach(star => {
+                star.classList.remove('active');
+            });
+        }
+        
         // Limpiar resultados
         function clearResults() {
             document.getElementById('queryInput').value = '';
             document.getElementById('resultsGrid').innerHTML = `
-                <div style="text-align: center; padding: 60px 20px; color: #666; grid-column: 1 / -1;">
-                    <div style="font-size: 3rem; margin-bottom: 20px;">🔍</div>
-                    <h3 style="margin-bottom: 10px;">¡Bienvenido al Sistema RAG+NER+RLHF!</h3>
-                    <p>Escribe una query para buscar entre miles de productos.</p>
+                <div style="text-align: center; padding: 40px; color: #666;">
+                    <p>👆 Escribe una query para buscar productos</p>
+                    <p>🎯 Dale rating a los productos para mejorar el sistema</p>
                 </div>
             `;
             document.getElementById('resultsInfo').innerHTML = '';
-            currentQuery = '';
+            document.getElementById('queryAnalysis').style.display = 'none';
+            currentInteractionId = null;
         }
-
+        
         // Nueva sesión de usuario
         function newUserSession() {
             currentUserId = 'user_' + Math.random().toString(36).substr(2, 9);
-            updateUserId();
-            userStats = { feedback: 0 };
+            document.getElementById('userId').textContent = currentUserId;
+            userStats = { queries: 0, feedback: 0 };
+            document.getElementById('userQueries').textContent = '0';
             document.getElementById('userFeedback').textContent = '0';
             clearResults();
-            showSuccess('Nueva sesión creada.');
+            showSuccess('Nueva sesión creada. El sistema empezará a aprender tus preferencias desde cero.');
         }
-
-        // Mostrar mensajes
+        
+        // Mostrar mensaje de error
         function showError(message) {
-            showMessage(message, 'error');
-        }
-
-        function showSuccess(message) {
-            showMessage(message, 'success');
-        }
-
-        function showMessage(message, type) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = type;
-            messageDiv.textContent = message;
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
             
             const resultsContainer = document.getElementById('resultsContainer');
-            resultsContainer.insertBefore(messageDiv, resultsContainer.firstChild);
+            resultsContainer.insertBefore(errorDiv, resultsContainer.firstChild);
             
-            setTimeout(() => messageDiv.remove(), 5000);
+            setTimeout(() => errorDiv.remove(), 5000);
         }
-
-        // Actualizar estadísticas periódicamente
-        setInterval(loadSystemStats, 30000);
+        
+        // Mostrar mensaje de éxito
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.textContent = message;
+            
+            const resultsContainer = document.getElementById('resultsContainer');
+            resultsContainer.insertBefore(successDiv, resultsContainer.firstChild);
+            
+            setTimeout(() => successDiv.remove(), 3000);
+        }
+        
+        // Actualizar estadísticas
+        function updateStats() {
+            loadSystemStats();
+        }
+        
+        // Permitir búsqueda con Enter
+        document.getElementById('queryInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchProducts();
+            }
+        });
+        
+        // Cargar estadísticas iniciales
+        updateStats();
+        loadUserStats();
+        
+        // Actualizar estadísticas cada 30 segundos
+        setInterval(updateStats, 30000);
     </script>
 </body>
 </html>
