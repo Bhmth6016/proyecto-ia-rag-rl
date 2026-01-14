@@ -51,7 +51,7 @@ CPU with AVX2 support (for FAISS)
 
 ## 2. Installation
 ### Clone repository
-git clone <your-repository>
+git clone <proyecto-ia-rag-rl>
 cd proyecto-ia-rag-rl
 
 ### Create virtual environment
@@ -123,6 +123,7 @@ Allows:
 
 ### Extract NER Attributes
 python extraer_ner_incremental.py
+
 Processes products for attribute extraction:
 
 * Brand, color, size, material
