@@ -1,4 +1,4 @@
-# extraer_ner_incremental.py
+# extraer_ner_incremental_RAPIDO.py
 from src.unified_system_v2 import UnifiedSystemV2
 from src.enrichment.ner_zero_shot_optimized import OptimizedNERExtractor
 from tqdm import tqdm
@@ -11,48 +11,48 @@ CHECKPOINT_INTERVAL = 5000  # Guardar cada 5K productos
 
 def cargar_cache_ner():
     if CACHE_PATH.exists():
-        print(" Cargando cache NER existente...")
+        print("✅ Cargando cache NER existente...")
         with open(CACHE_PATH, 'rb') as f:
             cache = pickle.load(f)
-        print("    Cache cargado: {len(cache):,} productos\n")
+        print(f"   Cache cargado: {len(cache):,} productos\n")
         return cache
     else:
-        print(" No existe cache previo, creando nuevo...\n")
+        print("📝 No existe cache previo, creando nuevo...\n")
         return {}
 
 def guardar_cache_ner(cache):
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CACHE_PATH, 'wb') as f:
         pickle.dump(cache, f, protocol=pickle.HIGHEST_PROTOCOL)
-    print(f" Cache guardado: {CACHE_PATH}")
+    print(f"💾 Cache guardado: {CACHE_PATH}")
 
 def hash_title(title):
     return hashlib.md5(str(title).encode()).hexdigest()[:8]
 
 def extraer_ner_incremental():
     print("=" * 70)
-    print(" EXTRACCIÓN NER INCREMENTAL CON CACHE")
+    print("⚡ EXTRACCIÓN NER RÁPIDA (KEYWORDS) CON CACHE")
     print("=" * 70)
     print()
     
-    print(" Cargando sistema...")
+    print("📂 Cargando sistema...")
     system = UnifiedSystemV2.load_from_cache()
     
     if system is None:
-        print(" No se pudo cargar el sistema")
+        print("❌ No se pudo cargar el sistema")
         return
     
     total_productos = len(system.canonical_products)
-    print(f" Sistema cargado: {total_productos:,} productos\n")
+    print(f"✅ Sistema cargado: {total_productos:,} productos\n")
     
     ner_cache = cargar_cache_ner()
     
-    print(" Inicializando extractor NER...")
-    print("   Modo: Keywords (rápido, sin GPU)")
-    ner_extractor = OptimizedNERExtractor(use_zero_shot=True)
-    print(" Extractor listo\n")
+    print("🚀 Inicializando extractor NER...")
+    print("   Modo: Keywords (RÁPIDO, sin GPU)")
+    ner_extractor = OptimizedNERExtractor(use_zero_shot=False)  # ← KEYWORDS RÁPIDO
+    print("✅ Extractor listo\n")
     
-    print(" Analizando productos...")
+    print("🔍 Analizando productos...")
     productos_pendientes = []
     productos_con_cache = 0
     
@@ -75,17 +75,18 @@ def extraer_ner_incremental():
         
         productos_pendientes.append((i, producto))
     
-    print(f"    Con cache: {productos_con_cache:,}")
-    print(f"    Pendientes: {len(productos_pendientes):,}")
+    print(f"   ✅ Con cache: {productos_con_cache:,}")
+    print(f"   ⏳ Pendientes: {len(productos_pendientes):,}")
     print()
     
     if len(productos_pendientes) == 0:
-        print(" ¡Todos los productos ya tienen NER!")
+        print("🎉 ¡Todos los productos ya tienen NER!")
         print("   No hay nada que procesar.")
         return
     
-    print(f" Procesando {len(productos_pendientes):,} productos pendientes...")
-    print(f"   Tiempo estimado: {len(productos_pendientes) / 7500:.1f} minutos\n")
+    print(f"⚡ Procesando {len(productos_pendientes):,} productos pendientes...")
+    # Keywords: ~30,000 productos/minuto
+    print(f"   ⏱️ Tiempo estimado: {len(productos_pendientes) / 30000:.1f} minutos\n")
     
     procesados = 0
     con_atributos = 0
@@ -99,6 +100,7 @@ def extraer_ner_incremental():
             category = getattr(producto, 'main_category', '') or \
                       getattr(producto, 'category', '')
             
+            # Extracción con keywords (RÁPIDO)
             atributos = ner_extractor.extract_attributes(title, category)
             
             producto.ner_attributes = atributos
@@ -123,8 +125,9 @@ def extraer_ner_incremental():
             
             procesados += 1
             
+            # Checkpoint cada 5K
             if procesados % CHECKPOINT_INTERVAL == 0:
-                print(f"\n   Checkpoint: {procesados:,}/{len(productos_pendientes):,}")
+                print(f"\n   💾 Checkpoint: {procesados:,}/{len(productos_pendientes):,}")
                 guardar_cache_ner(ner_cache)
                 system.save_to_cache()
             
@@ -133,13 +136,13 @@ def extraer_ner_incremental():
             producto.ner_attributes = {}
             producto.enriched_text = getattr(producto, 'title', '')
     
-    print("\n Guardando sistema y cache final...")
+    print("\n💾 Guardando sistema y cache final...")
     guardar_cache_ner(ner_cache)
     system.save_to_cache()
-    print(" Sistema guardado\n")
+    print("✅ Sistema guardado\n")
     
     print("=" * 70)
-    print(" RESUMEN DE EXTRACCIÓN INCREMENTAL")
+    print("📊 RESUMEN DE EXTRACCIÓN INCREMENTAL")
     print("=" * 70)
     print(f"Total productos:          {total_productos:,}")
     print(f"Ya en cache:              {productos_con_cache:,}")
@@ -149,11 +152,11 @@ def extraer_ner_incremental():
     print(f"Errores:                  {errores:,}")
     
     total_con_ner = productos_con_cache + con_atributos
-    print("\n COBERTURA GLOBAL:")
+    print("\n📈 COBERTURA GLOBAL:")
     print(f"   {total_con_ner:,}/{total_productos:,} productos con NER ({total_con_ner/total_productos*100:.1f}%)")
     
     if con_atributos > 0:
-        print("\n EJEMPLOS DE ATRIBUTOS EXTRAÍDOS:")
+        print("\n🎯 EJEMPLOS DE ATRIBUTOS EXTRAÍDOS:")
         ejemplos = 0
         for _, prod in productos_pendientes:
             if hasattr(prod, 'ner_attributes') and prod.ner_attributes:
@@ -167,11 +170,11 @@ def extraer_ner_incremental():
                     break
     
     print("\n" + "=" * 70)
-    print(" ¡EXTRACCIÓN INCREMENTAL COMPLETADA!")
-    print("\n PRÓXIMOS PASOS:")
-    print("   1. python debug_ner_detail.py      (verificar NER)")
-    print("   2. python main.py experimento      (evaluar)")
-    print("\n VENTAJAS DEL CACHE:")
+    print("🎉 ¡EXTRACCIÓN INCREMENTAL COMPLETADA!")
+    print("\n📋 PRÓXIMOS PASOS:")
+    print("   1. python fix_simple_ground_truth.py   (crear ground truth)")
+    print("   2. python main.py experimento          (evaluar)")
+    print("\n💡 VENTAJAS DEL CACHE:")
     print("   • Re-ejecutar este script es instantáneo (usa cache)")
     print("   • Agregar productos nuevos: solo procesa los nuevos")
     print("   • Cambiar títulos: re-procesa solo los modificados")
@@ -181,11 +184,11 @@ if __name__ == "__main__":
     try:
         extraer_ner_incremental()
     except KeyboardInterrupt:
-        print("\n\n  Proceso interrumpido")
+        print("\n\n⚠️ Proceso interrumpido")
         print("   El cache se guardó en el último checkpoint")
     except Exception as e:
         print("\n" + "=" * 70)
-        print(" ERROR CRÍTICO")
+        print("❌ ERROR CRÍTICO")
         print("=" * 70)
         print(f"\n{e}")
         import traceback
