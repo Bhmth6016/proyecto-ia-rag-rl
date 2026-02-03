@@ -18,6 +18,10 @@ def load_raw_products(
         return _load_all_files(limit)
 
 
+# src/data/loader.py - Modificaciones en _load_single_file
+
+# En src/data/loader.py - asegurar parent_asin
+
 def _load_single_file(
     file_path: str,
     limit: Optional[int] = None
@@ -52,11 +56,22 @@ def _load_single_file(
                     if not title:
                         continue
                     
+                    # CORREGIDO: Asegurar parent_asin existe
+                    if 'parent_asin' not in data:
+                        if 'asin' in data:
+                            data['parent_asin'] = data['asin']
+                        elif 'id' in data:
+                            data['parent_asin'] = data['id']
+                        else:
+                            # Generar ID único basado en línea
+                            data['parent_asin'] = f"{file_path_obj.stem}_{lines_read}"
+                    
+                    # Para compatibilidad, también mantener 'id'
+                    if 'id' not in data:
+                        data['id'] = data['parent_asin']
+                    
                     if 'main_category' not in data:
                         data['main_category'] = data.get('categories', [''])[0] if data.get('categories') else ''
-                    
-                    if 'id' not in data:
-                        data['id'] = f"{file_path_obj.stem}_{lines_read}"
                     
                     products.append(data)
                     lines_valid += 1

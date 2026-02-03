@@ -1,4 +1,4 @@
-# src/data/canonicalizer.py
+# src/data/canonicalizer.py - ARREGLADO
 import hashlib
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
@@ -8,22 +8,28 @@ import logging
 import re
 
 logger = logging.getLogger(__name__)
+
 @dataclass
 class CanonicalProduct:
-    id: str
+    # Campos REQUERIDOS (sin valor por defecto) - DEBEN IR PRIMERO
+    id: str  # parent_asin
     title: str
     description: str
-    price: Optional[float]
     category: str
-    rating: Optional[float]
-    rating_count: Optional[int]
-    
     title_embedding: np.ndarray = field(repr=False)
     content_embedding: np.ndarray = field(repr=False)
+    
+    # Campos OPCIONALES (con valor por defecto) - DEBEN IR DESPUÉS
+    price: Optional[float] = None
+    rating: Optional[float] = None
+    rating_count: Optional[int] = None
+    image_url: Optional[str] = None  # NUEVO: campo para imagen
+    
+    # Campo calculado
     content_hash: str = field(init=False)
     
     def __post_init__(self):
-        content_str = f"{self.title}|{self.description}|{self.price}|{self.category}"
+        content_str = f"{self.title}|{self.description}|{self.price}|{self.category}|{self.image_url}"
         self.content_hash = hashlib.md5(content_str.encode()).hexdigest()
     
     @property
@@ -33,8 +39,10 @@ class CanonicalProduct:
             "has_rating": 1.0 if self.rating is not None else 0.0,
             "rating_value": self.rating if self.rating else 0.0,
             "has_rating_count": 1.0 if self.rating_count else 0.0,
+            "has_image": 1.0 if self.image_url else 0.0,  # NUEVO
             "category": self.category
         }
+
 class ProductCanonicalizer:
     
     def __init__(self, embedding_model: str = "all-MiniLM-L6-v2"):
@@ -43,7 +51,8 @@ class ProductCanonicalizer:
     
     def canonicalize(self, raw_product: Dict[str, Any]) -> Optional[CanonicalProduct]:
         try:
-            product_id = self._extract_id(raw_product)
+            # OBTENER PARENT_ASIN COMO ID PRINCIPAL
+            product_id = self._extract_parent_asin(raw_product)
             if not product_id:
                 return None
             
@@ -55,13 +64,9 @@ class ProductCanonicalizer:
             if not description:
                 description = title  # Usar título como fallback
             
-            price = self._extract_price(raw_product)
-            
             category = self._extract_category(raw_product)
             
-            rating = self._extract_rating(raw_product)
-            rating_count = self._extract_rating_count(raw_product)
-            
+            # Generar embeddings PRIMERO (son requeridos)
             title_embedding = self.embedding_model.encode(
                 title,
                 normalize_embeddings=True,
@@ -74,35 +79,83 @@ class ProductCanonicalizer:
                 convert_to_numpy=True
             )
             
+            # Ahora extraer los campos opcionales
+            price = self._extract_price(raw_product)
+            rating = self._extract_rating(raw_product)
+            rating_count = self._extract_rating_count(raw_product)
+            image_url = self._extract_image_url(raw_product)
+            
             return CanonicalProduct(
                 id=product_id,
                 title=title[:200],
                 description=description[:500],
-                price=price,
                 category=category,
+                title_embedding=title_embedding,
+                content_embedding=content_embedding,
+                price=price,
                 rating=rating,
                 rating_count=rating_count,
-                title_embedding=title_embedding,
-                content_embedding=content_embedding
+                image_url=image_url
             )
             
         except Exception as e:
             logger.debug(f" Error canonizando producto: {e}")
             return None
     
-    def _extract_id(self, raw_product: Dict[str, Any]) -> str:
-        id_fields = ['asin', 'id', 'product_id']
+    def _extract_parent_asin(self, raw_product: Dict[str, Any]) -> Optional[str]:
+        """Extraer parent_asin como ID principal"""
+        # Primero intentar con parent_asin
+        if 'parent_asin' in raw_product and raw_product['parent_asin']:
+            return str(raw_product['parent_asin']).strip()
         
+        # Si no hay parent_asin, usar asin
+        if 'asin' in raw_product and raw_product['asin']:
+            return str(raw_product['asin']).strip()
+        
+        # Fallback: otros campos de ID
+        id_fields = ['id', 'product_id', 'product_asin']
         for field_name in id_fields:
-            if field in raw_product and raw_product[field_name]:
+            if field_name in raw_product and raw_product[field_name]:
                 return str(raw_product[field_name])
         
+        # Último recurso: generar hash del título
         title = self._extract_title(raw_product)
         if title:
             return f"prod_{hashlib.md5(title.encode()).hexdigest()[:12]}"
         
-        import uuid
-        return f"prod_{uuid.uuid4().hex[:12]}"
+        return None
+    
+    def _extract_image_url(self, raw_product: Dict[str, Any]) -> Optional[str]:
+        """Extraer URL de imagen miniatura"""
+        image_fields = [
+            'imageURL',
+            'image_url',
+            'main_image',
+            'thumbnail',
+            'imUrl',
+            'imURL',
+            'image'
+        ]
+        
+        for field_name in image_fields:
+            if field_name in raw_product and raw_product[field_name]:
+                image_url = raw_product[field_name]
+                if isinstance(image_url, str) and image_url.strip():
+                    return image_url.strip()
+                elif isinstance(image_url, list) and image_url:
+                    first_image = image_url[0]
+                    if isinstance(first_image, str) and first_image.strip():
+                        return first_image.strip()
+        
+        # También buscar en nested structures
+        if 'images' in raw_product and raw_product['images']:
+            images = raw_product['images']
+            if isinstance(images, list) and images:
+                for img in images:
+                    if isinstance(img, str) and img.strip():
+                        return img.strip()
+        
+        return None
     
     def _extract_title(self, raw_product: Dict[str, Any]) -> str:
         if 'title' in raw_product and raw_product['title']:
@@ -114,7 +167,7 @@ class ProductCanonicalizer:
         
         alt_fields = ['name', 'product_title', 'product_name']
         for field_name in alt_fields:
-            if field in raw_product and raw_product[field_name]:
+            if field_name in raw_product and raw_product[field_name]:
                 title = raw_product[field_name]
                 if isinstance(title, str):
                     return title.strip()
@@ -187,7 +240,7 @@ class ProductCanonicalizer:
         
         alt_fields = ['category', 'categories', 'primary_category']
         for field_name in alt_fields:
-            if field in raw_product and raw_product[field_name]:
+            if field_name in raw_product and raw_product[field_name]:
                 cat = raw_product[field_name]
                 if isinstance(cat, str):
                     return cat.strip()
@@ -200,7 +253,7 @@ class ProductCanonicalizer:
         rating_fields = ['average_rating', 'rating', 'overall_rating', 'stars', 'review_score']
         
         for field_name in rating_fields:
-            if field in raw_product and raw_product[field_name] is not None:
+            if field_name in raw_product and raw_product[field_name] is not None:
                 try:
                     rating = float(raw_product[field_name])
                     if rating > 5 and rating <= 100:  # Escala 0-100
@@ -218,7 +271,7 @@ class ProductCanonicalizer:
         count_fields = ['rating_number', 'rating_count', 'total_ratings', 'num_ratings']
         
         for field_name in count_fields:
-            if field in raw_product and raw_product[field_name] is not None:
+            if field_name in raw_product and raw_product[field_name] is not None:
                 try:
                     return int(raw_product[field_name])
                 except (ValueError, TypeError):

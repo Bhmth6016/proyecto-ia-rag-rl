@@ -405,8 +405,7 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
         return min(1.0, score)
     
     def train_rlhf_with_queries(self, train_queries: List[str], 
-                              interactions_file: Path) -> bool:
-        # ✅ Verificación explícita - ahora RLHFRankerFixed_available está definida
+                            interactions_file: Path) -> bool:
         if not RLHFRankerFixed_available or RLHFRankerFixed is None:
             logger.error("RLHFRankerFixed no disponible")
             return False
@@ -441,7 +440,11 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
             match_rating_balance=1.5
         )
         
-        products_by_id = {p.id: p for p in self.canonical_products if hasattr(p, 'id')}
+        # Crear mapa por parent_asin en lugar de id
+        products_by_parent_asin = {}
+        for p in self.canonical_products:
+            if hasattr(p, 'id'):  # id ahora es parent_asin
+                products_by_parent_asin[p.id] = p
         
         trained = 0
         failed = 0
@@ -450,15 +453,17 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
             try:
                 context = interaction.get('context', {})
                 query = context.get('query', '').strip()
-                product_id = context.get('product_id')
+                product_id = context.get('product_id')  # Este ya es parent_asin
                 position = context.get('position', 1)
                 
                 if not query or not product_id:
                     continue
                 
-                product = products_by_id.get(product_id)
+                # Buscar producto por parent_asin (que es el id ahora)
+                product = products_by_parent_asin.get(product_id)
                 if not product:
-                    for pid, prod in products_by_id.items():
+                    # Intentar buscar por similaridad
+                    for pid, prod in products_by_parent_asin.items():
                         if product_id in pid or pid in product_id:
                             product = prod
                             break
@@ -468,13 +473,13 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
                     continue
                 
                 if position == 1:
-                    reward = 0.3  # Bajo para clicks obvios
+                    reward = 0.3
                 elif position <= 3:
                     reward = 0.7
                 elif position <= 10:
-                    reward = 1.2  # Bueno para descubrimiento
+                    reward = 1.2
                 else:
-                    reward = 1.5  # Excelente para clicks profundos
+                    reward = 1.5
                 
                 self.rl_ranker.learn_from_human_feedback(product, query, position, reward)
                 trained += 1

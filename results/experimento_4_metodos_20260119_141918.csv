@@ -1,0 +1,5 @@
+method,query_idx,mrr,precision@5,recall@5,ndcg@5,found,success
+baseline,0,0.5,0.2,1.0,0.6309297535714575,1,True
+ner_enhanced,0,0.5,0.2,1.0,0.6309297535714575,1,True
+rlhf,0,0.5,0.2,1.0,0.6309297535714575,1,True
+full_hybrid,0,0.5,0.2,1.0,0.6309297535714575,1,True

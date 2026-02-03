@@ -483,19 +483,31 @@ def save_results(results: Dict[str, Any], summary: Dict[str, Any],
             if method in summary:
                 mrr_mean = normalize_json_value(summary[method]['mrr_mean'])
                 mrr_std = normalize_json_value(summary[method]['mrr_std'])
-                f.write(f"{method.replace('_', ' ').title():20} {mrr_mean:.4f} ± {mrr_std:.4f}\n")
+                mrr_mean_val = mrr_mean if mrr_mean is not None else 0.0
+                mrr_std_val = mrr_std if mrr_std is not None else 0.0
+                f.write(
+                    f"{method.replace('_', ' ').title():20} "
+                    f"{mrr_mean_val:.4f} ± {mrr_std_val:.4f}\n"
+                )
+
         
-        f.write("\n TESTS ESTADÍSTICOS (vs Baseline):\n")
         f.write("-" * 50 + "\n")
         for method in ['ner_enhanced', 'rlhf', 'full_hybrid']:
             if method in tests:
-                p_value = normalize_json_value(tests[method].get('p_value', 1.0))
-                significant = normalize_json_value(tests[method].get('significant', False))
-                percent_improvement = normalize_json_value(tests[method].get('percent_improvement', 0.0))
-                cohens_d = normalize_json_value(tests[method].get('cohens_d', 0.0))
+                p_value_raw = tests[method].get('p_value')
                 
-                sig = " SIGNIFICATIVO" if significant else "  NO SIGNIFICATIVO"
-                f.write(f"{method.replace('_', ' ').title():20} p={p_value:.4f} {sig}\n")
+                # Manejar el caso donde p_value es None
+                if p_value_raw is None:
+                    p_value_str = "N/A"
+                else:
+                    p_value_str = f"{p_value_raw:.4f}"
+                
+                significant = tests[method].get('significant', False)
+                percent_improvement = tests[method].get('percent_improvement', 0.0)
+                cohens_d = tests[method].get('cohens_d', 0.0)
+                
+                sig = "SIGNIFICATIVO" if significant else "NO SIGNIFICATIVO"
+                f.write(f"{method.replace('_', ' ').title():20} p={p_value_str} {sig}\n")
                 f.write(f"                     Mejora: {percent_improvement:+.2f}% (d={cohens_d:.3f})\n")
         
         f.write("\n" + "=" * 80 + "\n")
@@ -648,10 +660,18 @@ def main():
             for method in ['ner_enhanced', 'rlhf', 'full_hybrid']:
                 if method in tests:
                     test = tests[method]
+                    
+                    # Manejar p_value None
+                    p_value = test.get('p_value')
+                    if p_value is None:
+                        p_value_str = "N/A"
+                    else:
+                        p_value_str = f"{p_value:.4f}"
+                    
                     sig = "Significante" if test.get('significant', False) else "No significante"
                     print(f"{method.replace('_', ' ').title():20} "
-                          f"p={test.get('p_value', 1.0):.4f} {sig} "
-                          f"Mejora: {test.get('percent_improvement', 0.0):+.2f}%")
+                        f"p={p_value_str} {sig} "
+                        f"Mejora: {test.get('percent_improvement', 0.0):+.2f}%")
         
         logger.info(" Guardando resultados...")
         json_file, csv_file, txt_file = save_results(results, summary, tests, 

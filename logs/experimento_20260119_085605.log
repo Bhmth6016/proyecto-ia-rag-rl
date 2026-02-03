@@ -1,0 +1,185 @@
+2026-01-19 08:56:05 - experimento_completo_4_metodos - INFO -  Log iniciado: logs\experimento_20260119_085605.log
+2026-01-19 08:56:05 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-01-19 08:56:05 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -  Cargando ground truth...
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -  Ground truth cargado: 14 queries
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -    • Productos relevantes totales: 14
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -   Creando split train/test estratificado...
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -  Split creado: 10 train, 4 test
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -  Cargando sistema V2...
+2026-01-19 08:56:15 - experimento_completo_4_metodos - INFO -  Cargando sistema V2 desde cache...
+2026-01-19 08:56:19 - src.unified_system_v2 - INFO -  Sistema V2 cargado: 89,990 productos
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -  Sistema cargado: 89,990 productos
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -    • RLHF: ❌ No disponible
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -    • NER:  Disponible
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -  Entrenando RLHF con 10 queries de entrenamiento...
+2026-01-19 08:56:19 - src.unified_system_v2 - INFO -  Entrenando RLHF con 10 queries...
+2026-01-19 08:56:19 - src.unified_system_v2 - INFO -    • Interacciones filtradas: 19
+2026-01-19 08:56:19 - ranking.rl_ranker_fixed - INFO -  RLHF Dinámico inicializado (lr=0.5)
+2026-01-19 08:56:19 - src.unified_system_v2 - INFO -  RLHF entrenado: 0 exitosas, 19 fallidas
+2026-01-19 08:56:19 - src.unified_system_v2 - ERROR -  RLHF no pudo ser entrenado (0 interacciones exitosas)
+2026-01-19 08:56:19 - experimento_completo_4_metodos - WARNING -   RLHF no pudo ser entrenado (pocos datos?)
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:19 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:19 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'action video games':
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_1399ca990770']...
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • IDs encontrados por baseline: ['prod_330f957ffd18', 'prod_34fa34dface7', 'prod_63d72051e901']...
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:19 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:19 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'action video games':
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_1399ca990770']...
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • IDs encontrados por ner_enhanced: ['prod_330f957ffd18', 'prod_f71519886904', 'prod_15f64e04e8d4']...
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:19 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:19 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:19 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'action video games':
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_1399ca990770']...
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • IDs encontrados por rlhf: ['prod_330f957ffd18', 'prod_34fa34dface7', 'prod_63d72051e901']...
+2026-01-19 08:56:19 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'action video games':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_1399ca990770']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por full_hybrid: ['prod_330f957ffd18', 'prod_f71519886904', 'prod_15f64e04e8d4']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'survival games':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_5b7012a2f574']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por baseline: ['prod_63d72051e901', 'prod_44f968ebab8b', 'prod_e4692512e5cb']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'survival games':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_5b7012a2f574']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por ner_enhanced: ['prod_44f968ebab8b', 'prod_69b1649d1026', 'prod_63d72051e901']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'survival games':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_5b7012a2f574']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por rlhf: ['prod_63d72051e901', 'prod_44f968ebab8b', 'prod_e4692512e5cb']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'survival games':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_5b7012a2f574']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por full_hybrid: ['prod_44f968ebab8b', 'prod_69b1649d1026', 'prod_63d72051e901']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'electronics':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_778ed0ac60d6']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por baseline: ['prod_38b91f97ab22', 'prod_c5d09974eb53', 'prod_3a4c0558a646']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:20 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:20 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'electronics':
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_778ed0ac60d6']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • IDs encontrados por ner_enhanced: ['prod_c5d09974eb53', 'prod_38b91f97ab22', 'prod_92513e5019c1']...
+2026-01-19 08:56:20 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'electronics':
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_778ed0ac60d6']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • IDs encontrados por rlhf: ['prod_38b91f97ab22', 'prod_c5d09974eb53', 'prod_3a4c0558a646']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'electronics' → Intent: ['category']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 6/20 productos
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'electronics':
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_778ed0ac60d6']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • IDs encontrados por full_hybrid: ['prod_c5d09974eb53', 'prod_38b91f97ab22', 'prod_92513e5019c1']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'headphones':
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_19c33c91b89d']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • IDs encontrados por baseline: ['prod_eddc393bd53e', 'prod_b96c142d41e3', 'prod_421cc07b69f7']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'headphones':
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_19c33c91b89d']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • IDs encontrados por ner_enhanced: ['prod_b96c142d41e3', 'prod_421cc07b69f7', 'prod_085327788ac1']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'headphones':
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_19c33c91b89d']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • IDs encontrados por rlhf: ['prod_eddc393bd53e', 'prod_b96c142d41e3', 'prod_421cc07b69f7']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:56:21 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -    Query: 'headphones' → Intent: ['category', 'platform']
+2026-01-19 08:56:21 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 13/20 productos
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -   Diagnóstico para 'headphones':
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Relevant IDs en ground truth: ['prod_19c33c91b89d']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • IDs encontrados por full_hybrid: ['prod_b96c142d41e3', 'prod_421cc07b69f7', 'prod_085327788ac1']...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -     • Matches encontrados: 0
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -  Guardando resultados...
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -  Resultados JSON: results\experimento_4_metodos_20260119_085621.json
+2026-01-19 08:56:21 - experimento_completo_4_metodos - INFO -  Resultados CSV: results\experimento_4_metodos_20260119_085621.csv
+2026-01-19 08:56:21 - experimento_completo_4_metodos - ERROR -  Error en experimento: unsupported format string passed to NoneType.__format__

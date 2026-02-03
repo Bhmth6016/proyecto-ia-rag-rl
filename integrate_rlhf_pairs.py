@@ -1,21 +1,20 @@
 # integrate_rlhf_pairs.py
 #!/usr/bin/env python3
 """
-Integrador de Pares RLHF con Sistema Existente
-==============================================
+Integrador de Pares RLHF - VERSIÓN MEJORADA
+===========================================
 
-Convierte los pares (chosen, rejected) generados desde reviews
-al formato de interacciones que usa tu sistema actual.
-
-Compatible con:
-- src.ranking.rl_ranker_fixed.RLHFRankerFixed
-- experimento_completo_4_metodos.py
+Mejoras:
+1. Combina pares de TODAS las categorías automáticamente
+2. Mejor validación de datos
+3. Estadísticas detalladas por categoría
 """
 
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 from datetime import datetime
+from collections import defaultdict
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -23,69 +22,82 @@ logger = logging.getLogger(__name__)
 
 
 class RLHFPairsIntegrator:
-    """
-    Integra pares RLHF en el formato esperado por el sistema.
-    
-    Formato de salida (compatible con real_interactions.jsonl):
-    {
-        "timestamp": "2025-01-18T10:30:00",
-        "session_id": "rlhf_training",
-        "interaction_type": "click",
-        "context": {
-            "query": "beauty products",
-            "product_id": "B08ZRWZ2DJ",
-            "position": 1,
-            "product_title": "...",
-            "is_relevant": true,
-            "feedback_type": "implicit_preference",
-            "reward_score": 0.85,
-            "source": "review_aggregation"
-        }
-    }
-    """
+    """Integra pares RLHF de múltiples categorías"""
     
     def __init__(
         self,
-        pairs_file: Path,
+        pairs_dir: Path = Path("data/rlhf_pairs"),
         output_file: Path = Path("data/interactions/rlhf_interactions_from_reviews.jsonl"),
         ground_truth_file: Path = Path("data/interactions/ground_truth_from_reviews.json")
     ):
-        self.pairs_file = pairs_file
+        self.pairs_dir = pairs_dir
         self.output_file = output_file
         self.ground_truth_file = ground_truth_file
         
         logger.info("🔧 RLHF Integrator inicializado")
-        logger.info(f"   Input:  {pairs_file}")
+        logger.info(f"   Pairs dir: {pairs_dir}")
         logger.info(f"   Output: {output_file}")
     
-    def load_pairs(self) -> List[Dict]:
-        """Carga pares RLHF"""
-        logger.info(f"📂 Cargando pares desde {self.pairs_file}...")
+    def find_pair_files(self) -> List[Path]:
+        """✅ NUEVO: Encuentra TODOS los archivos de pares"""
+        if not self.pairs_dir.exists():
+            logger.warning(f"⚠️ Directorio no existe: {self.pairs_dir}")
+            return []
         
-        pairs = []
-        with open(self.pairs_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    pair = json.loads(line)
-                    pairs.append(pair)
-                except json.JSONDecodeError:
-                    continue
+        pair_files = list(self.pairs_dir.glob("rlhf_pairs_*.jsonl"))
         
-        logger.info(f"✅ Pares cargados: {len(pairs):,}")
-        return pairs
+        logger.info(f"\n📂 Archivos de pares encontrados: {len(pair_files)}")
+        for pf in pair_files:
+            logger.info(f"   • {pf.name}")
+        
+        return pair_files
+    
+    def load_all_pairs(self) -> List[Dict]:
+        """✅ MEJORADO: Carga pares de TODAS las categorías"""
+        pair_files = self.find_pair_files()
+        
+        if not pair_files:
+            logger.error("❌ No se encontraron archivos de pares")
+            logger.info("   Ejecuta primero: python generate_rlhf_pairs_from_reviews_FIXED.py")
+            return []
+        
+        all_pairs = []
+        stats_by_category = defaultdict(int)
+        
+        for pair_file in pair_files:
+            logger.info(f"\n📂 Cargando: {pair_file.name}")
+            
+            count = 0
+            with open(pair_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        pair = json.loads(line)
+                        all_pairs.append(pair)
+                        
+                        # Extraer categoría del par
+                        category = pair.get('category', 'Unknown')
+                        stats_by_category[category] += 1
+                        count += 1
+                    except json.JSONDecodeError:
+                        continue
+            
+            logger.info(f"   ✓ Pares cargados: {count:,}")
+        
+        logger.info(f"\n✅ TOTAL PARES: {len(all_pairs):,}")
+        logger.info(f"\n📊 Por categoría:")
+        for category, count in sorted(stats_by_category.items()):
+            logger.info(f"   • {category:40} {count:>6,}")
+        
+        return all_pairs
     
     def convert_to_interactions(self, pairs: List[Dict]) -> List[Dict]:
-        """
-        Convierte pares (chosen, rejected) a interacciones de click.
-        
-        Estrategia:
-        - chosen → click en posición baja (alta recompensa)
-        - rejected → no incluir (o click en posición alta con baja recompensa)
-        """
-        logger.info("🔄 Convirtiendo a formato de interacciones...")
+        """Convierte pares a interacciones"""
+        logger.info("\n🔄 Convirtiendo a interacciones...")
         
         interactions = []
         session_id = f"rlhf_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        stats = {'clicks': 0, 'views': 0}
         
         for i, pair in enumerate(pairs):
             query = pair['query']
@@ -93,13 +105,8 @@ class RLHFPairsIntegrator:
             rejected = pair['rejected']
             margin = pair.get('margin', 0.0)
             
-            # Interacción para CHOSEN (producto preferido)
-            # Posición baja simula "usuario scrolleó pero encontró esto valioso"
-            chosen_position = 3  # Posición media-alta
-            chosen_reward = self._calculate_reward_from_position(
-                chosen_position,
-                chosen['reward_score']
-            )
+            # Interacción CHOSEN (click)
+            chosen_position = 3
             
             interaction_chosen = {
                 'timestamp': datetime.now().isoformat(),
@@ -107,9 +114,10 @@ class RLHFPairsIntegrator:
                 'interaction_type': 'click',
                 'context': {
                     'query': query,
-                    'product_id': chosen['parent_asin'],
+                    'product_id': chosen['parent_asin'],  # Usar parent_asin como ID
                     'position': chosen_position,
                     'product_title': chosen['title'],
+                    'product_image': chosen.get('image_url'),  # NUEVO
                     'is_relevant': True,
                     'feedback_type': 'implicit_preference',
                     'reward_score': chosen['reward_score'],
@@ -117,26 +125,28 @@ class RLHFPairsIntegrator:
                     'num_reviews': chosen.get('num_reviews', 0),
                     'source': 'review_aggregation',
                     'pair_id': i,
-                    'pair_margin': margin
+                    'pair_margin': margin,
+                    'category': pair.get('category', 'Unknown')
                 }
             }
             
             interactions.append(interaction_chosen)
+            stats['clicks'] += 1
             
-            # OPCIONAL: También podemos generar interacción negativa para rejected
-            # (útil para contrastive learning)
-            if margin > 0.3:  # Solo si hay margen significativo
-                rejected_position = 10  # Posición baja
+            # Interacción REJECTED (view)
+            if margin > 0.3:
+                rejected_position = 10
                 
                 interaction_rejected = {
                     'timestamp': datetime.now().isoformat(),
                     'session_id': session_id,
-                    'interaction_type': 'view',  # View sin click
+                    'interaction_type': 'view',
                     'context': {
                         'query': query,
-                        'product_id': rejected['parent_asin'],
+                        'product_id': rejected['parent_asin'],  # Usar parent_asin como ID
                         'position': rejected_position,
                         'product_title': rejected['title'],
+                        'product_image': rejected.get('image_url'),  # NUEVO
                         'is_relevant': False,
                         'feedback_type': 'implicit_rejection',
                         'reward_score': rejected['reward_score'],
@@ -144,38 +154,23 @@ class RLHFPairsIntegrator:
                         'num_reviews': rejected.get('num_reviews', 0),
                         'source': 'review_aggregation',
                         'pair_id': i,
-                        'pair_margin': -margin  # Negativo para rejected
+                        'pair_margin': -margin,
+                        'category': pair.get('category', 'Unknown')
                     }
                 }
                 
                 interactions.append(interaction_rejected)
+                stats['views'] += 1
         
         logger.info(f"✅ Interacciones generadas: {len(interactions):,}")
+        logger.info(f"   • Clicks (chosen):  {stats['clicks']:,}")
+        logger.info(f"   • Views (rejected): {stats['views']:,}")
         
         return interactions
     
-    def _calculate_reward_from_position(self, position: int, base_reward: float) -> float:
-        """
-        Ajusta reward según posición (clicks profundos = más valioso).
-        
-        Similar a RLHFRankerFixed.learn_from_human_feedback()
-        """
-        if position == 1:
-            position_factor = 0.3  # Bajo para clicks obvios
-        elif position <= 3:
-            position_factor = 0.7
-        elif position <= 10:
-            position_factor = 1.2  # Bueno para descubrimiento
-        else:
-            position_factor = 1.5  # Excelente para clicks profundos
-        
-        return base_reward * position_factor
-    
     def create_ground_truth(self, pairs: List[Dict]) -> Dict[str, List[str]]:
-        """
-        Crea ground truth: {query: [producto_relevante_1, ...]}
-        """
-        logger.info("📝 Creando ground truth...")
+        """Crea ground truth desde pares"""
+        logger.info("\n📝 Creando ground truth...")
         
         ground_truth = {}
         
@@ -186,22 +181,25 @@ class RLHFPairsIntegrator:
             if query not in ground_truth:
                 ground_truth[query] = []
             
-            # Solo agregar si no está (evitar duplicados)
             if chosen_id not in ground_truth[query]:
                 ground_truth[query].append(chosen_id)
         
-        logger.info(f"✅ Ground truth: {len(ground_truth)} queries")
+        logger.info(f"✅ Ground truth: {len(ground_truth)} queries únicas")
         
         total_relevant = sum(len(ids) for ids in ground_truth.values())
-        logger.info(f"   • Productos relevantes totales: {total_relevant}")
+        logger.info(f"   • Productos relevantes: {total_relevant:,}")
+        
+        # Estadísticas
+        query_lengths = [len(ids) for ids in ground_truth.values()]
+        logger.info(f"   • Productos/query (promedio): {sum(query_lengths)/len(query_lengths):.1f}")
         
         return ground_truth
     
     def save_interactions(self, interactions: List[Dict]):
-        """Guarda interacciones en formato JSONL"""
-        logger.info(f"💾 Guardando interacciones en {self.output_file}...")
-        
+        """Guarda interacciones"""
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"\n💾 Guardando interacciones: {self.output_file}")
         
         with open(self.output_file, 'w', encoding='utf-8') as f:
             for interaction in interactions:
@@ -210,10 +208,10 @@ class RLHFPairsIntegrator:
         logger.info(f"✅ Guardadas: {len(interactions):,} interacciones")
     
     def save_ground_truth(self, ground_truth: Dict[str, List[str]]):
-        """Guarda ground truth en JSON"""
-        logger.info(f"💾 Guardando ground truth en {self.ground_truth_file}...")
-        
+        """Guarda ground truth"""
         self.ground_truth_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"💾 Guardando ground truth: {self.ground_truth_file}")
         
         with open(self.ground_truth_file, 'w', encoding='utf-8') as f:
             json.dump(ground_truth, f, indent=2, ensure_ascii=False)
@@ -222,16 +220,18 @@ class RLHFPairsIntegrator:
     
     def run(self):
         """Pipeline completo"""
-        logger.info("="*60)
+        logger.info("\n" + "="*60)
         logger.info("🚀 INTEGRANDO PARES RLHF CON SISTEMA")
         logger.info("="*60)
         
-        # 1. Cargar pares
-        pairs = self.load_pairs()
+        # 1. Cargar TODOS los pares
+        pairs = self.load_all_pairs()
         
         if not pairs:
             logger.error("❌ No hay pares para procesar")
-            return
+            logger.info("\n💡 SOLUCIÓN:")
+            logger.info("   python generate_rlhf_pairs_from_reviews_FIXED.py")
+            return False
         
         # 2. Convertir a interacciones
         interactions = self.convert_to_interactions(pairs)
@@ -243,49 +243,43 @@ class RLHFPairsIntegrator:
         self.save_interactions(interactions)
         self.save_ground_truth(ground_truth)
         
-        # Estadísticas
+        # Resumen
         logger.info("\n" + "="*60)
-        logger.info("📊 RESUMEN")
+        logger.info("📊 RESUMEN FINAL")
         logger.info("="*60)
         logger.info(f"Pares procesados:        {len(pairs):,}")
         logger.info(f"Interacciones generadas: {len(interactions):,}")
         logger.info(f"Queries únicas:          {len(ground_truth):,}")
-        
-        clicks = sum(1 for i in interactions if i['interaction_type'] == 'click')
-        views = sum(1 for i in interactions if i['interaction_type'] == 'view')
-        
-        logger.info(f"\nPor tipo:")
-        logger.info(f"  • Clicks (chosen):     {clicks:,}")
-        logger.info(f"  • Views (rejected):    {views:,}")
-        
+        logger.info(f"\nArchivos generados:")
+        logger.info(f"   • {self.output_file}")
+        logger.info(f"   • {self.ground_truth_file}")
         logger.info("\n✅ Listo para entrenar RLHF!")
-        logger.info(f"   python main.py experimento")
+        logger.info("   python main.py experimento")
         logger.info("="*60)
+        
+        return True
 
 
 def main():
     """Ejemplo de uso"""
     
-    # Archivos
-    pairs_file = Path("data/rlhf_pairs/rlhf_pairs_beauty.jsonl")
-    output_file = Path("data/interactions/rlhf_interactions_from_reviews.jsonl")
-    ground_truth_file = Path("data/interactions/ground_truth_from_reviews.json")
-    
-    if not pairs_file.exists():
-        logger.error(f"❌ Archivo de pares no existe: {pairs_file}")
-        logger.info("   Ejecuta primero: python generate_rlhf_pairs_from_reviews.py")
-        return
-    
-    # Integrador
+    # Integrador automático
     integrator = RLHFPairsIntegrator(
-        pairs_file=pairs_file,
-        output_file=output_file,
-        ground_truth_file=ground_truth_file
+        pairs_dir=Path("data/rlhf_pairs"),
+        output_file=Path("data/interactions/rlhf_interactions_from_reviews.jsonl"),
+        ground_truth_file=Path("data/interactions/ground_truth_from_reviews.json")
     )
     
     # Ejecutar
-    integrator.run()
+    success = integrator.run()
+    
+    if not success:
+        logger.error("\n❌ Integración fallida")
+        return 1
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())

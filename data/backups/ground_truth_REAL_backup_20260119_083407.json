@@ -1,0 +1,69 @@
+{
+  "survival games": [
+    "meta_Video_Games_10000_5470",
+    "meta_Video_Games_10000_9424",
+    "meta_Video_Games_10000_8716"
+  ],
+  "action video games": [
+    "meta_Video_Games_10000_4422"
+  ],
+  "car parts": [
+    "meta_Automotive_10000_3489",
+    "meta_Automotive_10000_6380",
+    "meta_Automotive_10000_1028"
+  ],
+  "beauty products": [
+    "meta_Beauty_and_Personal_Care_10000_8453",
+    "meta_Beauty_and_Personal_Care_10000_498"
+  ],
+  "electronics": [
+    "meta_Books_10000_8850"
+  ],
+  "electronics parts": [
+    "meta_Toys_and_Games_10000_4379"
+  ],
+  "sports equipment": [
+    "meta_Sports_and_Outdoors_10000_2262",
+    "meta_Sports_and_Outdoors_10000_5428"
+  ],
+  "kitchen utensils": [
+    "meta_Home_and_Kitchen_10000_8771",
+    "meta_Home_and_Kitchen_10000_4909"
+  ],
+  "detective books": [
+    "meta_Books_10000_8946",
+    "meta_Books_10000_2896",
+    "meta_Books_10000_4386"
+  ],
+  "kid toys": [
+    "meta_Toys_and_Games_10000_6617",
+    "meta_Toys_and_Games_10000_3505"
+  ],
+  "headphones": [
+    "meta_Electronics_10000_1510",
+    "meta_Electronics_10000_9090"
+  ],
+  "sport videogames": [
+    "meta_Video_Games_10000_7276",
+    "meta_Video_Games_10000_3294"
+  ],
+  "\"playstation games\"": [
+    "meta_Video_Games_10000_5275"
+  ],
+  "\"xbox console\"": [
+    "meta_Video_Games_10000_2592",
+    "meta_Video_Games_10000_1531"
+  ],
+  "\"nintendo switch\"": [
+    "meta_Video_Games_10000_2969"
+  ],
+  "\"pc gaming\"": [
+    "meta_Electronics_10000_4777"
+  ],
+  "mario games": [
+    "meta_Video_Games_10000_8715"
+  ],
+  "zelda videogames": [
+    "meta_Video_Games_10000_9758"
+  ]
+}

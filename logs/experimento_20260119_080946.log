@@ -1,0 +1,137 @@
+2026-01-19 08:09:46 - experimento_completo_4_metodos - INFO -  Log iniciado: logs\experimento_20260119_080946.log
+2026-01-19 08:09:46 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-01-19 08:09:46 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -  Cargando ground truth...
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO - 🔍 Buscando ground truth...
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO - ✅ Encontrado: Ground Truth REAL (clicks humanos)
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -    Archivo: data\interactions\ground_truth_REAL.json
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO - 📊 Ground truth cargado:
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -    • Queries: 18
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -    • Productos relevantes: 31
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -    • Prioridad: 1
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -   Creando split train/test estratificado...
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -  Split creado: 13 train, 5 test
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -  Cargando sistema V2...
+2026-01-19 08:10:00 - experimento_completo_4_metodos - INFO -  Cargando sistema V2 desde cache...
+2026-01-19 08:10:05 - src.unified_system_v2 - INFO -  Sistema V2 cargado: 89,990 productos
+2026-01-19 08:10:05 - experimento_completo_4_metodos - INFO -  Sistema cargado: 89,990 productos
+2026-01-19 08:10:05 - experimento_completo_4_metodos - INFO -    • RLHF: ❌ No disponible
+2026-01-19 08:10:05 - experimento_completo_4_metodos - INFO -    • NER:  Disponible
+2026-01-19 08:10:05 - experimento_completo_4_metodos - INFO -  Entrenando RLHF con 13 queries de entrenamiento...
+2026-01-19 08:10:05 - experimento_completo_4_metodos - ERROR -  Error entrenando RLHF: UnifiedSystemV2.train_rlhf_with_queries() got an unexpected keyword argument 'pretrain_pairs'
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:05 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:05 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 9/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:06 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 4/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - RLHF ranker no disponible o no entrenado, usando baseline
+2026-01-19 08:10:07 - src.unified_system_v2 - WARNING - Full Hybrid requiere NER y RLHF entrenado, usando NER solo
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-01-19 08:10:07 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 14/20 productos
+2026-01-19 08:10:07 - experimento_completo_4_metodos - INFO -  Guardando resultados...
+2026-01-19 08:10:07 - experimento_completo_4_metodos - INFO -  Resultados JSON: results\experimento_4_metodos_20260119_081007.json
+2026-01-19 08:10:08 - experimento_completo_4_metodos - INFO -  Resultados CSV: results\experimento_4_metodos_20260119_081007.csv
+2026-01-19 08:10:08 - experimento_completo_4_metodos - ERROR -  Error en experimento: unsupported format string passed to NoneType.__format__

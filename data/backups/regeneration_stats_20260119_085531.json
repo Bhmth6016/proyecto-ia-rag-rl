@@ -1,0 +1,14 @@
+{
+  "timestamp": "20260119_085531",
+  "ground_truth": {
+    "queries": 14,
+    "total_products": 14,
+    "avg_products_per_query": 1.0
+  },
+  "interactions": {
+    "old_count": 69,
+    "new_count": 0,
+    "success_rate": 0.0
+  },
+  "products_in_system": 89814
+}
