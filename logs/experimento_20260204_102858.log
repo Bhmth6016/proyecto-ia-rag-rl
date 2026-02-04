@@ -39,3 +39,63 @@
 2026-02-04 10:29:13 - src.unified_system_v2 - INFO -  RLHF entrenado: 19 exitosas, 2 fallidas
 2026-02-04 10:29:13 - src.unified_system_v2 - INFO -    • Features aprendidas: 27
 2026-02-04 10:29:13 - src.unified_system_v2 - INFO -    • Feedback procesado: 19
+2026-02-04 10:29:22 - src.unified_system_v2 - INFO -  Sistema V2 guardado: data\cache\unified_system_v2.pkl
+2026-02-04 10:29:22 - src.unified_system_v2 - INFO -  Sistema guardado: data\cache\unified_system_v2.pkl
+2026-02-04 10:29:22 - experimento_completo_4_metodos - INFO -  RLHF entrenado exitosamente
+2026-02-04 10:29:22 - experimento_completo_4_metodos - INFO -    • Feedback procesado: 19
+2026-02-04 10:29:22 - experimento_completo_4_metodos - INFO -    • Features aprendidas: 27
+2026-02-04 10:29:22 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-04 10:29:22 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 8/20 productos
+2026-02-04 10:29:22 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:22 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:22 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:22 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-04 10:29:23 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 15/20 productos
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:23 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:24 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:24 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:24 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:24 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:24 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-04 10:29:24 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 7/20 productos
+2026-02-04 10:29:24 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:24 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-04 10:29:25 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:25 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-04 10:29:26 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 10/20 productos
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:26 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-04 10:29:27 - experimento_completo_4_metodos - INFO -  Guardando resultados...
+2026-02-04 10:29:27 - experimento_completo_4_metodos - INFO -  Resultados JSON: results\experimento_4_metodos_20260204_102927.json
+2026-02-04 10:29:27 - experimento_completo_4_metodos - INFO -  Resultados CSV: results\experimento_4_metodos_20260204_102927.csv
+2026-02-04 10:29:27 - experimento_completo_4_metodos - INFO -  Resumen: results\resumen_20260204_102927.txt
+2026-02-04 10:29:27 - experimento_completo_4_metodos - INFO -  Experimento completado exitosamente
