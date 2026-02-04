@@ -1,0 +1,128 @@
+{
+  "metadata": {
+    "timestamp": "20260204_100744",
+    "train_queries_count": 28,
+    "test_queries_count": 10,
+    "split_ratio": "75/25",
+    "seed": 42
+  },
+  "summary": {
+    "baseline": {
+      "mrr_mean": 0.25,
+      "mrr_std": 0.3535533905932738,
+      "precision_mean": 0.14,
+      "recall_mean": 0.36666666666666664,
+      "ndcg_mean": 0.28644765107377596,
+      "total_found": 7,
+      "n_queries": 10,
+      "success_rate": 1.0
+    },
+    "ner_enhanced": {
+      "mrr_mean": 0.3,
+      "mrr_std": 0.4216370213557839,
+      "precision_mean": 0.14,
+      "recall_mean": 0.36666666666666664,
+      "ndcg_mean": 0.29532367559018946,
+      "total_found": 7,
+      "n_queries": 10,
+      "success_rate": 1.0
+    },
+    "rlhf": {
+      "mrr_mean": 0.075,
+      "mrr_std": 0.1687371394276382,
+      "precision_mean": 0.04,
+      "recall_mean": 0.15,
+      "ndcg_mean": 0.08175293653079348,
+      "total_found": 2,
+      "n_queries": 10,
+      "success_rate": 1.0
+    },
+    "full_hybrid": {
+      "mrr_mean": 0.13333333333333333,
+      "mrr_std": 0.3220305943597653,
+      "precision_mean": 0.04,
+      "recall_mean": 0.15,
+      "ndcg_mean": 0.11131471927654583,
+      "total_found": 2,
+      "n_queries": 10,
+      "success_rate": 1.0
+    }
+  },
+  "statistical_tests": {
+    "ner_enhanced": {
+      "t_statistic": -0.5570860145311556,
+      "p_value": 0.5910512317836045,
+      "significant": false,
+      "cohens_d": 0.13545709229571923,
+      "mean_improvement": 0.04999999999999999,
+      "percent_improvement": 19.999999999999996,
+      "baseline_mean": 0.25,
+      "method_mean": 0.3,
+      "n_samples": 10
+    },
+    "rlhf": {
+      "t_statistic": 1.4812257933030561,
+      "p_value": 0.17268508962953896,
+      "significant": false,
+      "cohens_d": -0.6659120918162917,
+      "mean_improvement": -0.175,
+      "percent_improvement": -70.0,
+      "baseline_mean": 0.25,
+      "method_mean": 0.075,
+      "n_samples": 10
+    },
+    "full_hybrid": {
+      "t_statistic": 0.8427009716003844,
+      "p_value": 0.4212255090809364,
+      "significant": false,
+      "cohens_d": -0.3636670334262918,
+      "mean_improvement": -0.11666666666666667,
+      "percent_improvement": -46.666666666666664,
+      "baseline_mean": 0.25,
+      "method_mean": 0.13333333333333333,
+      "n_samples": 10
+    }
+  },
+  "train_queries": [
+    "detective books",
+    "amazon fashion",
+    "computers",
+    "action video games",
+    "novels",
+    "zelda videogames",
+    "sports & outdoors",
+    "aqua lung favola",
+    "mario games",
+    "sports equipment",
+    "beagimeg women's sexy",
+    "magic doorbell playhouse",
+    "car parts",
+    "educational books",
+    "kid toys",
+    "kitchen utensils",
+    "\"xbox console\"",
+    "all beauty",
+    "\"nintendo switch\"",
+    "electronics parts",
+    "linenlovers polyester gingham",
+    "sets ac.6 soundstream",
+    "sport videogames",
+    "automotive tools",
+    "amazon home",
+    "electronic devices",
+    "vehicle parts",
+    "designs fake nails"
+  ],
+  "test_queries": [
+    "toys & games",
+    "beauty products",
+    "headphones",
+    "utmost highest: updated",
+    "tech products",
+    "\"pc gaming\"",
+    "survival games",
+    "pinihed 2pcs interior",
+    "\"playstation games\"",
+    "epomaker sk71 keys"
+  ]
+}

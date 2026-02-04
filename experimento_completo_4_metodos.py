@@ -287,11 +287,22 @@ def calculate_ranking_metrics(ranked_ids: List[str], relevant_ids: List[str],
         'found': len(relevant_in_top)
     }
 
+# Caché a nivel de módulo para evitar re-evaluaciones
+_evaluation_cache = {}
+
 def evaluate_method_on_query(system, method: str, query: str, 
                            relevant_ids: List[str], k: int = 5) -> Dict[str, Any]:
     try:
-        results = system.query_four_methods(query, k=k*2)
-        method_results = results['methods'].get(method, [])
+        # Cachear resultados para evitar re-evaluación
+        cache_key = f"{query}_{method}_{k}"
+        
+        if cache_key not in _evaluation_cache:
+            # Solo evaluar UNA VEZ por query/método/k
+            results = system.query_four_methods(query, k=k*2)
+            method_results = results['methods'].get(method, [])
+            _evaluation_cache[cache_key] = method_results
+        else:
+            method_results = _evaluation_cache[cache_key]
         
         if not method_results:
             return {
@@ -300,7 +311,8 @@ def evaluate_method_on_query(system, method: str, query: str,
                 'recall@k': 0.0,
                 'ndcg@k': 0.0,
                 'found': 0,
-                'success': False
+                'success': False,
+                'cached': True  # Podemos añadir este campo para depuración
             }
         
         ranked_ids = []
@@ -311,6 +323,7 @@ def evaluate_method_on_query(system, method: str, query: str,
         
         metrics = calculate_ranking_metrics(ranked_ids, relevant_ids, k)
         metrics['success'] = True
+        metrics['cached'] = cache_key in _evaluation_cache  # Indicar si fue cacheado
         
         return metrics
         
@@ -322,9 +335,23 @@ def evaluate_method_on_query(system, method: str, query: str,
             'recall@k': 0.0,
             'ndcg@k': 0.0,
             'found': 0,
-            'success': False
+            'success': False,
+            'cached': False
         }
 
+# Función para limpiar la caché si es necesario
+def clear_evaluation_cache():
+    """Limpia la caché de evaluaciones"""
+    global _evaluation_cache
+    _evaluation_cache.clear()
+
+# Función para obtener estadísticas de la caché
+def get_cache_stats():
+    """Obtiene estadísticas del uso de la caché"""
+    return {
+        'size': len(_evaluation_cache),
+        'keys': list(_evaluation_cache.keys())[:10]  # Primeras 10 claves como muestra
+    }
 def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
     try:
         from scipy import stats

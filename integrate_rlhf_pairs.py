@@ -74,8 +74,12 @@ class RLHFPairsIntegrator:
                         pair = json.loads(line)
                         all_pairs.append(pair)
                         
-                        # Extraer categoría del par
+                        # Extraer categoría del par - CON VALIDACIÓN
                         category = pair.get('category', 'Unknown')
+                        # Si category es None, usar "Unknown"
+                        if category is None:
+                            category = "Unknown"
+                        
                         stats_by_category[category] += 1
                         count += 1
                     except json.JSONDecodeError:
@@ -85,8 +89,15 @@ class RLHFPairsIntegrator:
         
         logger.info(f"\n✅ TOTAL PARES: {len(all_pairs):,}")
         logger.info(f"\n📊 Por categoría:")
-        for category, count in sorted(stats_by_category.items()):
-            logger.info(f"   • {category:40} {count:>6,}")
+        
+        # CORRECCIÓN: Ordenar por clave (categoría) en lugar de por valor
+        # Usamos una función de ordenamiento segura que maneja None
+        for category in sorted(stats_by_category.keys(), 
+                              key=lambda x: (x is None, x)):
+            count = stats_by_category[category]
+            # Mostrar "None" como "Unknown" para mejor claridad
+            display_category = "Unknown" if category is None else category
+            logger.info(f"   • {display_category:40} {count:>6,}")
         
         return all_pairs
     
@@ -104,6 +115,11 @@ class RLHFPairsIntegrator:
             chosen = pair['chosen']
             rejected = pair['rejected']
             margin = pair.get('margin', 0.0)
+            
+            # Obtener categoría con validación
+            category = pair.get('category', 'Unknown')
+            if category is None:
+                category = 'Unknown'
             
             # Interacción CHOSEN (click)
             chosen_position = 3
@@ -126,7 +142,7 @@ class RLHFPairsIntegrator:
                     'source': 'review_aggregation',
                     'pair_id': i,
                     'pair_margin': margin,
-                    'category': pair.get('category', 'Unknown')
+                    'category': category
                 }
             }
             
@@ -155,7 +171,7 @@ class RLHFPairsIntegrator:
                         'source': 'review_aggregation',
                         'pair_id': i,
                         'pair_margin': -margin,
-                        'category': pair.get('category', 'Unknown')
+                        'category': category
                     }
                 }
                 

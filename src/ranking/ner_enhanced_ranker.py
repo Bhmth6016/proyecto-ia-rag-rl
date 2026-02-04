@@ -26,11 +26,18 @@ class NEREnhancedRanker:
             return []
         
         query_cleaned = self._clean_query(query)
-        
         query_intent = self._extract_query_intent_aggressive(query_cleaned)
         
-        if query_intent:
+        # ✅ LOG UNA SOLA VEZ por query única
+        if not hasattr(self, '_logged_queries'):
+            self._logged_queries = set()
+        if not hasattr(self, '_logged_bonus'):
+            self._logged_bonus = set()
+        
+        # Log de intent solo una vez
+        if query_cleaned not in self._logged_queries:
             logger.info(f"   Query: '{query_cleaned}' → Intent: {list(query_intent.keys())}")
+            self._logged_queries.add(query_cleaned)
         
         scored = []
         bonus_applied = 0
@@ -52,10 +59,13 @@ class NEREnhancedRanker:
         
         scored.sort(key=lambda x: x[1], reverse=True)
         
-        if bonus_applied > 0:
-            logger.info(f"    NER bonus aplicado a {bonus_applied}/{len(products)} productos")
-        else:
-            logger.warning(f"     NER bonus NO aplicado para: '{query_cleaned}'")
+        # Log de bonus solo una vez por query
+        if query_cleaned not in self._logged_bonus:
+            if bonus_applied > 0:
+                logger.info(f"    NER bonus aplicado a {bonus_applied}/{len(products)} productos")
+            else:
+                logger.warning(f"     NER bonus NO aplicado para: '{query_cleaned}'")
+            self._logged_bonus.add(query_cleaned)
         
         return [product for product, _, _ in scored]
     
