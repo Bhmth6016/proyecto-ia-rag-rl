@@ -138,13 +138,23 @@ class NEREnhancedRanker:
         return intent
     
     def _calculate_ner_bonus_improved(self, product, query: str, 
-                                     query_intent: Dict) -> float:
+                                    query_intent: Dict) -> float:
         product_attrs = getattr(product, 'ner_attributes', {})
         
         if not product_attrs:
+            # ✅ LOG DETALLADO
+            product_id = getattr(product, 'id', 'N/A')[:12]
+            logger.debug(f"Producto {product_id} sin ner_attributes")
             return 0.0
         
+        # ✅ LOG DE INTENT
+        if query_intent:
+            logger.debug(f"Query intent: {list(query_intent.keys())}")
+            logger.debug(f"Product attrs: {list(product_attrs.keys())}")
+        
         intent_score = 0.0
+        matches_found = []
+        
         if query_intent:
             for intent_key, intent_values in query_intent.items():
                 if intent_key in product_attrs:
@@ -154,6 +164,10 @@ class NEREnhancedRanker:
                         for product_val in product_values:
                             if self._fuzzy_match(str(intent_val), str(product_val)):
                                 intent_score += 0.3
+                                matches_found.append(f"{intent_val}≈{product_val}")
+        
+        if matches_found:
+            logger.debug(f"NER matches: {matches_found}")
         
         keyword_score = 0.0
         query_lower = query.lower()
@@ -164,12 +178,20 @@ class NEREnhancedRanker:
                 attr_lower = str(attr_val).lower()
                 if attr_lower in query_lower and len(attr_lower) > 2:
                     keyword_score += 0.2
+                    logger.debug(f"Keyword match: '{attr_lower}' en query")
                 elif any(word in title for word in attr_lower.split() if len(word) > 3):
                     keyword_score += 0.1
+                    logger.debug(f"Keyword match: '{attr_lower}' en título")
         
         specificity_score = min(0.2, len(product_attrs) * 0.05)
         
         total_score = intent_score + keyword_score + specificity_score
+        
+        # ✅ LOG FINAL DEL SCORE
+        logger.debug(f"Score breakdown - Intent: {intent_score:.2f}, "
+                    f"Keyword: {keyword_score:.2f}, "
+                    f"Specificity: {specificity_score:.2f}, "
+                    f"Total: {total_score:.2f}")
         
         return min(1.0, total_score)
     

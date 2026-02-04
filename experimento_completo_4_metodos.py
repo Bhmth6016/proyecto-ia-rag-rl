@@ -567,7 +567,7 @@ def main():
             ground_truth, test_size=0.25, seed=42
         )
         
-        max_test_queries = min(30, len(test_queries))
+        max_test_queries = len(test_queries)
         test_queries = test_queries[:max_test_queries]
         
         print("\n DATASET:")

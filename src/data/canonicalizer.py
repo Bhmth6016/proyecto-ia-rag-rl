@@ -11,25 +11,30 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CanonicalProduct:
-    # Campos REQUERIDOS (sin valor por defecto) - DEBEN IR PRIMERO
-    id: str  # parent_asin
+    # Campos REQUERIDOS (sin valor por defecto) - PRIMERO
+    id: str
     title: str
     description: str
     category: str
     title_embedding: np.ndarray = field(repr=False)
     content_embedding: np.ndarray = field(repr=False)
-    
-    # Campos OPCIONALES (con valor por defecto) - DEBEN IR DESPUÉS
+
+    # Campos OPCIONALES (con valor por defecto) - DESPUÉS
     price: Optional[float] = None
     rating: Optional[float] = None
     rating_count: Optional[int] = None
-    image_url: Optional[str] = None  # NUEVO: campo para imagen
+    image_url: Optional[str] = None
     
+    # ✅ AÑADIR ESTOS CAMPOS
+    ner_attributes: Dict[str, List[str]] = field(default_factory=dict)
+    enriched_text: str = ""
+
     # Campo calculado
     content_hash: str = field(init=False)
     
     def __post_init__(self):
-        content_str = f"{self.title}|{self.description}|{self.price}|{self.category}|{self.image_url}"
+        # Incluir ner_attributes en hash
+        content_str = f"{self.title}|{self.description}|{self.price}|{self.category}|{self.image_url}|{bool(self.ner_attributes)}"
         self.content_hash = hashlib.md5(content_str.encode()).hexdigest()
     
     @property
