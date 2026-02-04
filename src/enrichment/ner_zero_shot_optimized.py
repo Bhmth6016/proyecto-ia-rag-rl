@@ -194,7 +194,7 @@ class OptimizedNERExtractor:
         
         return extracted
     
-    def enrich_products_batch(self, products: List, batch_size: int = 1000,
+    def enrich_products_batch(self, products: List, batch_size: int = 100000,
                             cache_path: Optional[str] = None) -> List:
         if cache_path:
             cache_file = Path(cache_path)
