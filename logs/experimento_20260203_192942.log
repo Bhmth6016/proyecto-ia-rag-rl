@@ -1,0 +1,171 @@
+2026-02-03 19:29:42 - experimento_completo_4_metodos - INFO -  Log iniciado: logs\experimento_20260203_192942.log
+2026-02-03 19:29:42 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-02-03 19:29:42 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -  Cargando ground truth...
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -  Ground truth cargado: 17 queries
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -    • Productos relevantes totales: 28
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -   Creando split train/test estratificado...
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -  Split creado: 12 train, 5 test
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -  Cargando sistema V2...
+2026-02-03 19:29:52 - experimento_completo_4_metodos - INFO -  Cargando sistema V2 desde cache...
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -  Sistema V2 cargado: 89,990 productos
+2026-02-03 19:29:58 - experimento_completo_4_metodos - INFO -  Sistema cargado: 89,990 productos
+2026-02-03 19:29:58 - experimento_completo_4_metodos - INFO -    • RLHF:  Disponible
+2026-02-03 19:29:58 - experimento_completo_4_metodos - INFO -    • NER:  Disponible
+2026-02-03 19:29:58 - experimento_completo_4_metodos - INFO -  Entrenando RLHF con 12 queries de entrenamiento...
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -  Entrenando RLHF con 12 queries...
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -    • Interacciones filtradas: 21
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  RLHF Dinámico inicializado (lr=0.5)
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #1: 'car parts...' pos 2
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #2: 'car parts...' pos 5
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #3: 'car parts...' pos 7
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #4: 'beauty products...' pos 2
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #5: 'beauty products...' pos 3
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #6: 'electronics parts...' pos 2
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #7: 'sports equipment...' pos 1
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #8: 'sports equipment...' pos 3
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #9: 'kitchen utensils...' pos 1
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #10: 'kitchen utensils...' pos 2
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -    • Entrenados: 10/21
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #11: 'detective books...' pos 1
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #12: 'kid toys...' pos 1
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #13: 'kid toys...' pos 2
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #14: 'headphones...' pos 2
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #15: 'headphones...' pos 3
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #16: '"playstation games"...' pos 1
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #17: '"nintendo switch"...' pos 2
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #18: 'mario games...' pos 1
+2026-02-03 19:29:58 - ranking.rl_ranker_fixed - INFO -  Human Feedback #19: 'zelda videogames...' pos 1
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -  RLHF entrenado: 19 exitosas, 2 fallidas
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -    • Features aprendidas: 27
+2026-02-03 19:29:58 - src.unified_system_v2 - INFO -    • Feedback procesado: 19
+2026-02-03 19:30:05 - src.unified_system_v2 - INFO -  Sistema V2 guardado: data\cache\unified_system_v2.pkl
+2026-02-03 19:30:05 - src.unified_system_v2 - INFO -  Sistema guardado: data\cache\unified_system_v2.pkl
+2026-02-03 19:30:05 - experimento_completo_4_metodos - INFO -  RLHF entrenado exitosamente
+2026-02-03 19:30:05 - experimento_completo_4_metodos - INFO -    • Feedback procesado: 19
+2026-02-03 19:30:05 - experimento_completo_4_metodos - INFO -    • Features aprendidas: 27
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:06 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:06 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:06 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:06 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:06 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:07 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:07 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:07 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' → Intent: ['category', 'genre']
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'survival games'
+2026-02-03 19:30:07 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:07 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:07 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:08 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:08 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:08 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:08 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:08 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:08 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:09 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' → Intent: ['category']
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'sport videogames'
+2026-02-03 19:30:09 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:09 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:09 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:09 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:10 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:10 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:10 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:10 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:10 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:11 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' → Intent: ['category', 'genre']
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'action video games'
+2026-02-03 19:30:11 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:11 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:11 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:11 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:11 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:12 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:12 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:12 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:12 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:12 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' → Intent: ['category', 'platform']
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'xbox console'
+2026-02-03 19:30:13 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:13 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:13 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:13 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:13 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:14 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:14 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:14 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:14 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:14 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:15 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' → Intent: ['category', 'platform']
+2026-02-03 19:30:15 - ranking.ner_enhanced_ranker - WARNING -      NER bonus NO aplicado para: 'pc gaming'
+2026-02-03 19:30:15 - ranking.rl_ranker_fixed - INFO -     Aplicando Human Preferences (27 features)
+2026-02-03 19:30:15 - experimento_completo_4_metodos - INFO -  Guardando resultados...
+2026-02-03 19:30:15 - experimento_completo_4_metodos - INFO -  Resultados JSON: results\experimento_4_metodos_20260203_193015.json
+2026-02-03 19:30:15 - experimento_completo_4_metodos - INFO -  Resultados CSV: results\experimento_4_metodos_20260203_193015.csv
+2026-02-03 19:30:15 - experimento_completo_4_metodos - INFO -  Resumen: results\resumen_20260203_193015.txt
+2026-02-03 19:30:15 - experimento_completo_4_metodos - INFO -  Experimento completado exitosamente
