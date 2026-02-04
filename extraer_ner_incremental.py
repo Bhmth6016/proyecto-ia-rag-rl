@@ -1,4 +1,4 @@
-# extraer_ner_incremental_RAPIDO.py
+# extraer_ner_incremental.py
 from src.unified_system_v2 import UnifiedSystemV2
 from src.enrichment.ner_zero_shot_optimized import OptimizedNERExtractor
 from tqdm import tqdm
