@@ -1,0 +1,41 @@
+2026-02-04 10:28:58 - experimento_completo_4_metodos - INFO -  Log iniciado: logs\experimento_20260204_102858.log
+2026-02-04 10:28:58 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-02-04 10:28:58 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -  Cargando ground truth...
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -  Ground truth cargado: 17 queries
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -    • Productos relevantes totales: 28
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -   Creando split train/test estratificado...
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -  Split creado: 12 train, 5 test
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -  Cargando sistema V2...
+2026-02-04 10:29:07 - experimento_completo_4_metodos - INFO -  Cargando sistema V2 desde cache...
+2026-02-04 10:29:12 - src.unified_system_v2 - INFO -  Sistema V2 cargado: 89,990 productos
+2026-02-04 10:29:12 - experimento_completo_4_metodos - INFO -  Sistema cargado: 89,990 productos
+2026-02-04 10:29:12 - experimento_completo_4_metodos - INFO -    • RLHF:  Disponible
+2026-02-04 10:29:12 - experimento_completo_4_metodos - INFO -    • NER:  Disponible
+2026-02-04 10:29:12 - experimento_completo_4_metodos - INFO -  Entrenando RLHF con 12 queries de entrenamiento...
+2026-02-04 10:29:12 - src.unified_system_v2 - INFO -  Entrenando RLHF con 12 queries...
+2026-02-04 10:29:13 - src.unified_system_v2 - INFO -    • Interacciones filtradas: 21
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  RLHF Dinámico inicializado (lr=0.5)
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #1: 'car parts...' pos 2
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #2: 'car parts...' pos 5
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #3: 'car parts...' pos 7
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #4: 'beauty products...' pos 2
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #5: 'beauty products...' pos 3
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #6: 'electronics parts...' pos 2
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #7: 'sports equipment...' pos 1
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #8: 'sports equipment...' pos 3
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #9: 'kitchen utensils...' pos 1
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #10: 'kitchen utensils...' pos 2
+2026-02-04 10:29:13 - src.unified_system_v2 - INFO -    • Entrenados: 10/21
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #11: 'detective books...' pos 1
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #12: 'kid toys...' pos 1
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #13: 'kid toys...' pos 2
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #14: 'headphones...' pos 2
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #15: 'headphones...' pos 3
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #16: '"playstation games"...' pos 1
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #17: '"nintendo switch"...' pos 2
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #18: 'mario games...' pos 1
+2026-02-04 10:29:13 - ranking.rl_ranker_fixed - INFO -  Human Feedback #19: 'zelda videogames...' pos 1
+2026-02-04 10:29:13 - src.unified_system_v2 - INFO -  RLHF entrenado: 19 exitosas, 2 fallidas
+2026-02-04 10:29:13 - src.unified_system_v2 - INFO -    • Features aprendidas: 27
+2026-02-04 10:29:13 - src.unified_system_v2 - INFO -    • Feedback procesado: 19
