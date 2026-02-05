@@ -49,7 +49,7 @@ def extraer_ner_incremental():
     
     print("🚀 Inicializando extractor NER...")
     print("   Modo: Keywords (RÁPIDO, sin GPU)")
-    ner_extractor = OptimizedNERExtractor(use_zero_shot=False)  # ← KEYWORDS RÁPIDO
+    ner_extractor = OptimizedNERExtractor(use_zero_shot=True)  # ← KEYWORDS RÁPIDO
     print("✅ Extractor listo\n")
     
     print("🔍 Analizando productos...")

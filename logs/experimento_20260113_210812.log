@@ -1,5 +1,0 @@
-2026-01-13 21:08:12 - experimento_completo_4_metodos - INFO -  Log iniciado: logs\experimento_20260113_210812.log
-2026-01-13 21:08:12 - faiss.loader - INFO - Loading faiss with AVX2 support.
-2026-01-13 21:08:12 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
-2026-01-13 21:08:18 - experimento_completo_4_metodos - INFO -  Cargando ground truth...
-2026-01-13 21:08:18 - experimento_completo_4_metodos - ERROR -  Error en experimento: Extra data: line 2 column 1 (char 114)

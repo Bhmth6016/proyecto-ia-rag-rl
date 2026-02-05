@@ -130,7 +130,7 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
             else:
                 logger.info(" Procesando NER (primera vez, puede tardar)...")
                 try:
-                    sample_size = min(1000, len(self.canonical_products))
+                    sample_size = len(self.canonical_products)
                     sample_products = self.canonical_products[:sample_size]
                     
                     enriched = self.ner_extractor.enrich_products_batch(
