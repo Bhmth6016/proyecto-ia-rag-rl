@@ -1,4 +1,3 @@
-# experimento_completo_4_metodos.py
 import json
 import numpy as np
 import pandas as pd
@@ -9,6 +8,7 @@ import logging
 from datetime import datetime
 import sys
 import traceback
+
 def setup_directories():
     directories = [
         'data/cache',
@@ -107,6 +107,7 @@ def check_dependencies():
         print(" Para funcionalidad completa: pip install scipy tqdm sentence-transformers")
     
     return True
+
 print("\n" + "="*60)
 print(" INICIALIZANDO EXPERIMENTO - 4 MÉTODOS")
 print("="*60)
@@ -198,6 +199,18 @@ def load_or_create_system_v2() -> Any:
                 logger.info(f" Sistema cargado: {len(system.canonical_products):,} productos")
                 logger.info(f"   • RLHF: {' Disponible' if system.rl_ranker else '❌ No disponible'}")
                 logger.info(f"   • NER: {' Disponible' if system.ner_ranker else '❌ No disponible'}")
+                # ── NUEVO: inyectar RLHFPipeline si existe checkpoint ──────────────────
+                rlhf_checkpoint = Path("data/cache/rlhf/ppo_trainer.pt")
+                if rlhf_checkpoint.exists():
+                    try:
+                        from src.rlhf_integration import add_rlhf_to_system
+                        pipeline = add_rlhf_to_system(system)
+                        if pipeline.policy_trained:
+                            logger.info("RLHFPipeline cargado — método RLHF usará PolicyModel+PPO")
+                        else:
+                            logger.info("RLHFPipeline sin entrenar — RLHF usará ranker lineal")
+                    except Exception as e:
+                        logger.warning(f"No se pudo cargar RLHFPipeline: {e}")
                 return system
             else:
                 logger.warning("  Sistema V2 no encontrado en cache, creando nuevo...")
@@ -218,6 +231,19 @@ def load_or_create_system_v2() -> Any:
         if not success:
             logger.error(" Error inicializando sistema V2")
             sys.exit(1)
+        
+        # ── NUEVO: inyectar RLHFPipeline si existe checkpoint ──────────────────
+        rlhf_checkpoint = Path("data/cache/rlhf/ppo_trainer.pt")
+        if rlhf_checkpoint.exists():
+            try:
+                from src.rlhf_integration import add_rlhf_to_system
+                pipeline = add_rlhf_to_system(system)
+                if pipeline.policy_trained:
+                    logger.info("RLHFPipeline cargado — método RLHF usará PolicyModel+PPO")
+                else:
+                    logger.info("RLHFPipeline sin entrenar — RLHF usará ranker lineal")
+            except Exception as e:
+                logger.warning(f"No se pudo cargar RLHFPipeline: {e}")
         
         return system
     except Exception as e:
@@ -352,6 +378,7 @@ def get_cache_stats():
         'size': len(_evaluation_cache),
         'keys': list(_evaluation_cache.keys())[:10]  # Primeras 10 claves como muestra
     }
+
 def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
     try:
         from scipy import stats
@@ -408,6 +435,7 @@ def run_statistical_analysis(results: Dict[str, List[Dict]]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f" Error en análisis estadístico: {e}")
         return {}
+
 class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o: Any) -> Any:
         if isinstance(o, np.integer):  

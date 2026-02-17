@@ -1,4 +1,3 @@
-# src/unified_system_v2.py
 import pickle
 import json
 import os
@@ -279,7 +278,15 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
             return self._process_query_baseline(query_text, k)
     
     def _method_rlhf(self, query_text: str, k: int) -> List:
-        # ✅ Verificación explícita
+        # ── NUEVO: usar RLHFPipeline si está disponible y entrenado ──────────
+        if hasattr(self, 'rlhf_pipeline') and self.rlhf_pipeline is not None:
+            pipeline = self.rlhf_pipeline
+            if pipeline.policy_trained:
+                products, query_emb_np, _ = pipeline.retrieve_candidates(query_text, k=k*2)
+                if products:
+                    return pipeline.rank_products(query_text, products, query_emb_np)[:k]
+
+        # ── Fallback: RLHFRankerFixed (sistema anterior) ──────────────────────
         if not self.rl_ranker or not hasattr(self.rl_ranker, 'has_learned') or not self.rl_ranker.has_learned:
             logger.warning("RLHF ranker no disponible o no entrenado, usando baseline")
             return self._process_query_baseline(query_text, k)
