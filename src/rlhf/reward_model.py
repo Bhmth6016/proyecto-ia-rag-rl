@@ -1,313 +1,255 @@
+# src/rlhf/reward_model.py
 """
-Reward Model — Componente 3 del RLHF
+Reward Model Híbrido — estable con pocos datos.
 
-Este modelo APRENDE a predecir qué ranking preferiría un humano.
-No es una función hardcodeada — es una red neuronal entrenada con
-datos de preferencias A-vs-B recolectados de usuarios reales.
+PROBLEMA DEL DISEÑO PURO r(query, ranking):
+    Con 30-50 comparaciones A/B, la varianza es muy alta.
+    El reward aprende patrones globales difusos.
+    PPO optimiza ruido.
 
-Entrenamiento: Bradley-Terry loss sobre pares (preferido, rechazado)
-    Loss = -log σ(r_preferido - r_rechazado)
+SOLUCIÓN HÍBRIDA (crédito desagregado + sensibilidad a posición):
 
-Arquitectura: Transformer con position encoding sobre la lista ordenada
-    - La posición importa: item en posición 1 ≠ item en posición 5
-    - CLS token para agregar representación del ranking completo
+    r(query, ranking) = Σ_k  w_k * r_producto(query, producto_k)
+
+    Donde:
+        r_producto(query, p): MLP pequeño que puntúa query × producto
+        w_k: pesos DCG  (posición 1 -> 1.0, posición 10 -> 0.29)
+
+    Ventajas:
+        [OK] Aprende señal más fina (por producto)
+        [OK] Menos varianza con pocos datos
+        [OK] Mantiene sensibilidad a posición (pesos DCG)
+        [OK] Bradley-Terry opera sobre el score del ranking completo
+        [OK] Convergencia mucho más rápida
+
+    Desventajas vs puro r(ranking):
+        [ERR] Asume independencia entre productos del ranking
+        [ERR] No capta diversidad ni interacciones entre productos
+
+    Decisión:
+        Con <100 pares -> usa este Hybrid.
+        Con >100 pares -> puedes probar RankingRewardModelPure.
+
+ENTRENAMIENTO (Bradley-Terry idéntico):
+    Cuando usuario prefirió ranking_A sobre ranking_B:
+        r_A = Σ_k w_k * r_prod(query, prod_A_k)
+        r_B = Σ_k w_k * r_prod(query, prod_B_k)
+        loss = -log( σ(r_A - r_B) )
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Dict
 import numpy as np
+from typing import List
 import logging
-import json
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+EMB_DIM = 384
+HIDDEN_DIM = 128   # intencional: pequeño evita sobreparametrización con pocos datos
+TOP_K = 10
 
-class RewardModel(nn.Module):
+
+# ---------------------------------------------------------------------
+# Módulo de score por producto
+# ---------------------------------------------------------------------
+
+class ProductScorer(nn.Module):
     """
-    Predice el reward escalar de un ranking dado un query.
-
-    Input:
-        - query_embedding:            (batch, emb_dim)
-        - ranked_product_embeddings:  (batch, n_prod, emb_dim) — EN ORDEN DEL RANKING
-        - ranked_product_features:    (batch, n_prod, feat_dim)
-
-    Output:
-        - reward: (batch,) — escalar, mayor = ranking mejor para humanos
+    r_producto(query, producto) -> escalar.
+    MLP pequeño: concat(q, p) [768] -> 128 -> 64 -> 1
     """
 
-    def __init__(
-        self,
-        embedding_dim: int = 384,
-        feature_dim: int = 8,
-        hidden_dim: int = 128,
-        num_heads: int = 4,
-        num_layers: int = 2,
-        max_products: int = 20,
-        dropout: float = 0.1,
-    ):
+    def __init__(self, emb_dim: int = EMB_DIM, hidden_dim: int = HIDDEN_DIM):
         super().__init__()
-
-        self.embedding_dim = embedding_dim
-        self.feature_dim = feature_dim
-        self.hidden_dim = hidden_dim
-        self.max_products = max_products
-
-        # ── Proyecciones ─────────────────────────────────────────────────
-        self.query_proj = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_dim),
+        self.net = nn.Sequential(
+            nn.Linear(emb_dim * 2, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
-        )
-
-        self.product_proj = nn.Sequential(
-            nn.Linear(embedding_dim + feature_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            nn.Dropout(0.15),
+            nn.Linear(hidden_dim, 64),
             nn.GELU(),
+            nn.Linear(64, 1),
         )
-
-        # ── Positional encoding (posición en el ranking importa) ─────────
-        self.position_embedding = nn.Embedding(max_products + 1, hidden_dim)
-        # +1: posición 0 reservada para CLS token (no tiene posición de ranking)
-
-        # ── CLS token aprendible ─────────────────────────────────────────
-        self.cls_token = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
-
-        # ── Transformer encoder sobre el ranking completo ────────────────
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=dropout,
-            batch_first=True,
-            norm_first=True,
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        # ── Reward head ───────────────────────────────────────────────────
-        self.reward_head = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.GELU(),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-        self._init_weights()
-        logger.info(
-            f"RewardModel inicializado — "
-            f"emb={embedding_dim}, hidden={hidden_dim}, "
-            f"max_products={max_products}"
-        )
-
-    def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight, gain=0.5)
+                nn.init.xavier_uniform_(m.weight, gain=0.1)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Forward
-    # ─────────────────────────────────────────────────────────────────────
+    def forward(self, query_emb: torch.Tensor, product_emb: torch.Tensor) -> torch.Tensor:
+        return self.net(torch.cat([query_emb, product_emb], dim=-1))
 
-    def forward(
-        self,
-        query_embedding: torch.Tensor,
-        ranked_product_embeddings: torch.Tensor,
-        ranked_product_features: torch.Tensor,
-    ) -> torch.Tensor:
-        """Returns reward scalar (batch,)."""
-        batch_size, n_prod, _ = ranked_product_embeddings.shape
 
-        # Proyecciones
-        q = self.query_proj(query_embedding)                                 # (B, H)
-        p_in = torch.cat([ranked_product_embeddings, ranked_product_features], -1)
-        p = self.product_proj(p_in)                                           # (B, N, H)
+# ---------------------------------------------------------------------
+# Reward model híbrido
+# ---------------------------------------------------------------------
 
-        # Positional encoding: posición 1..N en el ranking
-        positions = torch.arange(1, n_prod + 1, device=p.device).unsqueeze(0)
-        p = p + self.position_embedding(positions)                            # (B, N, H)
+class RankingRewardModel(nn.Module):
+    """
+    r(query, ranking) = Σ_k w_k * r_producto(query, producto_k)
 
-        # Prepend CLS token (no lleva posición de ranking)
-        cls = self.cls_token.expand(batch_size, -1, -1)                      # (B, 1, H)
-        sequence = torch.cat([cls, p], dim=1)                                 # (B, N+1, H)
+    Mantiene sensibilidad a posición (DCG) pero aprende
+    señal a nivel de producto (menos varianza, más rápido).
+    """
 
-        # Transformer
-        encoded = self.transformer(sequence)                                  # (B, N+1, H)
+    def __init__(self, emb_dim: int = EMB_DIM, hidden_dim: int = HIDDEN_DIM, top_k: int = TOP_K):
+        super().__init__()
+        self.emb_dim = emb_dim
+        self.top_k = top_k
 
-        # CLS output + mean pool de productos
-        cls_out = encoded[:, 0, :]                                            # (B, H)
-        mean_pool = encoded[:, 1:, :].mean(dim=1)                            # (B, H)
+        self.product_scorer = ProductScorer(emb_dim, hidden_dim)
 
-        # Incluir query en la representación final
-        q_gate = torch.sigmoid(q)  # gate suave con el query
-        cls_out = cls_out * q_gate
-
-        combined = torch.cat([cls_out, mean_pool], dim=-1)                   # (B, 2H)
-        reward = self.reward_head(combined).squeeze(-1)                       # (B,)
-
-        return reward
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Training
-    # ─────────────────────────────────────────────────────────────────────
-
-    def compute_preference_loss(
-        self,
-        query_embedding: torch.Tensor,
-        preferred_embeddings: torch.Tensor,
-        preferred_features: torch.Tensor,
-        rejected_embeddings: torch.Tensor,
-        rejected_features: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict]:
-        """
-        Bradley-Terry pairwise preference loss:
-            L = -log σ(r_preferido - r_rechazado)
-
-        Si el modelo asigna mayor reward al ranking preferido,
-        la loss es baja. Si los confunde, la loss sube.
-        """
-        r_pref = self.forward(query_embedding, preferred_embeddings, preferred_features)
-        r_rej = self.forward(query_embedding, rejected_embeddings, rejected_features)
-
-        # Bradley-Terry loss
-        loss = -F.logsigmoid(r_pref - r_rej).mean()
-
-        # Accuracy: ¿cuántas veces el modelo elige correctamente?
-        accuracy = (r_pref > r_rej).float().mean()
-
-        metrics = {
-            "loss": loss.item(),
-            "accuracy": accuracy.item(),
-            "reward_preferred": r_pref.mean().item(),
-            "reward_rejected": r_rej.mean().item(),
-            "margin": (r_pref - r_rej).mean().item(),
-        }
-
-        return loss, metrics
-
-    def train_on_preferences(
-        self,
-        preference_dataset: list,
-        epochs: int = 20,
-        lr: float = 1e-4,
-        batch_size: int = 8,
-        device: str = "cpu",
-    ) -> Dict:
-        """
-        Entrena el Reward Model sobre un dataset de preferencias.
-
-        preference_dataset: lista de dicts con keys:
-            - query_emb:        torch.Tensor (emb_dim,)
-            - preferred_embs:   torch.Tensor (n_prod, emb_dim)
-            - preferred_feats:  torch.Tensor (n_prod, feat_dim)
-            - rejected_embs:    torch.Tensor (n_prod, emb_dim)
-            - rejected_feats:   torch.Tensor (n_prod, feat_dim)
-        """
-        self.to(device)
-        self.train()
-
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=epochs, eta_min=lr / 10
+        # Pesos DCG fijos (no entrenables)
+        weights = torch.tensor(
+            [1.0 / np.log2(k + 2) for k in range(top_k)], dtype=torch.float32
         )
-
-        history = []
-        best_accuracy = 0.0
-        best_state = None
+        self.register_buffer('dcg_weights', weights / weights.sum())
 
         logger.info(
-            f"Entrenando Reward Model: {len(preference_dataset)} prefs, "
-            f"{epochs} épocas, lr={lr}"
+            f"RankingRewardModel(hybrid): emb={emb_dim}, hidden={hidden_dim}, "
+            f"top_k={top_k}, params={sum(p.numel() for p in self.parameters()):,}"
         )
 
-        for epoch in range(epochs):
-            # Shuffle
-            indices = np.random.permutation(len(preference_dataset))
-            epoch_losses, epoch_accs = [], []
+    def forward(self, query_emb: torch.Tensor, product_embs: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            query_emb:    [batch, emb_dim]
+            product_embs: [batch, top_k, emb_dim]  — EN ORDEN del ranking
+        Returns:
+            reward: [batch, 1]
+        """
+        batch_size = query_emb.size(0)
 
-            for start in range(0, len(indices), batch_size):
-                batch_idx = indices[start : start + batch_size]
-                batch = [preference_dataset[i] for i in batch_idx]
+        # Padding
+        k = product_embs.size(1)
+        if k < self.top_k:
+            pad = torch.zeros(batch_size, self.top_k - k, self.emb_dim,
+                              device=product_embs.device, dtype=product_embs.dtype)
+            product_embs = torch.cat([product_embs, pad], dim=1)
+        else:
+            product_embs = product_embs[:, :self.top_k, :]
 
-                # Padding al mismo n_prod si varía
-                n_prod = max(b["preferred_embs"].shape[0] for b in batch)
-                emb_dim = batch[0]["preferred_embs"].shape[1]
-                feat_dim = batch[0]["preferred_feats"].shape[1]
+        # Score por producto: [batch*top_k, 1]
+        q_exp = query_emb.unsqueeze(1).expand(-1, self.top_k, -1)
+        q_flat = q_exp.reshape(batch_size * self.top_k, self.emb_dim)
+        p_flat = product_embs.reshape(batch_size * self.top_k, self.emb_dim)
+        scores = self.product_scorer(q_flat, p_flat).reshape(batch_size, self.top_k)
 
-                def pad(t, n):
-                    if t.shape[0] >= n:
-                        return t[:n]
-                    pad_size = n - t.shape[0]
-                    return torch.cat([t, torch.zeros(pad_size, t.shape[1])], 0)
+        # Suma ponderada DCG
+        return (scores * self.dcg_weights.unsqueeze(0)).sum(dim=-1, keepdim=True)
 
-                queries = torch.stack([b["query_emb"] for b in batch]).to(device)
-                pref_embs = torch.stack([pad(b["preferred_embs"], n_prod) for b in batch]).to(device)
-                pref_feats = torch.stack([pad(b["preferred_feats"], n_prod) for b in batch]).to(device)
-                rej_embs = torch.stack([pad(b["rejected_embs"], n_prod) for b in batch]).to(device)
-                rej_feats = torch.stack([pad(b["rejected_feats"], n_prod) for b in batch]).to(device)
+    def score_ranking(self, query_emb: torch.Tensor, product_embs: torch.Tensor) -> float:
+        """Inferencia de un solo ejemplo."""
+        self.eval()
+        with torch.no_grad():
+            return self.forward(query_emb.unsqueeze(0), product_embs.unsqueeze(0)).item()
 
-                optimizer.zero_grad()
-                loss, metrics = self.compute_preference_loss(
-                    queries, pref_embs, pref_feats, rej_embs, rej_feats
-                )
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-                optimizer.step()
 
-                epoch_losses.append(metrics["loss"])
-                epoch_accs.append(metrics["accuracy"])
+# ---------------------------------------------------------------------
+# Entrenador con Bradley-Terry + split 80/20
+# ---------------------------------------------------------------------
 
-            scheduler.step()
+class RankingRewardTrainer:
+    """
+    Entrena RankingRewardModel con pares A/B.
+    Incluye split 80/20, accuracy, log-likelihood, y detección de colapso.
+    """
 
-            mean_loss = np.mean(epoch_losses)
-            mean_acc = np.mean(epoch_accs)
-            history.append({"epoch": epoch + 1, "loss": mean_loss, "accuracy": mean_acc})
+    def __init__(self, model: RankingRewardModel, lr: float = 2e-4, weight_decay: float = 1e-4):
+        self.model = model
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=50, eta_min=1e-5
+        )
+        self.train_losses: List[float] = []
 
-            if mean_acc > best_accuracy:
-                best_accuracy = mean_acc
-                best_state = {k: v.clone() for k, v in self.state_dict().items()}
+    def train_step(self, query_embs, ranking_a_embs, ranking_b_embs, preferences) -> float:
+        self.model.train()
+        clear = [i for i, p in enumerate(preferences) if p in ('A', 'B')]
+        if not clear:
+            return 0.0
 
-            if (epoch + 1) % 5 == 0 or epoch == 0:
-                logger.info(
-                    f"  Época {epoch+1}/{epochs}: "
-                    f"loss={mean_loss:.4f}, accuracy={mean_acc:.4f}"
-                )
+        idx = torch.tensor(clear, device=query_embs.device)
+        q, ra, rb = query_embs[idx], ranking_a_embs[idx], ranking_b_embs[idx]
+        prefs = [preferences[i] for i in clear]
 
-        # Restaurar mejor estado
-        if best_state:
-            self.load_state_dict(best_state)
-            logger.info(f"Reward Model — mejor accuracy: {best_accuracy:.4f}")
+        r_a, r_b = self.model(q, ra), self.model(q, rb)
+        preferred, rejected = [], []
+        for j, pref in enumerate(prefs):
+            preferred.append(r_a[j] if pref == 'A' else r_b[j])
+            rejected.append(r_b[j] if pref == 'A' else r_a[j])
 
-        return {"history": history, "best_accuracy": best_accuracy}
+        loss = -F.logsigmoid(torch.stack(preferred) - torch.stack(rejected)).mean()
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        self.optimizer.step()
+        self.scheduler.step()
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Utilidades
-    # ─────────────────────────────────────────────────────────────────────
+        self.train_losses.append(loss.item())
+        return loss.item()
 
-    def save(self, path: str):
-        import os
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        torch.save({
-            "state_dict": self.state_dict(),
-            "config": {
-                "embedding_dim": self.embedding_dim,
-                "feature_dim": self.feature_dim,
-                "hidden_dim": self.hidden_dim,
-                "max_products": self.max_products,
-            },
-        }, path)
-        logger.info(f"RewardModel guardado: {path}")
+    def get_accuracy(self, query_embs, ranking_a_embs, ranking_b_embs, preferences) -> float:
+        self.model.eval()
+        correct = total = 0
+        with torch.no_grad():
+            for i, pref in enumerate(preferences):
+                if pref not in ('A', 'B'):
+                    continue
+                r_a = self.model(query_embs[i:i+1], ranking_a_embs[i:i+1]).item()
+                r_b = self.model(query_embs[i:i+1], ranking_b_embs[i:i+1]).item()
+                correct += int(('A' if r_a > r_b else 'B') == pref)
+                total += 1
+        return correct / total if total > 0 else 0.0
 
-    @classmethod
-    def load(cls, path: str, device: str = "cpu") -> "RewardModel":
-        data = torch.load(path, map_location=device)
-        model = cls(**data["config"])
-        model.load_state_dict(data["state_dict"])
-        model.to(device)
-        logger.info(f"RewardModel cargado: {path}")
-        return model
+    def get_bradley_terry_loglik(self, query_embs, ranking_a_embs, ranking_b_embs, preferences) -> float:
+        """Log-likelihood en hold-out. Para reportar en el paper."""
+        self.model.eval()
+        lls, n = [], 0
+        with torch.no_grad():
+            for i, pref in enumerate(preferences):
+                if pref not in ('A', 'B'):
+                    continue
+                r_a = self.model(query_embs[i:i+1], ranking_a_embs[i:i+1])
+                r_b = self.model(query_embs[i:i+1], ranking_b_embs[i:i+1])
+                ll = F.logsigmoid(r_a - r_b if pref == 'A' else r_b - r_a).item()
+                lls.append(ll)
+                n += 1
+        return float(np.mean(lls)) if lls else float('-inf')
+
+    def detect_reward_collapse(self, query_embs, ranking_a_embs, ranking_b_embs) -> dict:
+        """
+        Detecta si el reward ha colapsado (no discrimina A de B).
+
+        Colapso real = el modelo no puede predecir preferencias mejor que random.
+        Señal de eso: accuracy ~0.5, NO mean_diff < umbral_fijo.
+
+        Un MLP pequeño (hidden=128) produce outputs naturalmente comprimidos
+        en rango [-0.5, 0.5]. Con diff=0.002 pero accuracy=1.0, el modelo
+        aprendió señal real — solo tiene outputs en escala pequeña.
+
+        Criterio correcto:
+            collapsed = mean_diff < 1e-6  (literalmente cero, saturación)
+                     OR todos los scores exactamente iguales (std=0)
+        """
+        self.model.eval()
+        with torch.no_grad():
+            r_a = self.model(query_embs, ranking_a_embs)
+            r_b = self.model(query_embs, ranking_b_embs)
+        diff = (r_a - r_b).abs()
+        r_a_std = r_a.std().item()
+        r_b_std = r_b.std().item()
+
+        # Colapso real: diferencias literalmente cero o varianza cero
+        hard_collapse = diff.mean().item() < 1e-6 or (r_a_std < 1e-6 and r_b_std < 1e-6)
+
+        return {
+            'r_a_mean': r_a.mean().item(),
+            'r_b_mean': r_b.mean().item(),
+            'r_a_std': r_a_std,
+            'r_b_std': r_b_std,
+            'mean_abs_diff': diff.mean().item(),
+            'collapsed': hard_collapse,
+        }

@@ -125,7 +125,7 @@ def _show_file_stats(data: List[Dict[str, Any]], output_file: Path):
                     pass
         
         print("\n   ESTADÍSTICAS DEL ARCHIVO:")
-        print(f"   {'─'*40}")
+        print(f"   {'-'*40}")
         print(f"   • Total productos: {total_products}")
         print(f"   • Con precio definido: {products_with_price} ({products_with_price/total_products*100:.1f}%)")
         print(f"   • Con título: {products_with_title} ({products_with_title/total_products*100:.1f}%)")

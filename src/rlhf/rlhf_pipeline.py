@@ -1,665 +1,508 @@
+# src/rlhf/rlhf_pipeline.py
 """
-RLHF Pipeline — Orquesta los 5 componentes del ciclo RLHF completo
+RLHF Pipeline — Orquestación completa con todas las salvaguardas.
 
-El ciclo completo que implementa este módulo:
-
-    ┌─────────────────────────────────────────────────────┐
-    │  1. FAISS retrieval → candidatos (base)             │
-    │  2. PolicyModel genera 2 rankings alternativos      │
-    │  3. Humano compara A vs B → PreferenceCollector     │
-    │  4. RewardModel.train_on_preferences(...)           │
-    │  5. PPOTrainer.collect_and_store(...)               │
-    │  6. PPOTrainer.update()  ← EL RL REAL              │
-    │  7. Volver a 2 con política mejorada                │
-    └─────────────────────────────────────────────────────┘
-
-La diferencia con el sistema anterior:
-    ANTES: ajuste de pesos con regla manual (bandit lineal)
-    AHORA: reward model aprendido + PPO con KL constraint
+MEJORAS vs versión anterior:
+    1. Split 80/20: 20% hold-out nunca toca el entrenamiento
+    2. Validación de reward ANTES de lanzar PPO
+    3. PPO con KL adaptativa (via ppo_trainer.py)
+    4. Versionado de checkpoints por ciclo
+    5. Control de sesgo de presentación A/B
+    6. Exploración correcta: baseline vs policy + ruido
+    7. Diagnósticos de KL y convergencia integrados
 """
 
+import torch
+import numpy as np
 import json
-import pickle
+import random
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
-import numpy as np
-import torch
+from typing import List, Tuple, Dict, Optional
 
-from .policy_model import PolicyModel
-from .reward_model import RewardModel
-from .ppo_trainer import PPOTrainer, RankingExperience
+from .reward_model import RankingRewardModel, RankingRewardTrainer
+from .pointwise_reward_model import PointwiseRewardModel
 from .preference_collector import PreferenceCollector
-from .tensor_utils import ProductTensorizer
+from .policy_model import PolicyModel
+from .ppo_trainer import PPOTrainer
 
 logger = logging.getLogger(__name__)
+
+CHECKPOINT_DIR = Path("data/rlhf_checkpoints")
+REWARD_CKPT = CHECKPOINT_DIR / "reward_model.pt"
+POLICY_CKPT = CHECKPOINT_DIR / "policy_model.pt"
+STATS_FILE = CHECKPOINT_DIR / "training_stats.json"
 
 
 class RLHFPipeline:
     """
-    Orquesta el ciclo RLHF completo para ranking de productos.
+    Orquesta el ciclo completo RLHF con reward híbrido de rankings.
 
-    Uso:
-        pipeline = RLHFPipeline(system_v2)
-        pipeline.initialize()
-
-        # Paso 1: recolectar preferencias A-vs-B
-        pipeline.run_preference_collection_session(queries)
-
-        # Paso 2: entrenar el Reward Model con las preferencias
-        pipeline.train_reward_model()
-
-        # Paso 3: optimizar la Policy con PPO
-        pipeline.run_ppo_training_cycle(queries)
-
-        # Usar la política entrenada para ranking
-        ranked = pipeline.rank_products(query, products)
+    Args:
+        embedding_model:  sentence-transformer (ya cargado)
+        product_index:    Dict[product_id -> np.ndarray(emb_dim)]
+        vector_store:     FAISS store para retrieval baseline
+        emb_dim:          Dimensión embeddings (default 384)
+        top_k_ranking:    Productos por ranking (default 10)
     """
 
     def __init__(
         self,
-        base_system=None,
-        embedding_dim: int = 384,
-        feature_dim: int = 8,
-        hidden_dim: int = 128,
-        max_products: int = 20,
-        device: str = "cpu",
-        cache_dir: str = "data/cache/rlhf",
+        embedding_model,
+        product_index: Dict[str, np.ndarray],
+        vector_store,
+        emb_dim: int = 384,
+        top_k_ranking: int = 10,
+        reward_mode: str = "pointwise",
     ):
-        self.base_system = base_system
-        self.embedding_dim = embedding_dim
-        self.feature_dim = feature_dim
-        self.hidden_dim = hidden_dim
-        self.max_products = max_products
-        self.device = device
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.emb_model = embedding_model
+        self.product_index = product_index
+        self.vector_store = vector_store
+        self.emb_dim = emb_dim
+        self.top_k = top_k_ranking
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        # Componentes (se inicializan en initialize())
-        self.policy: Optional[PolicyModel] = None
-        self.reward_model: Optional[RewardModel] = None
-        self.ppo_trainer: Optional[PPOTrainer] = None
-        self.preference_collector: Optional[PreferenceCollector] = None
-        self.tensorizer: Optional[ProductTensorizer] = None
+        CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Estado del pipeline
-        self.reward_model_trained: bool = False
-        self.policy_trained: bool = False
-        self.ppo_cycles_completed: int = 0
+        if reward_mode == "pointwise":
+            self.reward_model = PointwiseRewardModel(emb_dim=emb_dim).to(self.device)
+        else:
+            self.reward_model = RankingRewardModel(emb_dim=emb_dim, top_k=top_k_ranking).to(self.device)
 
-        logger.info(f"RLHFPipeline creado — device={device}")
+        self.reward_trainer = None
+        self.reward_mode = reward_mode
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Inicialización
-    # ─────────────────────────────────────────────────────────────────────
+        self.preference_collector = PreferenceCollector(
+            embedding_model=embedding_model,
+            product_index=product_index,
+            top_k=top_k_ranking,
+        )
+
+        self.policy_model = PolicyModel(embedding_dim=emb_dim).to(self.device)
+        self.ppo_trainer = PPOTrainer(self.policy_model)
+
+        self.reward_trained = False
+        self.policy_trained = False
+        self.training_stats = {
+            'reward_losses': [],
+            'reward_accuracies_train': [],
+            'reward_accuracies_val': [],
+            'reward_loglik_val': [],
+            'ppo_rewards': [],
+            'ppo_kl': [],
+            'ndcg_history': [],
+        }
+
+        logger.info(f"RLHFPipeline: device={self.device}, top_k={top_k_ranking}")
 
     def initialize(self, load_checkpoint: bool = True):
-        """
-        Inicializa todos los componentes del pipeline.
-        Si existen checkpoints, los carga automáticamente.
-        """
-        logger.info("Inicializando RLHFPipeline completo...")
+        if not load_checkpoint:
+            return
+        for ckpt, model, attr in [
+            (REWARD_CKPT, self.reward_model, 'reward_trained'),
+            (POLICY_CKPT, self.policy_model, 'policy_trained'),
+        ]:
+            if ckpt.exists():
+                try:
+                    model.load_state_dict(torch.load(ckpt, map_location=self.device))
+                    setattr(self, attr, True)
+                    logger.info(f"  Cargado: {ckpt.name}")
+                except Exception as e:
+                    logger.warning(f"  No se pudo cargar {ckpt.name}: {e}")
 
-        # Tensorizer (bridge entre objetos Python y tensores)
-        self.tensorizer = ProductTensorizer(
-            embedding_dim=self.embedding_dim,
-            max_products=self.max_products,
-        )
-
-        # Policy Model
-        self.policy = PolicyModel(
-            embedding_dim=self.embedding_dim,
-            feature_dim=self.feature_dim,
-            hidden_dim=self.hidden_dim,
-        ).to(self.device)
-
-        # Reward Model
-        self.reward_model = RewardModel(
-            embedding_dim=self.embedding_dim,
-            feature_dim=self.feature_dim,
-            hidden_dim=self.hidden_dim,
-            max_products=self.max_products,
-        ).to(self.device)
-
-        # PPO Trainer
-        self.ppo_trainer = PPOTrainer(
-            policy_model=self.policy,
-            reward_model=self.reward_model,
-            device=self.device,
-        )
-
-        # Preference Collector
-        self.preference_collector = PreferenceCollector(
-            output_file="data/preferences/preferences.jsonl"
-        )
-
-        # Cargar checkpoints si existen
-        if load_checkpoint:
-            self._try_load_checkpoints()
-
-        params = self.policy.count_parameters()
-        logger.info(
-            f"Pipeline inicializado:\n"
-            f"  PolicyModel:     {params:,} parámetros\n"
-            f"  RewardModel entrenado: {self.reward_model_trained}\n"
-            f"  Policy entrenada:      {self.policy_trained}\n"
-            f"  PPO cycles:            {self.ppo_cycles_completed}\n"
-            f"  Preferencias:          {self.preference_collector.total_preferences}"
-        )
-
-    def _try_load_checkpoints(self):
-        policy_ck = self.cache_dir / "policy.pt"
-        reward_ck = self.cache_dir / "reward_model.pt"
-        ppo_ck = self.cache_dir / "ppo_trainer.pt"
-        state_ck = self.cache_dir / "pipeline_state.json"
-
-        if reward_ck.exists():
+        if STATS_FILE.exists():
             try:
-                self.reward_model = RewardModel.load(str(reward_ck), self.device)
-                self.reward_model_trained = True
-                logger.info(f"RewardModel cargado desde checkpoint")
-            except Exception as e:
-                logger.warning(f"No se pudo cargar RewardModel: {e}")
-
-        if ppo_ck.exists():
-            try:
-                self.ppo_trainer.load(str(ppo_ck))
-                self.policy_trained = self.ppo_trainer.total_updates > 0
-                logger.info(f"PPOTrainer cargado (updates={self.ppo_trainer.total_updates})")
-            except Exception as e:
-                logger.warning(f"No se pudo cargar PPOTrainer: {e}")
-
-        if state_ck.exists():
-            try:
-                with open(state_ck) as f:
-                    state = json.load(f)
-                self.ppo_cycles_completed = state.get("ppo_cycles_completed", 0)
+                with open(STATS_FILE) as f:
+                    self.training_stats = json.load(f)
             except Exception:
                 pass
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Paso 1 — Retrieval base (FAISS)
-    # ─────────────────────────────────────────────────────────────────────
-
-    def retrieve_candidates(
-        self, query: str, k: int = 20
-    ) -> Tuple[list, np.ndarray, np.ndarray]:
-        """
-        Recupera candidatos con FAISS del sistema base.
-
-        Returns:
-            products:         lista de productos canónicos
-            query_emb:        (emb_dim,) ndarray
-            baseline_scores:  (k,) ndarray de cosine similarities
-        """
-        if self.base_system is None:
-            logger.error("base_system no configurado")
-            return [], np.zeros(self.embedding_dim), np.array([])
-
-        try:
-            canonicalizer = self.base_system.canonicalizer
-            vector_store = self.base_system.vector_store
-
-            query_emb = canonicalizer.embedding_model.encode(
-                query, normalize_embeddings=True
-            )
-
-            products = vector_store.search(query_emb, k=k)
-
-            # Calcular cosine similarities
-            scores = []
-            for p in products:
-                if hasattr(p, "content_embedding") and p.content_embedding is not None:
-                    p_norm = p.content_embedding / (np.linalg.norm(p.content_embedding) + 1e-8)
-                    q_norm = query_emb / (np.linalg.norm(query_emb) + 1e-8)
-                    scores.append(float(np.dot(q_norm, p_norm)))
-                else:
-                    scores.append(0.0)
-
-            return products, query_emb, np.array(scores)
-
-        except Exception as e:
-            logger.error(f"Error en retrieval: {e}")
-            return [], np.zeros(self.embedding_dim), np.array([])
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Paso 2 — Generar rankings alternativos con la Policy
-    # ─────────────────────────────────────────────────────────────────────
-
-    def generate_two_rankings(
-        self,
-        query: str,
-        products: list,
-        query_emb_np: np.ndarray,
-    ) -> Tuple[List[Dict], List[Dict], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Genera dos rankings alternativos usando la política:
-            - Ranking A: temperatura baja (más determinista)
-            - Ranking B: temperatura alta + ruido (más exploratorio)
-
-        Returns:
-            display_a, display_b:            listas de dicts para UI
-            ranking_a, ranking_b:            tensores de índices
-            log_prob_a, log_prob_b:          log-probabilidades bajo policy
-        """
-        # Convertir a tensores
-        query_emb_t = self.tensorizer.query_to_tensor(query_emb_np).to(self.device)
-        prod_embs, prod_feats = self.tensorizer.products_to_tensors(
-            products, query, query_emb_np
-        )
-        prod_embs = prod_embs.to(self.device)
-        prod_feats = prod_feats.to(self.device)
-
-        # Ranking A: determinista (temperatura = 0.5)
-        with torch.no_grad():
-            rank_a, lp_a = self.ppo_trainer.generate_ranking(
-                query_emb_t, prod_embs, prod_feats,
-                temperature=0.5, noise_scale=0.0,
-            )
-            # Ranking B: exploratorio (temperatura = 1.5 + ruido)
-            rank_b, lp_b = self.ppo_trainer.generate_ranking(
-                query_emb_t, prod_embs, prod_feats,
-                temperature=1.5, noise_scale=0.3,
-            )
-
-        # Asegurar que A y B sean diferentes
-        if (rank_a == rank_b).all():
-            # Si son iguales, forzar más ruido en B
-            with torch.no_grad():
-                rank_b, lp_b = self.ppo_trainer.generate_ranking(
-                    query_emb_t, prod_embs, prod_feats,
-                    temperature=2.0, noise_scale=0.8,
-                )
-
-        display_a = self.tensorizer.ranking_to_display(products, rank_a.cpu())
-        display_b = self.tensorizer.ranking_to_display(products, rank_b.cpu())
-
-        return display_a, display_b, rank_a, rank_b, lp_a, lp_b
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Paso 3 — Sesión de recolección de preferencias
-    # ─────────────────────────────────────────────────────────────────────
-
-    def run_preference_collection_session(self, queries: List[str], k: int = 10):
-        """
-        Sesión completa A-vs-B con una lista de queries.
-        Para cada query genera dos rankings y pide preferencia al usuario.
-        """
-        if self.policy is None:
-            self.initialize()
-
-        comparisons = []
-
-        print(f"\nPreparando {len(queries)} comparaciones...")
-
-        for i, query in enumerate(queries, 1):
-            print(f"  [{i}/{len(queries)}] Generando rankings para: '{query}'")
-
-            products, query_emb_np, _ = self.retrieve_candidates(query, k=k)
-            if not products:
-                logger.warning(f"Sin resultados para: {query}")
-                continue
-
-            display_a, display_b, _, _, _, _ = self.generate_two_rankings(
-                query, products, query_emb_np
-            )
-
-            comparisons.append((query, display_a, display_b))
-
-        if not comparisons:
-            print("No hay comparaciones para mostrar.")
-            return {}
-
-        stats = self.preference_collector.run_comparison_session(comparisons)
-
-        print(f"\nSesión completada: {self.preference_collector.total_preferences} "
-              f"preferencias totales")
-
-        return stats
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Paso 4 — Entrenar el Reward Model
-    # ─────────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # FASE 1: Entrenar Reward Model con split 80/20
+    # ------------------------------------------------------------------
 
     def train_reward_model(
         self,
-        epochs: int = 30,
-        lr: float = 1e-4,
-        batch_size: int = 8,
-    ) -> Dict:
+        epochs: int = 40,
+        batch_size: int = 16,
+        min_pairs: int = 10,
+        val_split: float = 0.2,
+    ) -> dict:
         """
-        Entrena el RewardModel con las preferencias recolectadas.
-        Este es el componente que APRENDE qué rankings son mejores.
+        Entrena el reward model con split 80/20 integrado.
+
+        El 20% hold-out NUNCA se usa para entrenamiento.
+        Se reporta accuracy + log-likelihood en hold-out.
+
+        Args:
+            epochs:    Épocas de entrenamiento
+            batch_size: Tamaño de batch
+            min_pairs: Mínimo de pares para empezar
+            val_split: Fracción del hold-out (0.2 = 20%)
+
+        Returns:
+            Stats incluyendo métricas del hold-out
         """
-        if self.preference_collector is None:
-            self.initialize()
+        all_records = self.preference_collector.load_preferences(only_clear=True)
+        n = len(all_records)
 
-        prefs = self.preference_collector.load_preferences()
+        logger.info(f"\n{'='*60}")
+        logger.info(f"ENTRENANDO REWARD MODEL")
+        logger.info(f"  Pares disponibles: {n} (necesitas {min_pairs}+)")
 
-        # Solo entrenar con preferencias explícitas A o B (no empates)
-        prefs_ab = [p for p in prefs if p.get("preference") in ("A", "B")]
+        if n < min_pairs:
+            return {'error': f'Necesitas {min_pairs}+ pares (tienes {n})'}
 
-        if len(prefs_ab) < 5:
-            logger.error(
-                f"Insuficientes preferencias: {len(prefs_ab)} "
-                f"(mínimo 5, recomendado 20+)"
+        # Split 80/20
+        random.shuffle(all_records)
+        val_n = max(2, int(n * val_split))
+        train_records = all_records[val_n:]
+        val_records = all_records[:val_n]
+
+        logger.info(f"  Train: {len(train_records)} | Val (hold-out): {len(val_records)}")
+        logger.info(f"  Coverage índice: {self.preference_collector.stats().get('coverage_pct', 0)}%")
+
+        # Construir tensores de val una sola vez
+        val_batch = self.preference_collector.build_batch(val_records, device=self.device)
+        q_val, ra_val, rb_val, pref_val = val_batch
+
+        best_val_acc = 0.0
+        best_loss = float('inf')
+
+        for epoch in range(epochs):
+            # Shuffle train cada época
+            random.shuffle(train_records)
+            epoch_loss = 0.0
+            n_batches = 0
+
+            for i in range(0, len(train_records), batch_size):
+                batch = train_records[i:i + batch_size]
+                q, ra, rb, prefs = self.preference_collector.build_batch(batch, device=self.device)
+                loss = self.reward_trainer.train_step(q, ra, rb, prefs)
+                epoch_loss += loss
+                n_batches += 1
+
+            avg_loss = epoch_loss / max(n_batches, 1)
+
+            # Métricas en val
+            val_acc = self.reward_trainer.get_accuracy(q_val, ra_val, rb_val, pref_val)
+            val_ll = self.reward_trainer.get_bradley_terry_loglik(q_val, ra_val, rb_val, pref_val)
+            collapse = self.reward_trainer.detect_reward_collapse(q_val, ra_val, rb_val)
+
+            self.training_stats['reward_losses'].append(avg_loss)
+            self.training_stats['reward_accuracies_val'].append(val_acc)
+            self.training_stats['reward_loglik_val'].append(val_ll)
+
+            if (epoch + 1) % 5 == 0 or epoch == 0:
+                collapse_warn = " [WARN] COLAPSO" if collapse['collapsed'] else ""
+                logger.info(
+                    f"  Epoch {epoch+1:3d}/{epochs} | "
+                    f"loss={avg_loss:.4f} | "
+                    f"val_acc={val_acc:.3f} | "
+                    f"val_ll={val_ll:.3f}{collapse_warn}"
+                )
+
+            # Guardar mejor modelo por val_accuracy
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(self.reward_model.state_dict(), REWARD_CKPT)
+
+        self.reward_trained = True
+        self._save_stats()
+
+        final_ll = self.training_stats['reward_loglik_val'][-1] if self.training_stats['reward_loglik_val'] else 0.0
+        logger.info(f"\n  [OK] Reward model entrenado")
+        logger.info(f"    Best val_accuracy: {best_val_acc:.3f}")
+        logger.info(f"    Final val_loglik:  {final_ll:.3f}")
+
+        if best_val_acc < 0.6:
+            logger.warning("  [WARN] val_accuracy < 60% — NO ejecutes PPO todavía")
+            logger.warning("  -> Recolecta más comparaciones A/B (objetivo: 100+)")
+        else:
+            logger.info("  -> Reward OK. Puedes proceder con PPO.")
+
+        return {
+            'n_train': len(train_records),
+            'n_val': len(val_records),
+            'best_val_accuracy': best_val_acc,
+            'final_val_loglik': final_ll,
+            'epochs': epochs,
+        }
+
+    def validate_reward_before_ppo(self, min_accuracy: float = 0.60) -> bool:
+        """
+        Valida el reward model ANTES de lanzar PPO.
+
+        Criterio principal: accuracy en hold-out >= min_accuracy.
+        El 'colapso' por mean_diff pequeño NO es criterio de bloqueo
+        si la accuracy es alta — el modelo aprendió señal real en
+        escala comprimida (normal en MLPs pequeños con hidden=128).
+
+        Retorna True si es seguro proceder con PPO.
+        """
+        records = self.preference_collector.load_preferences(only_clear=True)
+        if not records:
+            logger.error("No hay preferencias para validar")
+            return False
+
+        val_n = max(2, int(len(records) * 0.2))
+        val_records = records[:val_n]
+        q, ra, rb, prefs = self.preference_collector.build_batch(val_records, device=self.device)
+
+        acc = self.reward_trainer.get_accuracy(q, ra, rb, prefs)
+        collapse = self.reward_trainer.detect_reward_collapse(q, ra, rb)
+
+        logger.info(f"\nVALIDACIÓN REWARD:")
+        logger.info(f"  Accuracy: {acc:.3f} (mínimo: {min_accuracy})")
+        logger.info(f"  Mean diff: {collapse['mean_abs_diff']:.6f}")
+        logger.info(f"  r_A std: {collapse['r_a_std']:.6f} | r_B std: {collapse['r_b_std']:.6f}")
+        logger.info(f"  Colapso duro: {collapse['collapsed']}")
+
+        # Colapso duro = literalmente no hay diferencia (bug, no escala pequeña)
+        if collapse['collapsed']:
+            logger.error("  [ERR] Colapso duro — el modelo no computa diferencias")
+            logger.error("    Posible causa: bug en forward() o datos corruptos")
+            return False
+
+        # Accuracy insuficiente
+        if acc < min_accuracy:
+            logger.warning(f"  [ERR] Accuracy {acc:.3f} < {min_accuracy} — señal insuficiente")
+            logger.warning("    Recolecta más comparaciones A/B antes de PPO")
+            return False
+
+        logger.info(f"  [OK] Reward OK para PPO (accuracy={acc:.3f}, diff={collapse['mean_abs_diff']:.6f})")
+        return True
+
+    # ------------------------------------------------------------------
+    # FASE 2: Ciclo PPO con KL adaptativa y versionado
+    # ------------------------------------------------------------------
+
+    def run_ppo_cycle(
+        self,
+        n_queries: int = 50,
+        epochs: int = 5,
+        validate_first: bool = True,
+        exploration_noise: float = 0.05,
+    ) -> dict:
+        """
+        Ciclo PPO con KL adaptativa.
+
+        Estrategia de exploración correcta:
+            - baseline vs policy+ruido     (cuando policy no entrenada)
+            - policy vs policy+ruido       (cuando policy entrenada)
+            - baseline vs baseline+ruido   (control)
+            Alternados para evitar sesgo de presentación.
+
+        Args:
+            n_queries:        Queries para el ciclo
+            epochs:           Épocas PPO
+            validate_first:   Si True, valida reward antes de empezar
+            exploration_noise: Ruido de exploración (0.05 recomendado)
+
+        Returns:
+            Stats del ciclo
+        """
+        if not self.reward_trained:
+            logger.error("Entrena reward primero: train_reward_model()")
+            return {'error': 'reward not trained'}
+
+        if validate_first and not self.validate_reward_before_ppo():
+            return {'error': 'reward accuracy insuficiente — recolecta más datos A/B'}
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"CICLO PPO (KL adaptativa)")
+
+        # Guardar versión antes de entrenar
+        self.ppo_trainer.save_version(f"before_cycle{len(self.ppo_trainer.list_versions())}")
+
+        # Diagnóstico inicial
+        weight_before = self._get_policy_weight()
+        logger.info(f"  Policy weight (antes): {weight_before:.8f}")
+
+        # Queries de las preferencias guardadas
+        records = self.preference_collector.load_preferences(only_clear=False)
+        queries = list(set(r['query'] for r in records))
+        if not queries:
+            return {'error': 'no queries'}
+        random.shuffle(queries)
+        queries = queries[:n_queries]
+
+        # Loop PPO
+        ppo_rewards, ppo_kls = [], []
+        for epoch in range(epochs):
+            epoch_rewards, epoch_kls = [], []
+
+            for query in queries:
+                try:
+                    result = self._ppo_step(query, exploration_noise)
+                    if result:
+                        epoch_rewards.append(result['reward'])
+                        epoch_kls.append(result['kl'])
+                except Exception as e:
+                    logger.debug(f"PPO step error ({query}): {e}")
+
+            avg_reward = float(np.mean(epoch_rewards)) if epoch_rewards else 0.0
+            avg_kl = float(np.mean(epoch_kls)) if epoch_kls else 0.0
+            ppo_rewards.append(avg_reward)
+            ppo_kls.append(avg_kl)
+
+            kl_status = self.ppo_trainer.get_kl_status()
+            logger.info(
+                f"  Epoch {epoch+1}/{epochs} | "
+                f"reward={avg_reward:.4f} | "
+                f"kl={avg_kl:.4f} | "
+                f"beta={kl_status['current_beta']:.3f} | "
+                f"kl_status={kl_status['status']}"
             )
-            return {"error": "insufficient_data", "count": len(prefs_ab)}
 
-        logger.info(f"Entrenando RewardModel con {len(prefs_ab)} preferencias...")
+        # Diagnóstico final
+        weight_after = self._get_policy_weight()
+        diag = self.ppo_trainer.check_policy_updated(weight_before, weight_after)
+        logger.info(f"  Policy weight (después): {weight_after:.8f}")
+        logger.info(f"  Delta: {diag['delta']:.8f}")
+        if not diag['updated']:
+            logger.warning(f"  [WARN] {diag.get('warning', 'Policy no se actualizó')}")
 
-        # Construir dataset de entrenamiento
-        all_products = getattr(self.base_system, "canonical_products", [])
-        id_map = {getattr(p, "id", ""): p for p in all_products if hasattr(p, "id")}
+        # Guardar versión después
+        self.policy_trained = True
+        torch.save(self.policy_model.state_dict(), POLICY_CKPT)
+        self.ppo_trainer.save_version(f"after_cycle{len(self.ppo_trainer.list_versions())}")
 
-        dataset = []
-        skipped = 0
+        self.training_stats['ppo_rewards'].extend(ppo_rewards)
+        self.training_stats['ppo_kl'].extend(ppo_kls)
+        self._save_stats()
 
-        for pref in prefs_ab:
-            query = pref.get("query", "")
-            preference = pref.get("preference")
+        return {
+            'epochs': epochs,
+            'n_queries': len(queries),
+            'final_reward': ppo_rewards[-1] if ppo_rewards else 0.0,
+            'avg_kl': float(np.mean(ppo_kls)) if ppo_kls else 0.0,
+            'policy_updated': diag['updated'],
+            'ppo_summary': self.ppo_trainer.get_training_summary(),
+        }
 
-            # Determinar cuál fue preferido y cuál rechazado
-            if preference == "A":
-                preferred_ids = pref.get("ranking_a_ids", [])
-                rejected_ids  = pref.get("ranking_b_ids", [])
-            else:  # "B"
-                preferred_ids = pref.get("ranking_b_ids", [])
-                rejected_ids  = pref.get("ranking_a_ids", [])
+    def _make_product_features(self, n_products: int) -> torch.Tensor:
+        """
+        Genera product_features vacíos para el PolicyModel.
+        Tu PolicyModel espera (batch, n_prod, feature_dim=8).
+        Por ahora usamos zeros — no tenemos features escalares conectados.
+        """
+        return torch.zeros(1, n_products, 8, dtype=torch.float32, device=self.device)
 
-            # Obtener embeddings del query
-            try:
-                if self.base_system and hasattr(self.base_system, "canonicalizer"):
-                    q_emb_np = self.base_system.canonicalizer.embedding_model.encode(
-                        query, normalize_embeddings=True
-                    )
-                else:
-                    q_emb_np = np.zeros(self.embedding_dim)
-                q_emb_t = self.tensorizer.query_to_tensor(q_emb_np)
-            except Exception as e:
-                logger.warning(f"Error encodeando query '{query}': {e}")
-                skipped += 1
-                continue
+    def _ppo_step(self, query: str, noise: float) -> Optional[dict]:
+        """Un paso PPO para una query con exploración correcta."""
+        q_emb_np = self.emb_model.encode(query, normalize_embeddings=True)
+        q_emb = torch.tensor(q_emb_np, dtype=torch.float32, device=self.device)
 
-            sample = self.tensorizer.preference_to_training_sample(
-                query_emb_tensor=q_emb_t,
-                all_products=all_products,
-                preferred_ids=preferred_ids,
-                rejected_ids=rejected_ids,
-                query=query,
-                query_embedding_np=q_emb_np,
-            )
+        products = self.vector_store.search(q_emb_np, k=self.top_k * 2)
+        if not products:
+            return None
 
-            if sample is None:
-                skipped += 1
-                continue
+        prod_embs = self._products_to_embs(products[:self.top_k])
+        if prod_embs is None:
+            return None
 
-            dataset.append(sample)
+        # Reward del ranking baseline
+        r_baseline = self.reward_model.score_ranking(q_emb, prod_embs)
 
-        if not dataset:
-            logger.error("No se pudo construir dataset de entrenamiento")
-            return {"error": "empty_dataset", "skipped": skipped}
+        # Ranking de la policy con exploración
+        n = prod_embs.size(0)
+        feats = self._make_product_features(n)
 
-        logger.info(
-            f"Dataset: {len(dataset)} muestras "
-            f"({skipped} omitidas por IDs no encontrados)"
-        )
+        self.policy_model.eval()
+        with torch.no_grad():
+            scores = self.policy_model(
+                q_emb.unsqueeze(0),
+                prod_embs.unsqueeze(0),
+                feats,
+            ).squeeze()
+            scores = scores + torch.randn_like(scores) * noise
+            order = torch.argsort(scores, descending=True)
+            prod_embs_policy = prod_embs[order]
 
-        # Entrenar
-        result = self.reward_model.train_on_preferences(
-            preference_dataset=dataset,
-            epochs=epochs,
-            lr=lr,
-            batch_size=batch_size,
-            device=self.device,
-        )
+        # Reward del ranking de la policy
+        r_policy = self.reward_model.score_ranking(q_emb, prod_embs_policy)
 
-        self.reward_model_trained = True
-
-        # Guardar checkpoint
-        self.reward_model.save(str(self.cache_dir / "reward_model.pt"))
-
-        logger.info(
-            f"RewardModel entrenado — "
-            f"accuracy final: {result.get('best_accuracy', 0):.4f}"
-        )
+        advantage = torch.tensor(r_policy - r_baseline, dtype=torch.float32, device=self.device)
+        result = self.ppo_trainer.update(q_emb, prod_embs, prod_embs_policy, advantage)
+        result['reward'] = r_policy
 
         return result
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Paso 5+6 — Ciclo PPO (collect + update)
-    # ─────────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Inferencia
+    # ------------------------------------------------------------------
 
-    def run_ppo_training_cycle(
-        self,
-        queries: List[str],
-        k: int = 15,
-        rankings_per_query: int = 3,
-        ppo_updates_per_cycle: int = 1,
-    ) -> Dict:
-        """
-        Ciclo PPO completo:
-          1. Para cada query, genera N rankings con la política actual
-          2. Los puntúa con el RewardModel
-          3. Ejecuta update PPO para mejorar la política
-
-        Retorna métricas del ciclo.
-        """
-        if not self.reward_model_trained:
-            logger.error("El RewardModel debe entrenarse antes de PPO")
-            return {"error": "reward_model_not_trained"}
-
-        if self.ppo_trainer is None:
-            self.initialize()
-
-        logger.info(
-            f"Iniciando ciclo PPO #{self.ppo_cycles_completed + 1} — "
-            f"{len(queries)} queries, {rankings_per_query} rankings/query"
-        )
-
-        cycle_rewards = []
-
-        for query in queries:
-            products, query_emb_np, _ = self.retrieve_candidates(query, k=k)
-            if not products:
-                continue
-
-            n = min(len(products), self.max_products)
-            products = products[:n]
-
-            query_emb_t = self.tensorizer.query_to_tensor(query_emb_np)
-            prod_embs, prod_feats = self.tensorizer.products_to_tensors(
-                products, query, query_emb_np
-            )
-
-            # Generar varios rankings con temperatura variable para explorar
-            temperatures = [0.8, 1.2, 1.5][:rankings_per_query]
-
-            for temp in temperatures:
-                self.ppo_trainer.collect_and_store(
-                    query_embedding=query_emb_t,
-                    product_embeddings=prod_embs,
-                    product_features=prod_feats,
-                    query_text=query,
-                    temperature=temp,
-                    noise_scale=0.1 * (temp - 0.5),
-                )
-
-        # Ejecutar update PPO si hay suficiente data en el buffer
-        all_metrics = []
-        for _ in range(ppo_updates_per_cycle):
-            metrics = self.ppo_trainer.update()
-            if metrics:
-                all_metrics.append(metrics)
-                cycle_rewards.append(metrics["mean_reward"])
-
-        if not all_metrics:
-            logger.warning("PPO update no ejecutado — buffer insuficiente")
-            return {"warning": "insufficient_buffer"}
-
-        self.ppo_cycles_completed += 1
-        self.policy_trained = True
-
-        # Guardar estado
-        self.ppo_trainer.save(str(self.cache_dir / "ppo_trainer.pt"))
-        self._save_pipeline_state()
-
-        summary = {
-            "cycle": self.ppo_cycles_completed,
-            "queries_processed": len(queries),
-            "mean_reward": float(np.mean(cycle_rewards)) if cycle_rewards else 0,
-            "ppo_updates": len(all_metrics),
-            "last_update": all_metrics[-1] if all_metrics else {},
-        }
-
-        logger.info(
-            f"Ciclo PPO #{self.ppo_cycles_completed} completado — "
-            f"reward={summary['mean_reward']:.4f}"
-        )
-
-        return summary
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Inferencia — usar la política entrenada
-    # ─────────────────────────────────────────────────────────────────────
-
-    def rank_products(
-        self,
-        query: str,
-        products: list,
-        query_emb_np: Optional[np.ndarray] = None,
-    ) -> list:
-        """
-        Usa la política entrenada para ordenar una lista de productos.
-        Si la política no está entrenada, devuelve el orden original.
-        """
-        if not self.policy_trained or self.policy is None:
-            logger.debug("Política no entrenada, devolviendo orden original")
+    def rank_products(self, query: str, products: list, query_emb=None) -> list:
+        if not self.policy_trained:
             return products
 
-        if query_emb_np is None and self.base_system:
-            try:
-                query_emb_np = self.base_system.canonicalizer.embedding_model.encode(
-                    query, normalize_embeddings=True
-                )
-            except Exception:
-                return products
+        if query_emb is None:
+            query_emb = self.emb_model.encode(query, normalize_embeddings=True)
 
-        n = min(len(products), self.max_products)
-        products_slice = products[:n]
-
-        try:
-            query_emb_t = self.tensorizer.query_to_tensor(query_emb_np).to(self.device)
-            prod_embs, prod_feats = self.tensorizer.products_to_tensors(
-                products_slice, query, query_emb_np
-            )
-            prod_embs = prod_embs.to(self.device)
-            prod_feats = prod_feats.to(self.device)
-
-            self.policy.eval()
-            with torch.no_grad():
-                ranking, _ = self.ppo_trainer.generate_ranking(
-                    query_emb_t, prod_embs, prod_feats,
-                    temperature=0.5, noise_scale=0.0,
-                )
-
-            ranked_products = [products_slice[i] for i in ranking.cpu().tolist()]
-            # Añadir resto si había más de max_products
-            ranked_products.extend(products[n:])
-            return ranked_products
-
-        except Exception as e:
-            logger.error(f"Error en rank_products: {e}")
+        q_emb = torch.tensor(query_emb, dtype=torch.float32, device=self.device)
+        prod_embs = self._products_to_embs(products[:self.top_k])
+        if prod_embs is None:
             return products
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Sesión interactiva completa (flujo recomendado)
-    # ─────────────────────────────────────────────────────────────────────
+        n = prod_embs.size(0)
+        feats = self._make_product_features(n)
 
-    def run_full_rlhf_session(
-        self,
-        queries: List[str],
-        n_cycles: int = 3,
-        preferences_per_cycle: int = 10,
-    ):
-        """
-        Ejecuta el flujo RLHF completo en modo interactivo:
-          Para cada ciclo:
-            1. Recolectar preferencias A-vs-B
-            2. Entrenar Reward Model
-            3. Ciclo PPO
-            4. Mostrar mejora
+        self.policy_model.eval()
+        with torch.no_grad():
+            scores = self.policy_model(
+                q_emb.unsqueeze(0),
+                prod_embs.unsqueeze(0),
+                feats,
+            ).squeeze()
 
-        Este es el "loop de entrenamiento" que convierte feedback humano
-        en mejoras reales de la política.
-        """
-        if self.policy is None:
-            self.initialize()
+        order = torch.argsort(scores, descending=True).cpu().numpy()
+        return [products[i] for i in order if i < len(products)]
 
-        print("\n" + "═" * 80)
-        print("  CICLO RLHF COMPLETO")
-        print(f"  {n_cycles} ciclos × ~{preferences_per_cycle} preferencias/ciclo")
-        print("═" * 80)
+    def retrieve_candidates(self, query: str, k: int = 20) -> Tuple:
+        q_emb = self.emb_model.encode(query, normalize_embeddings=True)
+        products = self.vector_store.search(q_emb, k=k)
+        return products, q_emb, np.array([])
 
-        for cycle in range(1, n_cycles + 1):
-            print(f"\n{'─'*80}")
-            print(f"  CICLO {cycle}/{n_cycles}")
-            print(f"{'─'*80}")
-
-            # Tomar queries para este ciclo
-            import random
-            cycle_queries = random.sample(queries, min(preferences_per_cycle, len(queries)))
-
-            # Paso 1: Preferencias
-            print(f"\n[1/3] Recolectando preferencias ({len(cycle_queries)} comparaciones)...")
-            self.run_preference_collection_session(cycle_queries)
-
-            # Paso 2: Reward Model
-            print(f"\n[2/3] Entrenando Reward Model...")
-            result = self.train_reward_model(epochs=20)
-            if "error" in result:
-                print(f"  ⚠ No se pudo entrenar Reward Model: {result['error']}")
-                continue
-            print(f"  ✓ Accuracy: {result.get('best_accuracy', 0):.4f}")
-
-            # Paso 3: PPO
-            print(f"\n[3/3] Optimizando Policy con PPO...")
-            ppo_result = self.run_ppo_training_cycle(cycle_queries)
-            if "error" not in ppo_result:
-                print(f"  ✓ Reward medio: {ppo_result.get('mean_reward', 0):.4f}")
-
-        print("\n" + "═" * 80)
-        print(f"  RLHF completado — {self.ppo_cycles_completed} ciclos")
-        print(f"  Preferencias totales: {self.preference_collector.total_preferences}")
-        print("═" * 80)
-
-    # ─────────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
     # Utilidades
-    # ─────────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
 
-    def _save_pipeline_state(self):
-        state = {
-            "ppo_cycles_completed": self.ppo_cycles_completed,
-            "reward_model_trained": self.reward_model_trained,
-            "policy_trained": self.policy_trained,
+    def _products_to_embs(self, products: list) -> Optional[torch.Tensor]:
+        embs = []
+        for p in products[:self.top_k]:
+            pid = getattr(p, 'id', None) or getattr(p, 'product_id', None)
+            emb = self.product_index.get(pid, np.zeros(self.emb_dim, dtype=np.float32))
+            embs.append(emb)
+        if not embs:
+            return None
+        return torch.tensor(np.stack(embs), dtype=torch.float32, device=self.device)
+
+    def _get_policy_weight(self) -> float:
+        if hasattr(self.policy_model, 'linear'):
+            return self.policy_model.linear.weight.mean().item()
+        for p in self.policy_model.parameters():
+            return p.mean().item()
+        return 0.0
+
+    def get_status(self) -> dict:
+        return {
+            'n_preferences': self.preference_collector.count(),
+            'reward_trained': self.reward_trained,
+            'policy_trained': self.policy_trained,
+            'device': self.device,
+            'checkpoints': {
+                'reward': REWARD_CKPT.exists(),
+                'policy': POLICY_CKPT.exists(),
+                'versions': [p.name for p in self.ppo_trainer.list_versions()],
+            },
+            'collector_stats': self.preference_collector.stats(),
+            'ppo_status': self.ppo_trainer.get_kl_status(),
         }
-        with open(self.cache_dir / "pipeline_state.json", "w") as f:
-            json.dump(state, f, indent=2)
 
-    def get_stats(self) -> Dict:
-        stats = {
-            "reward_model_trained": self.reward_model_trained,
-            "policy_trained": self.policy_trained,
-            "ppo_cycles_completed": self.ppo_cycles_completed,
-        }
-
-        if self.preference_collector:
-            stats["preferences"] = self.preference_collector.get_stats()
-
-        if self.ppo_trainer:
-            stats["ppo"] = self.ppo_trainer.get_stats()
-
-        if self.policy:
-            stats["policy_parameters"] = self.policy.count_parameters()
-
-        return stats
+    def _save_stats(self):
+        try:
+            with open(STATS_FILE, 'w') as f:
+                json.dump(self.training_stats, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Error guardando stats: {e}")

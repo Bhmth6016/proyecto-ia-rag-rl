@@ -1,3 +1,4 @@
+# src/rlh/policy_model.py
 """
 Policy Model — Componente 1 del RLHF
 
@@ -49,21 +50,21 @@ class PolicyModel(nn.Module):
         self.feature_dim = feature_dim
         self.hidden_dim = hidden_dim
 
-        # ── Proyección del query ──────────────────────────────────────────
+        # -- Proyección del query ------------------------------------------
         self.query_proj = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
         )
 
-        # ── Proyección de productos (embedding + features escalares) ──────
+        # -- Proyección de productos (embedding + features escalares) ------
         self.product_proj = nn.Sequential(
             nn.Linear(embedding_dim + feature_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
         )
 
-        # ── Self-attention entre productos ────────────────────────────────
+        # -- Self-attention entre productos --------------------------------
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
             nhead=num_heads,
@@ -76,7 +77,7 @@ class PolicyModel(nn.Module):
             encoder_layer, num_layers=num_layers
         )
 
-        # ── Cross-attention: productos ← query ───────────────────────────
+        # -- Cross-attention: productos <- query ---------------------------
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
@@ -85,7 +86,7 @@ class PolicyModel(nn.Module):
         )
         self.cross_attn_norm = nn.LayerNorm(hidden_dim)
 
-        # ── Score head por producto ───────────────────────────────────────
+        # -- Score head por producto ---------------------------------------
         self.score_head = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.GELU(),
@@ -107,9 +108,9 @@ class PolicyModel(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Forward
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def forward(
         self,
@@ -129,7 +130,7 @@ class PolicyModel(nn.Module):
         # Self-attention entre productos
         p = self.product_encoder(p, src_key_padding_mask=src_key_padding_mask)
 
-        # Cross-attention: productos ← query
+        # Cross-attention: productos <- query
         q_exp = q.unsqueeze(1)                                         # (B, 1, H)
         attended, _ = self.cross_attn(
             query=p, key=q_exp, value=q_exp
@@ -143,9 +144,9 @@ class PolicyModel(nn.Module):
         scores = self.score_head(combined).squeeze(-1)                 # (B, N)
         return scores
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Métodos de ranking
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def get_ranking(
         self,
@@ -159,7 +160,7 @@ class PolicyModel(nn.Module):
         Genera un ranking y sus log-probabilidades bajo el modelo Plackett-Luce.
 
         Args:
-            temperature:  > 1 → más aleatorio, < 1 → más determinista
+            temperature:  > 1 -> más aleatorio, < 1 -> más determinista
             noise_scale:  ruido gaussiano para exploración
 
         Returns:
@@ -179,9 +180,9 @@ class PolicyModel(nn.Module):
 
         return ranking, log_probs
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Modelo Plackett-Luce
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def _plackett_luce_log_prob(
         self,
@@ -209,9 +210,9 @@ class PolicyModel(nn.Module):
 
         return log_probs
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Utilidades
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

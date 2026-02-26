@@ -1,301 +1,238 @@
+# src/rlhf/preference_collector.py
 """
-Preference Collector — Componente 2 del RLHF (Dataset de feedback humano)
+Preference Collector — Recolecta y convierte preferencias A/B en tensores.
 
-Recolecta preferencias EXPLÍCITAS entre rankings:
-    "¿Cuál lista de resultados es mejor para tu búsqueda, A o B?"
+RESPONSABILIDAD:
+    1. Leer preferencias guardadas en data/preferences/preferences.jsonl
+    2. Para cada par (query, ranking_A_ids, ranking_B_ids, preference):
+       - Obtener embeddings de la query
+       - Obtener embeddings de los productos en el orden del ranking
+    3. Construir batches (query_emb, ranking_a_embs, ranking_b_embs, prefs)
+       que el RankingRewardTrainer pueda consumir directamente.
 
-Esto produce comparaciones pareadas (A ≻ B) que son el input real del
-Reward Model en RLHF. Es fundamentalmente diferente a registrar un click:
-- Click: feedback implícito, solo positivo
-- A vs B: feedback explícito, comparativo, el humano evalúa AMBAS opciones
-
-Guardado: data/preferences/preferences.jsonl
-Formato por línea:
+FORMATO del JSONL (guardado por sistema_interactivo.py):
     {
+        "timestamp": "2026-02-22T...",
+        "session_id": "ab_...",
         "query": "car parts",
         "ranking_a_ids": ["B001", "B002", ...],
-        "ranking_b_ids": ["B003", "B001", ...],
-        "preference": "A",       # o "B" o "equal"
-        "timestamp": "...",
-        "session_id": "..."
+        "ranking_b_ids": ["B010", "B011", ...],
+        "ranking_a_titles": [...],    # solo para debug
+        "ranking_b_titles": [...],    # solo para debug
+        "preference": "A"             # 'A', 'B', o 'equal'
     }
+
+POR QUÉ PRESERVAR EL ORDEN:
+    El reward model usa pesos de posición (DCG-style).
+    El producto en posición 1 tiene más peso que el de posición 10.
+    Si reordenamos los embeddings, destruimos la señal de posición.
 """
 
 import json
-import os
-import sys
+import numpy as np
+import torch
 from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import List, Tuple, Optional, Dict
 import logging
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------
+# Constantes
+# ---------------------------------------------------------------------
+
+PREFERENCES_FILE = Path("data/preferences/preferences.jsonl")
+TOP_K = 10           # número de productos por ranking
+EMB_DIM = 384        # sentence-transformer
+
+
+# ---------------------------------------------------------------------
+# Collector
+# ---------------------------------------------------------------------
 
 class PreferenceCollector:
     """
-    Interfaz CLI para recolectar comparaciones A-vs-B entre rankings.
+    Convierte preferencias guardadas en batches para entrenar el RewardModel.
 
-    El flujo por query:
-      1. Genera RANKING_A (política greedy / temperatura baja)
-      2. Genera RANKING_B (política exploratoria / temperatura alta + ruido)
-      3. Muestra ambos rankings al usuario en paralelo
-      4. Usuario escoge A, B, o igual (=)
-      5. Guarda la preferencia en JSONL
+    Args:
+        preferences_file: Ruta al JSONL de preferencias
+        embedding_model:  Modelo de sentence-transformers (ya cargado)
+        product_index:    Dict[product_id -> np.ndarray (emb_dim,)]
+                         Mapa de ID -> embedding precomputado
+        top_k:            Cuántos productos del ranking usar
     """
 
     def __init__(
         self,
-        output_file: str = "data/preferences/preferences.jsonl",
-        top_k_display: int = 10,
+        embedding_model,
+        product_index: Dict[str, np.ndarray],
+        preferences_file: Path = PREFERENCES_FILE,
+        top_k: int = TOP_K,
     ):
-        self.output_file = Path(output_file)
-        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        self.emb_model = embedding_model
+        self.product_index = product_index
+        self.preferences_file = preferences_file
+        self.top_k = top_k
 
-        self.top_k_display = top_k_display
-        self.session_id = f"pref_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # ------------------------------------------------------------------
+    # Leer preferencias del disco
+    # ------------------------------------------------------------------
 
-        self.session_count = 0
-        self.total_preferences = self._count_existing_preferences()
-
-        logger.info(
-            f"PreferenceCollector iniciado — "
-            f"archivo: {self.output_file}, "
-            f"preferencias existentes: {self.total_preferences}"
-        )
-
-    def _count_existing_preferences(self) -> int:
-        if not self.output_file.exists():
-            return 0
-        try:
-            with open(self.output_file, "r", encoding="utf-8") as f:
-                return sum(1 for line in f if line.strip())
-        except Exception:
-            return 0
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Mostrar comparación
-    # ─────────────────────────────────────────────────────────────────────
-
-    def display_comparison(
-        self,
-        query: str,
-        ranking_a: List[Dict],
-        ranking_b: List[Dict],
-    ):
+    def load_preferences(self, only_clear: bool = True) -> List[dict]:
         """
-        Muestra los dos rankings en paralelo con formato legible.
-
-        ranking_a / ranking_b: lista de dicts con keys:
-            - title, id, category, rating, price
-        """
-        k = min(self.top_k_display, len(ranking_a), len(ranking_b))
-
-        width = 58
-        sep = "│"
-
-        print("\n" + "═" * (width * 2 + 3))
-        print(f"  QUERY: \"{query}\"")
-        print("═" * (width * 2 + 3))
-        print(f"  {'RANKING  A':<{width}} {sep} {'RANKING  B':<{width}}")
-        print("─" * (width * 2 + 3))
-
-        for i in range(k):
-            prod_a = ranking_a[i] if i < len(ranking_a) else {}
-            prod_b = ranking_b[i] if i < len(ranking_b) else {}
-
-            # Línea 1: número + título truncado
-            title_a = (prod_a.get("title", "")[:54] + "…") if len(prod_a.get("title", "")) > 55 else prod_a.get("title", "—")
-            title_b = (prod_b.get("title", "")[:54] + "…") if len(prod_b.get("title", "")) > 55 else prod_b.get("title", "—")
-            print(f"  {i+1:>2}. {title_a:<{width-5}} {sep}  {i+1:>2}. {title_b}")
-
-            # Línea 2: ID + rating
-            id_a = prod_a.get("id", "")
-            id_b = prod_b.get("id", "")
-            rat_a = f"⭐ {prod_a['rating']:.1f}" if prod_a.get("rating") else "     "
-            rat_b = f"⭐ {prod_b['rating']:.1f}" if prod_b.get("rating") else "     "
-            cat_a = str(prod_a.get("category", ""))[:20]
-            cat_b = str(prod_b.get("category", ""))[:20]
-            print(f"      ID:{id_a:<12} {rat_a}  {cat_a:<20} {sep}      ID:{id_b:<12} {rat_b}  {cat_b}")
-            print(f"  {'─' * width} {sep} {'─' * width}")
-
-        print("═" * (width * 2 + 3))
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Recolección de preferencia
-    # ─────────────────────────────────────────────────────────────────────
-
-    def collect_preference(
-        self,
-        query: str,
-        ranking_a: List[Dict],
-        ranking_b: List[Dict],
-    ) -> Optional[str]:
-        """
-        Muestra la comparación y pide al usuario su preferencia.
-
-        Retorna: "A", "B", "equal", o None si el usuario omite.
-        """
-        self.display_comparison(query, ranking_a, ranking_b)
-
-        print("\n  ¿Cuál ranking es MÁS RELEVANTE para la búsqueda?")
-        print("  [ A ]  Prefiero el RANKING A (izquierda)")
-        print("  [ B ]  Prefiero el RANKING B (derecha)")
-        print("  [ = ]  Son igual de buenos / no puedo decidir")
-        print("  [ s ]  Saltar esta query")
-
-        while True:
-            try:
-                choice = input("\n  Tu elección (A/B/=/s): ").strip().upper()
-                if choice in ("A", "B"):
-                    return choice
-                elif choice in ("=", "E", "EQUAL", "IGUAL"):
-                    return "equal"
-                elif choice in ("S", "SKIP", ""):
-                    print("  (query omitida)")
-                    return None
-                else:
-                    print("  Por favor escribe A, B, = o s")
-            except (EOFError, KeyboardInterrupt):
-                return None
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Guardar preferencia
-    # ─────────────────────────────────────────────────────────────────────
-
-    def save_preference(
-        self,
-        query: str,
-        ranking_a: List[Dict],
-        ranking_b: List[Dict],
-        preference: str,
-        metadata: Optional[Dict] = None,
-    ) -> bool:
-        """
-        Guarda una preferencia en el archivo JSONL.
-        Devuelve True si se guardó correctamente.
-        """
-        record = {
-            "timestamp": datetime.now().isoformat(),
-            "session_id": self.session_id,
-            "query": query,
-            "ranking_a_ids": [p.get("id", "") for p in ranking_a],
-            "ranking_b_ids": [p.get("id", "") for p in ranking_b],
-            "ranking_a_titles": [p.get("title", "")[:60] for p in ranking_a],
-            "ranking_b_titles": [p.get("title", "")[:60] for p in ranking_b],
-            "preference": preference,  # "A", "B", o "equal"
-            "metadata": metadata or {},
-        }
-
-        try:
-            with open(self.output_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-            self.total_preferences += 1
-            self.session_count += 1
-            logger.info(
-                f"Preferencia guardada: {preference} para '{query[:30]}' "
-                f"(total: {self.total_preferences})"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Error guardando preferencia: {e}")
-            return False
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Sesión interactiva completa
-    # ─────────────────────────────────────────────────────────────────────
-
-    def run_comparison_session(
-        self,
-        queries_and_rankings: List[Tuple[str, List[Dict], List[Dict]]],
-    ) -> Dict:
-        """
-        Corre una sesión completa de comparaciones A-vs-B.
+        Carga las preferencias desde el JSONL.
 
         Args:
-            queries_and_rankings: lista de (query, ranking_a, ranking_b)
+            only_clear: Si True, filtra los 'equal' (no aportan señal clara).
 
         Returns:
-            dict con estadísticas de la sesión
+            Lista de dicts con las preferencias.
         """
-        print("\n" + "═" * 120)
-        print("  SESIÓN DE PREFERENCIAS — RLHF")
-        print("  Comparas dos listas de resultados y eliges cuál te parece mejor.")
-        print("  Tus elecciones entrenan el sistema para mejorar.")
-        print("═" * 120)
-        print(f"\n  Comparaciones a evaluar: {len(queries_and_rankings)}")
-        print(f"  Preferencias previas:    {self.total_preferences}")
-        print(f"  Objetivo recomendado:    30+ preferencias\n")
-
-        stats = {"A": 0, "B": 0, "equal": 0, "skip": 0}
-
-        for i, (query, rank_a, rank_b) in enumerate(queries_and_rankings, 1):
-            print(f"\n  [{i}/{len(queries_and_rankings)}] Comparación")
-
-            preference = self.collect_preference(query, rank_a, rank_b)
-
-            if preference is None:
-                stats["skip"] += 1
-                continue
-
-            self.save_preference(query, rank_a, rank_b, preference)
-            stats[preference] += 1
-
-            print(f"\n  ✓ Guardado: preferiste {preference}")
-            print(f"  Total en esta sesión: {self.session_count}")
-
-            if self.total_preferences >= 30 and self.total_preferences % 10 == 0:
-                print(f"\n  🎉 {self.total_preferences} preferencias — suficiente para entrenar RLHF completo")
-
-        # Resumen de sesión
-        print("\n" + "═" * 120)
-        print("  RESUMEN DE LA SESIÓN")
-        print(f"  Preferencias recolectadas: {self.session_count}")
-        print(f"    → Prefirió A: {stats['A']}")
-        print(f"    → Prefirió B: {stats['B']}")
-        print(f"    → Empate:     {stats['equal']}")
-        print(f"    → Omitidas:   {stats['skip']}")
-        print(f"  Total acumulado: {self.total_preferences}")
-        print("═" * 120)
-
-        return stats
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Cargar preferencias guardadas
-    # ─────────────────────────────────────────────────────────────────────
-
-    def load_preferences(self) -> List[Dict]:
-        """Carga todas las preferencias guardadas en el archivo JSONL."""
-        if not self.output_file.exists():
+        if not self.preferences_file.exists():
+            logger.warning(f"No hay preferencias en {self.preferences_file}")
             return []
 
-        preferences = []
-        with open(self.output_file, "r", encoding="utf-8") as f:
+        records = []
+        with open(self.preferences_file, encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    preferences.append(json.loads(line))
+                    r = json.loads(line)
+                    if only_clear and r.get('preference') == 'equal':
+                        continue
+                    records.append(r)
                 except json.JSONDecodeError:
                     continue
 
-        logger.info(f"Cargadas {len(preferences)} preferencias desde {self.output_file}")
-        return preferences
+        logger.info(f"Cargadas {len(records)} preferencias (only_clear={only_clear})")
+        return records
 
-    def get_stats(self) -> Dict:
-        prefs = self.load_preferences()
-        if not prefs:
-            return {"total": 0, "ready_for_training": False}
+    def count(self) -> int:
+        return len(self.load_preferences(only_clear=False))
 
-        choices = [p.get("preference", "") for p in prefs]
+    # ------------------------------------------------------------------
+    # Construir tensores
+    # ------------------------------------------------------------------
+
+    def _get_query_emb(self, query: str) -> np.ndarray:
+        """Embedding de la query."""
+        return self.emb_model.encode(query, normalize_embeddings=True)
+
+    def _get_ranking_embs(self, product_ids: List[str]) -> np.ndarray:
+        """
+        Embeddings del ranking PRESERVANDO EL ORDEN.
+
+        Si un producto no está en el índice, se rellena con ceros
+        (el reward model maneja padding explícitamente).
+
+        Returns:
+            [top_k, emb_dim]
+        """
+        embs = []
+        for pid in product_ids[:self.top_k]:
+            if pid in self.product_index:
+                embs.append(self.product_index[pid])
+            else:
+                embs.append(np.zeros(EMB_DIM, dtype=np.float32))
+
+        # Padding si hay menos de top_k productos
+        while len(embs) < self.top_k:
+            embs.append(np.zeros(EMB_DIM, dtype=np.float32))
+
+        return np.stack(embs[:self.top_k])  # [top_k, emb_dim]
+
+    def build_batch(
+        self,
+        records: List[dict],
+        device: str = 'cpu',
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[str]]:
+        """
+        Construye un batch listo para RankingRewardTrainer.
+
+        Returns:
+            query_embs:    [N, emb_dim]
+            ranking_a_embs:[N, top_k, emb_dim]
+            ranking_b_embs:[N, top_k, emb_dim]
+            preferences:   List['A' | 'B' | 'equal'], len=N
+        """
+        query_embs = []
+        ra_embs = []
+        rb_embs = []
+        prefs = []
+
+        for r in records:
+            q_emb = self._get_query_emb(r['query'])
+            ra = self._get_ranking_embs(r['ranking_a_ids'])
+            rb = self._get_ranking_embs(r['ranking_b_ids'])
+
+            query_embs.append(q_emb)
+            ra_embs.append(ra)
+            rb_embs.append(rb)
+            prefs.append(r['preference'])
+
+        q_t = torch.tensor(np.stack(query_embs), dtype=torch.float32, device=device)
+        ra_t = torch.tensor(np.stack(ra_embs), dtype=torch.float32, device=device)
+        rb_t = torch.tensor(np.stack(rb_embs), dtype=torch.float32, device=device)
+
+        return q_t, ra_t, rb_t, prefs
+
+    def get_training_batches(
+        self,
+        batch_size: int = 16,
+        device: str = 'cpu',
+        shuffle: bool = True,
+    ) -> List[Tuple]:
+        """
+        Carga todas las preferencias y las divide en batches.
+
+        Returns:
+            Lista de tuplas (query_embs, ra_embs, rb_embs, prefs)
+        """
+        records = self.load_preferences(only_clear=True)
+        if not records:
+            return []
+
+        if shuffle:
+            import random
+            random.shuffle(records)
+
+        batches = []
+        for i in range(0, len(records), batch_size):
+            batch_records = records[i:i + batch_size]
+            batch = self.build_batch(batch_records, device=device)
+            batches.append(batch)
+
+        logger.info(f"  {len(records)} preferencias -> {len(batches)} batches (bs={batch_size})")
+        return batches
+
+    # ------------------------------------------------------------------
+    # Diagnóstico
+    # ------------------------------------------------------------------
+
+    def stats(self) -> dict:
+        records = self.load_preferences(only_clear=False)
+        if not records:
+            return {'total': 0}
+
+        prefs = [r.get('preference') for r in records]
+        queries = [r.get('query') for r in records]
+
+        # Cobertura del índice
+        all_ids = set()
+        for r in records:
+            all_ids.update(r.get('ranking_a_ids', []))
+            all_ids.update(r.get('ranking_b_ids', []))
+        covered = sum(1 for pid in all_ids if pid in self.product_index)
+
         return {
-            "total": len(prefs),
-            "prefer_a": choices.count("A"),
-            "prefer_b": choices.count("B"),
-            "equal": choices.count("equal"),
-            "unique_queries": len(set(p["query"] for p in prefs)),
-            "ready_for_training": len(prefs) >= 10,
+            'total': len(records),
+            'prefer_A': prefs.count('A'),
+            'prefer_B': prefs.count('B'),
+            'equal': prefs.count('equal'),
+            'unique_queries': len(set(queries)),
+            'product_ids_referenced': len(all_ids),
+            'product_ids_in_index': covered,
+            'coverage_pct': round(covered / len(all_ids) * 100, 1) if all_ids else 0,
         }

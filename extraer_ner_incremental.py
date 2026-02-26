@@ -49,7 +49,7 @@ def extraer_ner_incremental():
     
     print("🚀 Inicializando extractor NER...")
     print("   Modo: Keywords (RÁPIDO, sin GPU)")
-    ner_extractor = OptimizedNERExtractor(use_zero_shot=True)  # ← KEYWORDS RÁPIDO
+    ner_extractor = OptimizedNERExtractor(use_zero_shot=True)  # <- KEYWORDS RÁPIDO
     print("✅ Extractor listo\n")
     
     print("🔍 Analizando productos...")
@@ -164,7 +164,7 @@ def extraer_ner_incremental():
                 attrs = prod.ner_attributes
                 print(f"\n  {ejemplos + 1}. {title}")
                 for attr_type, values in attrs.items():
-                    print(f"     → {attr_type}: {', '.join(values)}")
+                    print(f"     -> {attr_type}: {', '.join(values)}")
                 ejemplos += 1
                 if ejemplos >= 3:
                     break
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     try:
         extraer_ner_incremental()
     except KeyboardInterrupt:
-        print("\n\n⚠️ Proceso interrumpido")
+        print("\n\n[WARN]️ Proceso interrumpido")
         print("   El cache se guardó en el último checkpoint")
     except Exception as e:
         print("\n" + "=" * 70)

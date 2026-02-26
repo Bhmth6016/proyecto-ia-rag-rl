@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# generate_paper_plots.py
 """
 Generador de Figuras para Paper IEEE
 =====================================
@@ -71,7 +72,7 @@ def generate_fig3_rlhf_training(
     sessions = np.arange(1, 21)  # Default: 20 sesiones
     
     if not results_file.exists():
-        logger.warning("⚠️ Archivo de resultados RLHF no encontrado")
+        logger.warning("[WARN]️ Archivo de resultados RLHF no encontrado")
         logger.info("   Generando datos sintéticos para demostración...")
         
         # Datos sintéticos realistas
@@ -117,7 +118,7 @@ def generate_fig3_rlhf_training(
             
             # ✅ FIX: Si no hay datos RLHF, usar sintéticos
             if not has_rlhf_data or len(rec_score) == 0 or len(positive_fb) == 0 or len(loss) == 0:
-                logger.warning("⚠️ Datos RLHF incompletos en el archivo JSON")
+                logger.warning("[WARN]️ Datos RLHF incompletos en el archivo JSON")
                 logger.info("   Generando datos sintéticos para ilustración...")
                 
                 sessions = np.arange(1, 21)
@@ -235,7 +236,7 @@ def generate_fig4_system_performance(
     
     # Cargar resultados experimentales
     if not results_file.exists():
-        logger.warning("⚠️ Archivo de resultados no encontrado")
+        logger.warning("[WARN]️ Archivo de resultados no encontrado")
         logger.info("   Generando datos sintéticos...")
         
         # Datos sintéticos basados en experimentos reales
@@ -464,7 +465,7 @@ def generate_fig6_ablation_study(
     FIG. 6 (ADICIONAL) – Estudio de Ablación
     
     Muestra el impacto incremental de cada componente:
-    Baseline → +ZSAE → +RLHF → Full System
+    Baseline -> +ZSAE -> +RLHF -> Full System
     """
     logger.info("📊 Generando Fig. 6 - Ablation Study...")
     
@@ -590,7 +591,7 @@ def main():
     result_files = list(results_dir.glob("experimento_4_metodos_*.json"))
     
     if not result_files:
-        logger.warning("⚠️ No se encontraron archivos de resultados")
+        logger.warning("[WARN]️ No se encontraron archivos de resultados")
         logger.info("   Se generarán figuras con datos sintéticos")
         results_file = results_dir / "experimento_synthetic.json"
     else:

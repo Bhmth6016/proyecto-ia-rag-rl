@@ -1,468 +1,320 @@
+# src/rlhf/ppo_trainer.py
 """
-PPO Trainer — Componente 5 del RLHF
-Proximal Policy Optimization para el problema de ranking.
+PPO Trainer con KL Penalty Adaptativa.
 
-El ciclo de aprendizaje real:
-    1. Policy genera ranking (acción)
-    2. RewardModel evalúa el ranking (reward)
-    3. PPO actualiza la policy para maximizar el reward
-    4. KL divergence penaliza alejarse demasiado de la política de referencia
+PROBLEMA CON KL FIJO:
+    Si beta (KL weight) es demasiado alto -> policy no aprende nada.
+    Si beta es demasiado bajo -> policy diverge del baseline.
+    KL fijo casi nunca funciona bien en la práctica.
 
-Adaptación de PPO para ranking:
-    - "Estado":  query + candidatos (del retrieval FAISS)
-    - "Acción":  ranking completo (permutación de los candidatos)
-    - "Reward":  escalar del RewardModel
-    - "Log-prob": bajo modelo Plackett-Luce
+SOLUCIÓN — KL Adaptativa (estilo Schulman et al.):
+    if KL > target_kl:
+        beta *= 1.5   # penalizar más si diverge demasiado
+    elif KL < target_kl / 2:
+        beta *= 0.8   # relajar si está muy conservador
 
-El clipping PPO evita actualizaciones demasiado grandes que destruirían
-el conocimiento acumulado (estabilidad de entrenamiento).
+VERSIONADO:
+    Para paper IEEE necesitas reportar mejora incremental.
+    Guardamos versiones: policy_v0.pt, policy_v1.pt, etc.
+    Así puedes evaluar experimento_completo_4_metodos.py en cada versión
+    y mostrar la curva de aprendizaje.
+
+VERIFICACIÓN DE QUE PPO ACTUALIZA:
+    Antes/después de cada ciclo se imprime:
+        weight_before, weight_after, delta
+    Si delta < 1e-6 -> PPO no está funcionando.
+    Causas comunes:
+        1. KL demasiado alto (beta muy grande)
+        2. Reward plano (reward model no discrimina)
+        3. Learning rate demasiado pequeño
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Dict, Optional, Tuple
 import numpy as np
-import copy
 import logging
-from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
 
+CHECKPOINT_DIR = Path("data/rlhf_checkpoints")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Estructura de experiencia
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class RankingExperience:
-    """Una experiencia completa: estado → acción (ranking) → reward."""
-    query_embedding: torch.Tensor       # (emb_dim,)
-    product_embeddings: torch.Tensor    # (n_prod, emb_dim)
-    product_features: torch.Tensor      # (n_prod, feat_dim)
-    ranking: torch.Tensor               # (n_prod,) — índices en orden
-    log_prob: torch.Tensor              # escalar — log P(ranking | estado)
-    reward: float                       # escalar del RewardModel
-    query_text: str = ""               # para logging
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Value Network (Critic / Baseline)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ValueNetwork(nn.Module):
-    """
-    Estima el valor esperado del estado (baseline para reducir varianza).
-    Input:  representación comprimida del query + productos
-    Output: escalar V(s)
-    """
-
-    def __init__(self, hidden_dim: int = 128):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.GELU(),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.orthogonal_(m.weight, gain=0.5)
-                nn.init.zeros_(m.bias)
-
-    def forward(self, state_repr: torch.Tensor) -> torch.Tensor:
-        return self.net(state_repr).squeeze(-1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PPO Trainer
-# ─────────────────────────────────────────────────────────────────────────────
 
 class PPOTrainer:
     """
-    PPO (Proximal Policy Optimization) para ranking de productos.
+    PPO con KL Penalty Adaptativa para PolicyModel.
 
-    Hiperparámetros clave:
-        clip_epsilon:  clipping del ratio π_new/π_old (típico: 0.2)
-        kl_target:     KL máxima permitida vs política de referencia
-        entropy_coef:  coeficiente de entropía para exploración
-        ppo_epochs:    veces que se pasa por el buffer por update
+    Args:
+        policy_model:  El PolicyModel a entrenar
+        lr:            Learning rate del optimizador
+        target_kl:     KL objetivo (0.01 es conservador, 0.05 más agresivo)
+        beta_init:     Peso inicial de la KL penalty
+        beta_min:      Límite inferior de beta
+        beta_max:      Límite superior de beta
+        clip_eps:      Epsilon de clipping PPO (si usas ratio clipping)
     """
 
     def __init__(
         self,
-        policy_model,
-        reward_model,
-        learning_rate: float = 3e-5,
-        clip_epsilon: float = 0.2,
-        value_coef: float = 0.5,
-        entropy_coef: float = 0.01,
-        kl_coef: float = 0.1,
-        kl_target: float = 0.01,
-        max_grad_norm: float = 0.5,
-        ppo_epochs: int = 4,
-        min_buffer_size: int = 4,
-        device: str = "cpu",
+        policy_model: nn.Module,
+        lr: float = 3e-5,        # conservador — 1e-4 causó NaN con KL mal calculada
+        target_kl: float = 0.02,
+        beta_init: float = 0.1,
+        beta_min: float = 0.001,
+        beta_max: float = 10.0,
+        clip_eps: float = 0.2,
     ):
-        self.policy = policy_model.to(device)
-        self.reward_model = reward_model.to(device)
-        self.device = device
+        self.policy = policy_model
+        self.target_kl = target_kl
+        self.beta = beta_init
+        self.beta_min = beta_min
+        self.beta_max = beta_max
+        self.clip_eps = clip_eps
 
-        self.clip_epsilon = clip_epsilon
-        self.value_coef = value_coef
-        self.entropy_coef = entropy_coef
-        self.kl_coef = kl_coef
-        self.kl_target = kl_target
-        self.max_grad_norm = max_grad_norm
-        self.ppo_epochs = ppo_epochs
-        self.min_buffer_size = min_buffer_size
-
-        # Value network (critic / baseline)
-        self.value_net = ValueNetwork(policy_model.hidden_dim).to(device)
-
-        # Optimizadores
-        self.policy_optimizer = torch.optim.Adam(
-            list(policy_model.parameters()),
-            lr=learning_rate,
-            eps=1e-8,
-        )
-        self.value_optimizer = torch.optim.Adam(
-            self.value_net.parameters(),
-            lr=learning_rate * 3,  # Value network aprende más rápido
+        self.optimizer = torch.optim.Adam(
+            policy_model.parameters(), lr=lr
         )
 
-        # Política de referencia (congelada) — penaliza desviarse demasiado
-        self.reference_policy = copy.deepcopy(policy_model).to(device)
-        for p in self.reference_policy.parameters():
-            p.requires_grad_(False)
+        # -- Copia frozen del policy inicial (referencia para KL real) --
+        # Sin esto, KL(policy||policy) = 0 siempre -> gradiente sin control
+        import copy
+        self.policy_ref = copy.deepcopy(policy_model)
+        for param in self.policy_ref.parameters():
+            param.requires_grad = False
+        self.policy_ref.eval()
 
-        # Buffer de experiencias
-        self.buffer: List[RankingExperience] = []
+        # Historial para diagnóstico
+        self.kl_history: List[float] = []
+        self.beta_history: List[float] = []
+        self.loss_history: List[float] = []
+        self.reward_history: List[float] = []
 
-        # Historial
-        self.training_history: List[Dict] = []
-        self.total_updates: int = 0
+        self._version = 0
+        CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            f"PPOTrainer inicializado — "
-            f"lr={learning_rate}, ε={clip_epsilon}, "
-            f"kl_target={kl_target}, device={device}"
+            f"PPOTrainer: lr={lr}, target_kl={target_kl}, "
+            f"beta_init={beta_init}, clip_eps={clip_eps}"
         )
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Generación de rankings (collect phase)
-    # ─────────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Update step principal
+    # ------------------------------------------------------------------
 
-    @torch.no_grad()
-    def generate_ranking(
+    def update(
         self,
-        query_embedding: torch.Tensor,
-        product_embeddings: torch.Tensor,
-        product_features: torch.Tensor,
-        temperature: float = 1.0,
-        noise_scale: float = 0.0,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        query_emb: torch.Tensor,        # [emb_dim]
+        prod_embs_baseline: torch.Tensor,  # [top_k, emb_dim]  — ranking de referencia
+        prod_embs_policy: torch.Tensor,    # [top_k, emb_dim]  — ranking de la policy
+        advantage: torch.Tensor,        # escalar — r_policy - r_baseline
+    ) -> dict:
         """
-        Usa la política actual para generar un ranking.
-        No actualiza gradientes (modo collect).
+        Un paso de actualización PPO.
+
+        Objetivo:
+            Maximizar advantage mientras la policy no se aleje
+            demasiado del baseline (KL penalty adaptativa).
+
+        Loss:
+            L = -advantage * log_prob(ranking_policy | query)
+                + beta * KL(policy || baseline)
+
+        Returns:
+            {'loss': float, 'kl': float, 'beta': float}
         """
-        self.policy.eval()
-        qe = query_embedding.unsqueeze(0).to(self.device)
-        pe = product_embeddings.unsqueeze(0).to(self.device)
-        pf = product_features.unsqueeze(0).to(self.device)
-
-        ranking, log_prob = self.policy.get_ranking(
-            qe, pe, pf, temperature=temperature, noise_scale=noise_scale
-        )
-        return ranking.squeeze(0), log_prob.squeeze(0)
-
-    @torch.no_grad()
-    def score_ranking(
-        self,
-        query_embedding: torch.Tensor,
-        product_embeddings: torch.Tensor,
-        product_features: torch.Tensor,
-        ranking: torch.Tensor,
-    ) -> float:
-        """Usa el RewardModel para puntuar un ranking. Retorna reward escalar."""
-        self.reward_model.eval()
-        qe = query_embedding.unsqueeze(0).to(self.device)
-        # Reordenar productos según el ranking
-        pe_ordered = product_embeddings[ranking].unsqueeze(0).to(self.device)
-        pf_ordered = product_features[ranking].unsqueeze(0).to(self.device)
-
-        reward = self.reward_model(qe, pe_ordered, pf_ordered)
-        return reward.item()
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Buffer management
-    # ─────────────────────────────────────────────────────────────────────
-
-    def add_experience(self, exp: RankingExperience):
-        self.buffer.append(exp)
-
-    def collect_and_store(
-        self,
-        query_embedding: torch.Tensor,
-        product_embeddings: torch.Tensor,
-        product_features: torch.Tensor,
-        query_text: str = "",
-        temperature: float = 1.2,
-        noise_scale: float = 0.1,
-    ):
-        """
-        Genera un ranking, lo puntúa con el Reward Model, y lo guarda en el buffer.
-        Este es el paso "collect" del ciclo RLHF.
-        """
-        ranking, log_prob = self.generate_ranking(
-            query_embedding, product_embeddings, product_features,
-            temperature=temperature, noise_scale=noise_scale
-        )
-        reward = self.score_ranking(
-            query_embedding, product_embeddings, product_features, ranking
-        )
-
-        self.add_experience(RankingExperience(
-            query_embedding=query_embedding.cpu(),
-            product_embeddings=product_embeddings.cpu(),
-            product_features=product_features.cpu(),
-            ranking=ranking.cpu(),
-            log_prob=log_prob.detach().cpu(),
-            reward=reward,
-            query_text=query_text,
-        ))
-
-        logger.debug(
-            f"Experiencia guardada: reward={reward:.4f}, "
-            f"query='{query_text[:30]}'"
-        )
-
-    # ─────────────────────────────────────────────────────────────────────
-    # PPO Update
-    # ─────────────────────────────────────────────────────────────────────
-
-    def _get_state_repr(
-        self,
-        query_emb: torch.Tensor,
-        prod_embs: torch.Tensor,
-        prod_feats: torch.Tensor,
-    ) -> torch.Tensor:
-        """Extrae representación del estado para la Value Network."""
-        # Usamos la proyección del query de la política
-        with torch.no_grad():
-            q_repr = self.policy.query_proj(query_emb)
-        return q_repr
-
-    def _compute_log_probs_new(
-        self,
-        queries: torch.Tensor,
-        prod_embs: torch.Tensor,
-        prod_feats: torch.Tensor,
-        rankings: torch.Tensor,
-    ) -> torch.Tensor:
-        """Calcula log-probabilidades NUEVAS bajo la política actual."""
-        scores = self.policy(queries, prod_embs, prod_feats)
-        log_probs = self.policy._plackett_luce_log_prob(scores, rankings)
-        return log_probs
-
-    @torch.no_grad()
-    def _compute_log_probs_ref(
-        self,
-        queries: torch.Tensor,
-        prod_embs: torch.Tensor,
-        prod_feats: torch.Tensor,
-        rankings: torch.Tensor,
-    ) -> torch.Tensor:
-        """Calcula log-probabilidades bajo la política de REFERENCIA (congelada)."""
-        scores = self.reference_policy(queries, prod_embs, prod_feats)
-        log_probs = self.reference_policy._plackett_luce_log_prob(scores, rankings)
-        return log_probs
-
-    def update(self) -> Optional[Dict]:
-        """
-        Ejecuta el update PPO sobre el buffer acumulado.
-
-        Pasos:
-          1. Normalizar advantages (reduce varianza)
-          2. Para cada época PPO:
-             a. Calcular ratio π_new/π_old
-             b. Clipping PPO: min(ratio*A, clip(ratio)*A)
-             c. Value loss (MSE entre V(s) y reward real)
-             d. Entropía bonus (exploración)
-             e. KL penalty vs política de referencia
-          3. Early stop si KL > kl_target * 1.5
-          4. Vaciar buffer
-        """
-        if len(self.buffer) < self.min_buffer_size:
-            logger.warning(
-                f"Buffer muy pequeño: {len(self.buffer)}/{self.min_buffer_size}. "
-                f"Agrega más experiencias antes de update()."
-            )
-            return None
-
         self.policy.train()
-        self.value_net.train()
 
-        # Empaquetar buffer en tensores
-        # (todos los batches tienen el mismo n_prod por padding en collect)
-        n_prod = self.buffer[0].product_embeddings.shape[0]
+        q = query_emb.unsqueeze(0)                  # [1, emb_dim]
+        pb = prod_embs_baseline.unsqueeze(0)        # [1, top_k, emb_dim]
+        pp = prod_embs_policy.unsqueeze(0)          # [1, top_k, emb_dim]
 
-        queries    = torch.stack([e.query_embedding for e in self.buffer]).to(self.device)
-        prod_embs  = torch.stack([e.product_embeddings for e in self.buffer]).to(self.device)
-        prod_feats = torch.stack([e.product_features for e in self.buffer]).to(self.device)
-        rankings   = torch.stack([e.ranking for e in self.buffer]).to(self.device)
-        old_lp     = torch.stack([e.log_prob for e in self.buffer]).to(self.device)
-        rewards    = torch.tensor(
-            [e.reward for e in self.buffer], dtype=torch.float32, device=self.device
+        # product_features: zeros [1, top_k, 8] — PolicyModel los requiere
+        n = pb.size(1)
+        feats = torch.zeros(1, n, 8, dtype=torch.float32, device=query_emb.device)
+
+        # -- Scores de la policy entrenada ------------------------------
+        scores_policy_on_baseline = self.policy(q, pb, feats).squeeze()  # [top_k]
+        scores_policy_on_policy   = self.policy(q, pp, feats).squeeze()  # [top_k]
+
+        log_probs_current = F.log_softmax(scores_policy_on_policy, dim=-1)
+
+        # -- Scores de la policy de referencia (frozen) -----------------
+        # KL real = KL(policy_actual || policy_ref)
+        # Sin policy_ref, KL(p||p)=0 siempre -> sin restricción -> NaN
+        with torch.no_grad():
+            scores_ref = self.policy_ref(q, pb, feats).squeeze()
+            log_probs_ref = F.log_softmax(scores_ref, dim=-1)
+            probs_ref = log_probs_ref.exp()
+
+        log_probs_policy_on_baseline = F.log_softmax(scores_policy_on_baseline, dim=-1)
+
+        # KL(policy_actual || policy_ref) — divergencia real del baseline
+        kl = F.kl_div(
+            log_probs_policy_on_baseline,
+            probs_ref,
+            reduction='sum',
+            log_target=False,
         )
+        kl_val = kl.item()
 
-        # Normalizar rewards como advantages
-        advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+        # NaN guard — si KL explota, skip este step
+        if not np.isfinite(kl_val):
+            logger.warning(f"  KL={kl_val} — step ignorado (NaN/Inf)")
+            return {'loss': 0.0, 'kl': 0.0, 'beta': self.beta, 'skipped': True}
 
-        all_policy_losses, all_value_losses, all_kl_divs, all_entropies = [], [], [], []
+        # -- Policy gradient loss ---------------------------------------
+        # advantage > 0: policy_ranking > baseline_ranking según reward
+        pg_loss = -advantage * log_probs_current.mean()
 
-        for epoch in range(self.ppo_epochs):
-            idx = torch.randperm(len(self.buffer), device=self.device)
+        # NaN en advantage
+        if not torch.isfinite(advantage):
+            return {'loss': 0.0, 'kl': kl_val, 'beta': self.beta, 'skipped': True}
 
-            new_lp = self._compute_log_probs_new(queries, prod_embs, prod_feats, rankings)
-            ref_lp = self._compute_log_probs_ref(queries, prod_embs, prod_feats, rankings)
+        # -- Loss total con KL penalty ----------------------------------
+        loss = pg_loss + self.beta * kl
 
-            # ── Ratio PPO ─────────────────────────────────────────────────
-            ratio = torch.exp(new_lp - old_lp)
+        if not torch.isfinite(loss):
+            return {'loss': 0.0, 'kl': kl_val, 'beta': self.beta, 'skipped': True}
 
-            # ── Objetivo PPO clipped ──────────────────────────────────────
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+        self.optimizer.zero_grad()
+        loss.backward()
+        # Clipping más conservador: 0.5 en lugar de 1.0
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+        self.optimizer.step()
 
-            # ── Value loss ────────────────────────────────────────────────
-            state_repr = self._get_state_repr(queries, prod_embs, prod_feats)
-            values = self.value_net(state_repr)
-            value_loss = F.mse_loss(values, rewards)
+        # Actualizar beta adaptativamente
+        self._update_beta(kl_val)
 
-            # ── Entropía (exploración) ────────────────────────────────────
-            entropy = -new_lp.mean()   # Para Plackett-Luce, -E[log π] ≈ entropía
+        loss_val = loss.item()
+        self.kl_history.append(kl_val)
+        self.beta_history.append(self.beta)
+        self.loss_history.append(loss_val)
+        self.reward_history.append(advantage.item())
 
-            # ── KL divergence vs referencia ───────────────────────────────
-            # KL(π_new || π_ref) = E[log π_new - log π_ref]
-            kl_div = (new_lp - ref_lp).mean()
+        return {'loss': loss_val, 'kl': kl_val, 'beta': self.beta}
 
-            # ── Loss total ────────────────────────────────────────────────
-            total_loss = (
-                policy_loss
-                + self.value_coef * value_loss
-                - self.entropy_coef * entropy
-                + self.kl_coef * kl_div
-            )
+    # ------------------------------------------------------------------
+    # KL Adaptativa
+    # ------------------------------------------------------------------
 
-            self.policy_optimizer.zero_grad()
-            self.value_optimizer.zero_grad()
-            total_loss.backward()
+    def _update_beta(self, kl: float):
+        """
+        Ajusta beta basado en si el KL actual supera o es inferior al target.
 
-            nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            nn.utils.clip_grad_norm_(self.value_net.parameters(), self.max_grad_norm)
+        Lógica:
+            kl > target_kl       -> la policy diverge demasiado -> aumentar penalización
+            kl < target_kl / 2   -> la policy es demasiado conservadora -> reducir penalización
+        """
+        if kl > self.target_kl:
+            self.beta = min(self.beta * 1.5, self.beta_max)
+        elif kl < self.target_kl / 2:
+            self.beta = max(self.beta * 0.8, self.beta_min)
+        # Si está en la zona correcta (target_kl/2 <= kl <= target_kl), no cambiar
 
-            self.policy_optimizer.step()
-            self.value_optimizer.step()
+    # ------------------------------------------------------------------
+    # Versionado de checkpoints
+    # ------------------------------------------------------------------
 
-            all_policy_losses.append(policy_loss.item())
-            all_value_losses.append(value_loss.item())
-            all_kl_divs.append(kl_div.item())
-            all_entropies.append(entropy.item())
+    def save_version(self, label: str = None) -> Path:
+        """
+        Guarda una versión nombrada del modelo para comparación en paper.
 
-            # ── Early stopping por KL ─────────────────────────────────────
-            if abs(kl_div.item()) > self.kl_target * 1.5:
-                logger.warning(
-                    f"Early stop PPO: KL={kl_div.item():.4f} > "
-                    f"{self.kl_target * 1.5:.4f} en época {epoch + 1}"
-                )
-                break
+        Uso:
+            trainer.save_version("v0_baseline")   -> policy_v0_baseline.pt
+            trainer.save_version("v1_reward")     -> policy_v1_reward.pt
+            trainer.save_version("v2_ppo_c1")    -> policy_v2_ppo_c1.pt
 
-        self.total_updates += 1
+        Args:
+            label: Nombre descriptivo de la versión
 
-        metrics = {
-            "update": self.total_updates,
-            "policy_loss": float(np.mean(all_policy_losses)),
-            "value_loss": float(np.mean(all_value_losses)),
-            "kl_divergence": float(np.mean(all_kl_divs)),
-            "entropy": float(np.mean(all_entropies)),
-            "mean_reward": rewards.mean().item(),
-            "max_reward": rewards.max().item(),
-            "buffer_size": len(self.buffer),
+        Returns:
+            Path al archivo guardado
+        """
+        if label is None:
+            label = f"cycle{self._version}"
+        filename = f"policy_v{self._version}_{label}.pt"
+        path = CHECKPOINT_DIR / filename
+        torch.save(self.policy.state_dict(), path)
+        logger.info(f"  [OK] Versión guardada: {filename}")
+        self._version += 1
+        return path
+
+    def list_versions(self) -> List[Path]:
+        """Lista todas las versiones guardadas."""
+        return sorted(CHECKPOINT_DIR.glob("policy_v*.pt"))
+
+    # ------------------------------------------------------------------
+    # Diagnósticos
+    # ------------------------------------------------------------------
+
+    def check_policy_updated(
+        self,
+        weight_before: float,
+        weight_after: float,
+    ) -> dict:
+        """
+        Verifica si la policy realmente se actualizó.
+
+        Uso:
+            before = policy.linear.weight.mean().item()
+            trainer.update(...)
+            after = policy.linear.weight.mean().item()
+            diag = trainer.check_policy_updated(before, after)
+
+        Returns:
+            {'delta': float, 'updated': bool, 'warning': str}
+        """
+        delta = abs(weight_after - weight_before)
+        updated = delta > 1e-7
+
+        result = {
+            'weight_before': weight_before,
+            'weight_after': weight_after,
+            'delta': delta,
+            'updated': updated,
         }
 
-        self.training_history.append(metrics)
+        if not updated:
+            result['warning'] = (
+                "Policy no cambió. Causas:\n"
+                "  1. KL demasiado alto (beta muy grande)\n"
+                "  2. Reward plano (reward model no discrimina)\n"
+                "  3. Learning rate demasiado pequeño"
+            )
+        return result
 
-        logger.info(
-            f"PPO Update #{self.total_updates}: "
-            f"policy_loss={metrics['policy_loss']:.4f}, "
-            f"reward={metrics['mean_reward']:.4f}, "
-            f"kl={metrics['kl_divergence']:.5f}"
-        )
+    def get_kl_status(self) -> dict:
+        """Estado actual del KL y beta."""
+        recent_kl = self.kl_history[-10:] if self.kl_history else []
+        avg_kl = np.mean(recent_kl) if recent_kl else 0.0
 
-        # Vaciar buffer
-        self.buffer.clear()
+        status = 'ok'
+        if avg_kl > self.target_kl * 2:
+            status = 'too_high'
+        elif avg_kl < self.target_kl / 4:
+            status = 'too_low'
 
-        # Actualizar política de referencia si entrenamos suficiente
-        if self.total_updates % 10 == 0:
-            self._update_reference_policy()
-
-        return metrics
-
-    def _update_reference_policy(self):
-        """
-        Actualiza la política de referencia con los pesos actuales.
-        Esto permite que el KL penalty "siga" al modelo conforme aprende.
-        Se hace de forma soft (EMA) para no perder la restricción de golpe.
-        """
-        alpha = 0.3  # Tasa de actualización
-        for p_new, p_ref in zip(
-            self.policy.parameters(), self.reference_policy.parameters()
-        ):
-            p_ref.data.copy_(alpha * p_new.data + (1 - alpha) * p_ref.data)
-
-        logger.debug("Política de referencia actualizada (soft EMA)")
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Persistencia
-    # ─────────────────────────────────────────────────────────────────────
-
-    def save(self, path: str):
-        import os
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        torch.save({
-            "policy": self.policy.state_dict(),
-            "value_net": self.value_net.state_dict(),
-            "reference_policy": self.reference_policy.state_dict(),
-            "policy_optimizer": self.policy_optimizer.state_dict(),
-            "value_optimizer": self.value_optimizer.state_dict(),
-            "training_history": self.training_history,
-            "total_updates": self.total_updates,
-        }, path)
-        logger.info(f"PPOTrainer guardado: {path} (updates={self.total_updates})")
-
-    def load(self, path: str):
-        ck = torch.load(path, map_location=self.device)
-        self.policy.load_state_dict(ck["policy"])
-        self.value_net.load_state_dict(ck["value_net"])
-        self.reference_policy.load_state_dict(ck["reference_policy"])
-        self.policy_optimizer.load_state_dict(ck["policy_optimizer"])
-        self.value_optimizer.load_state_dict(ck["value_optimizer"])
-        self.training_history = ck.get("training_history", [])
-        self.total_updates = ck.get("total_updates", 0)
-        logger.info(f"PPOTrainer cargado: {path} (updates={self.total_updates})")
-
-    def get_stats(self) -> Dict:
-        if not self.training_history:
-            return {"total_updates": 0, "trained": False}
-
-        last = self.training_history[-1]
         return {
-            "total_updates": self.total_updates,
-            "trained": self.total_updates > 0,
-            "last_reward": last.get("mean_reward", 0),
-            "last_kl": last.get("kl_divergence", 0),
-            "last_policy_loss": last.get("policy_loss", 0),
-            "buffer_current": len(self.buffer),
+            'current_beta': self.beta,
+            'target_kl': self.target_kl,
+            'recent_avg_kl': avg_kl,
+            'status': status,
+            'n_updates': len(self.kl_history),
+        }
+
+    def get_training_summary(self) -> dict:
+        """Resumen del entrenamiento para logging."""
+        if not self.loss_history:
+            return {'n_updates': 0}
+
+        return {
+            'n_updates': len(self.loss_history),
+            'avg_loss_last10': float(np.mean(self.loss_history[-10:])),
+            'avg_kl_last10': float(np.mean(self.kl_history[-10:])) if self.kl_history else 0,
+            'avg_reward_last10': float(np.mean(self.reward_history[-10:])) if self.reward_history else 0,
+            'current_beta': self.beta,
+            'beta_range': f"[{self.beta_min}, {self.beta_max}]",
+            'versions_saved': len(self.list_versions()),
         }

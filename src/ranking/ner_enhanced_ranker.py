@@ -36,7 +36,7 @@ class NEREnhancedRanker:
         
         # Log de intent solo una vez
         if query_cleaned not in self._logged_queries:
-            logger.info(f"   Query: '{query_cleaned}' → Intent: {list(query_intent.keys())}")
+            logger.info(f"   Query: '{query_cleaned}' -> Intent: {list(query_intent.keys())}")
             self._logged_queries.add(query_cleaned)
         
         scored = []

@@ -82,13 +82,13 @@ def _load_single_file(
                     logger.debug(f"Error procesando línea: {e}")
                     continue
         
-        logger.info(f"  ✓ Líneas leídas: {lines_read}")
-        logger.info(f"  ✓ Productos válidos: {lines_valid}")
+        logger.info(f"  [OK] Líneas leídas: {lines_read}")
+        logger.info(f"  [OK] Productos válidos: {lines_valid}")
         
         return products
         
     except Exception as e:
-        logger.error(f"  ✗ Error cargando {file_path_obj.name}: {e}")
+        logger.error(f"  [ERR] Error cargando {file_path_obj.name}: {e}")
         return []
 
 
@@ -132,11 +132,11 @@ def _load_all_files(
             )
             products.extend(file_products)
 
-            logger.info(f"  ✓ Productos de archivo: {len(file_products)}")
-            logger.info(f"  ✓ Total acumulado: {len(products)}")
+            logger.info(f"  [OK] Productos de archivo: {len(file_products)}")
+            logger.info(f"  [OK] Total acumulado: {len(products)}")
 
         except OSError as e:
-            logger.error(f"  ✗ Error cargando {file_path.name}: {e}")
+            logger.error(f"  [ERR] Error cargando {file_path.name}: {e}")
             continue
 
     logger.info("\n" + "=" * 60)

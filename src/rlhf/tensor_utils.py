@@ -1,3 +1,4 @@
+# src/rlhf/tensor_utils.py
 """
 Tensor Utils — Convierte productos canónicos a tensores PyTorch para RLHF.
 
@@ -45,9 +46,9 @@ class ProductTensorizer:
         self.max_products = max_products
         self.feature_dim = FEATURE_DIM
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Features escalares de un producto
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def extract_product_features(
         self,
@@ -97,9 +98,9 @@ class ProductTensorizer:
 
         return torch.tensor(feats, dtype=torch.float32)
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Embedding de un producto
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def get_product_embedding(self, product) -> Optional[torch.Tensor]:
         """
@@ -128,9 +129,9 @@ class ProductTensorizer:
 
         return emb.float()
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Conversión de lista de productos
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def products_to_tensors(
         self,
@@ -183,9 +184,9 @@ class ProductTensorizer:
             t = t / norm
         return t
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Ranking a lista de dicts para la UI
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def ranking_to_display(
         self,
@@ -215,9 +216,9 @@ class ProductTensorizer:
 
         return result
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
     # Preferencia a tensores de entrenamiento
-    # ─────────────────────────────────────────────────────────────────────
+    # ---------------------------------------------------------------------
 
     def preference_to_training_sample(
         self,
@@ -236,7 +237,7 @@ class ProductTensorizer:
             query_emb, preferred_embs, preferred_feats,
             rejected_embs, rejected_feats
         """
-        # Construir mapa id → producto
+        # Construir mapa id -> producto
         id_map = {
             getattr(p, "id", ""): p
             for p in all_products

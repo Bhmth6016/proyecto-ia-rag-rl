@@ -121,7 +121,7 @@ class InteractiveRAGRLSystem:
             print(f"   • RLHF alpha: {self.config['rlhf'].get('alpha', 0.1)}")
             
         except Exception as e:
-            print(f"⚠️  Error inicializando componentes: {e}")
+            print(f"[WARN]️  Error inicializando componentes: {e}")
             print("   Creando componentes simulados para demo...")
             self._create_mock_components()
     
@@ -134,7 +134,7 @@ class InteractiveRAGRLSystem:
         jsonl_files = list(raw_dir.glob("*.jsonl"))
         
         if not jsonl_files:
-            print("⚠️  No hay archivos .jsonl, creando datos de ejemplo")
+            print("[WARN]️  No hay archivos .jsonl, creando datos de ejemplo")
             return self._create_sample_products()
         
         # Procesar primeros 2 archivos
@@ -164,10 +164,10 @@ class InteractiveRAGRLSystem:
                         except json.JSONDecodeError:
                             continue
                 
-                print(f"   ✓ {file_path.name}: {min(250, i)} productos")
+                print(f"   [OK] {file_path.name}: {min(250, i)} productos")
                 
             except Exception as e:
-                print(f"   ✗ Error en {file_path.name}: {e}")
+                print(f"   [ERR] Error en {file_path.name}: {e}")
         
         print(f"✅ Total productos cargados: {len(products)}")
         return products
@@ -359,7 +359,7 @@ class InteractiveRAGRLSystem:
                 'description': getattr(product, 'description', '')[:100] + '...',
                 'price': f"${getattr(product, 'price', 0):.2f}" if hasattr(product, 'price') and product.price else "N/A",
                 'category': getattr(product, 'category', 'General'),
-                'rating': f"⭐{getattr(product, 'rating', 0):.1f}" if hasattr(product, 'rating') and product.rating else "Sin rating",
+                'rating': f"*{getattr(product, 'rating', 0):.1f}" if hasattr(product, 'rating') and product.rating else "Sin rating",
                 'brand': getattr(product, 'brand', ''),
                 'features': getattr(product, 'features_dict', {})
             })
