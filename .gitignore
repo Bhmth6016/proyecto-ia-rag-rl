@@ -14,3 +14,5 @@ myenv/
 /data/raw
 /data/reviews
 /data
+!/data/interactions/
+!/data/interactions/**
