@@ -242,54 +242,56 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
             logger.error(f"Error en NER-enhanced: {e}")
             return self._process_query_baseline(query_text, k)
 
-
     def _method_reward_only(self, query_text: str, k: int) -> list:
-        """
-        Fase 1 — Reranking puro con reward model, sin PPO.
-        Retrieval:  FAISS top-k*2
-        Reranking:  reward model puntúa cada candidato individualmente
-                    en posición 0 (máximo peso DCG) y reordena.
-        Si el reward no está entrenado, devuelve baseline.
-        """
-        import torch, numpy as np
+            """
+            Reranking con PointwiseRewardModel, sin PPO.
 
-        if not hasattr(self, 'rlhf_pipeline') or self.rlhf_pipeline is None:
-            return self._process_query_baseline(query_text, k)
+            Retrieval:  FAISS top-k*2
+            Reranking:  reward model puntúa cada candidato individualmente
+                        y reordena. Si el reward no está entrenado → baseline.
+            """
+            import torch
+            import numpy as np
 
-        pipeline = self.rlhf_pipeline
-        if not pipeline.reward_trained:
-            logger.debug("reward_only: reward no entrenado — usando baseline")
-            return self._process_query_baseline(query_text, k)
+            if not hasattr(self, 'rlhf_pipeline') or self.rlhf_pipeline is None:
+                return self._process_query_baseline(query_text, k)
 
-        try:
-            q_emb = self.canonicalizer.embedding_model.encode(
-                query_text, normalize_embeddings=True
-            )
-            candidates = self.vector_store.search(q_emb, k=k * 2)
-            if not candidates:
-                return []
+            pipeline = self.rlhf_pipeline
+            if not pipeline.reward_trained:
+                logger.debug("reward_only: reward no entrenado — usando baseline")
+                return self._process_query_baseline(query_text, k)
 
-            top_cands = candidates[:pipeline.top_k]
-            prod_embs = pipeline._products_to_embs(top_cands)
-            if prod_embs is None:
-                return candidates[:k]
+            try:
+                q_emb = self.canonicalizer.embedding_model.encode(
+                    query_text, normalize_embeddings=True
+                )
+                candidates = self.vector_store.search(q_emb, k=k * 2)
+                if not candidates:
+                    return []
 
-            q_t = torch.tensor(q_emb, dtype=torch.float32, device=pipeline.device)
+                top_cands = candidates[:pipeline.top_k]
+                prod_embs = pipeline._products_to_embs(top_cands)
+                if prod_embs is None:
+                    return candidates[:k]
 
-            pipeline.reward_model.eval()
-            scores = []
-            with torch.no_grad():
-                for i in range(prod_embs.size(0)):
-                    single = prod_embs[i:i+1].unsqueeze(0)  # [1, 1, emb_dim]
-                    r = pipeline.reward_model(q_t.unsqueeze(0), single)
-                    scores.append(r.item())
+                # q_t: [emb_dim]  →  expandir a [1, emb_dim] para el modelo pointwise
+                q_t = torch.tensor(q_emb, dtype=torch.float32, device=pipeline.device)
 
-            order = np.argsort(scores)[::-1]
-            return [top_cands[j] for j in order if j < len(top_cands)][:k]
+                pipeline.reward_model.eval()
+                scores = []
+                with torch.no_grad():
+                    for i in range(prod_embs.size(0)):
+                        # p_emb: [1, emb_dim]  (2D — lo que espera PointwiseRewardModel)
+                        p_emb = prod_embs[i:i+1]
+                        r     = pipeline.reward_model(q_t.unsqueeze(0), p_emb)
+                        scores.append(r.item())
 
-        except Exception as e:
-            logger.error(f"Error en reward_only: {e}")
-            return self._process_query_baseline(query_text, k)
+                order = np.argsort(scores)[::-1]
+                return [top_cands[j] for j in order if j < len(top_cands)][:k]
+
+            except Exception as e:
+                logger.error(f"Error en reward_only: {e}")
+                return self._process_query_baseline(query_text, k)
 
     def _method_rlhf(self, query_text: str, k: int) -> List:
         """
