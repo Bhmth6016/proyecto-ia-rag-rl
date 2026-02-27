@@ -4,12 +4,11 @@ import os; os.environ.setdefault("PYTHONUTF8", "1")
 evaluate_esci_v2.py
 ====================
 Evaluación con el corpus ESCI nuevo.
-VERSIÓN CORREGIDA - FIX DEFINITIVO para error de dimensiones
+VERSIÓN CORREGIDA - INTERPOLACIÓN FAISS + REWARD
 
-CORRECCIONES CLAVE:
-    1. Forzar todos los embeddings a shape [384] (no [1,384])
-    2. Pasar pool_size correctamente a reward_only_rank
-    3. Debug de shapes para verificar
+CAMBIO CLAVE:
+    reward_only_rank ahora interpola score coseno (FAISS) con reward model
+    alpha controla el peso del reward (0.3-0.5 recomendado)
 """
 import argparse
 import json
@@ -34,6 +33,7 @@ METHODS = ['baseline', 'reward_only']
 
 # Cache global
 _EMB_CACHE: Optional[Dict[str, np.ndarray]] = None
+_rank_cache: Dict[str, List[str]] = {}
 
 
 # ---------------------------------------------------------------------
@@ -116,7 +116,7 @@ def get_product_embedding(pid: str, cache: Optional[Dict] = None) -> Optional[np
 
 
 # ---------------------------------------------------------------------
-# Reward-only ranker - VERSIÓN CORREGIDA CON FIX DE SHAPES
+# Reward-only ranker - VERSIÓN INTERPOLADA (FAISS + REWARD)
 # ---------------------------------------------------------------------
 def _is_pointwise_model(pipeline) -> bool:
     """Detecta si el reward model es pointwise"""
@@ -136,29 +136,126 @@ def _is_pointwise_model(pipeline) -> bool:
     except Exception:
         return False
 
-def get_ranked(system, pipeline, method: str, query: str, k: int = 20,
-               pool_size: Optional[int] = None) -> List[str]:
-    cache_key = f"{method}|{query}|{k}|{pool_size}"
-    if cache_key in _rank_cache:
-        return _rank_cache[cache_key]
 
+def reward_only_rank(system, pipeline, query: str, k: int,
+                     pool_size: int = 50) -> List[str]:
+    """
+    Rerankea combinando score coseno (FAISS) con reward model.
+    alpha controla peso del reward vs coseno original.
+    
+    Args:
+        alpha: 0 = solo FAISS, 1 = solo reward (recomendado 0.3-0.5)
+    """
+    alpha = 0.3  # AJUSTA ESTE VALOR: 0.2, 0.3, 0.4, 0.5
+    
     try:
-        if method == 'baseline':
-            asins = baseline_rank(system, pipeline, query, k)
-        elif method == 'reward_only':
-            asins = reward_only_rank(system, pipeline, query, k,
-                                     pool_size=pool_size or 50)
-        else:
-            asins = baseline_rank(system, pipeline, query, k)
-    except Exception as e:
-        logger.debug(f"Error en get_ranked ({method}): {e}")
-        asins = []
+        emb_model = pipeline.emb_model
+        reward_model = pipeline.reward_model
+        device = pipeline.device
 
-    _rank_cache[cache_key] = asins
-    return asins
+        # 1. Embedding de la query
+        q_emb_np = emb_model.encode(query, normalize_embeddings=True)
+        q_emb_np = np.array(q_emb_np).flatten()  # [384]
+
+        # 2. Candidatos FAISS con scores coseno
+        candidates = system.vector_store.search(q_emb_np, k=pool_size)
+        if not candidates:
+            return []
+
+        asins = _asins(candidates)
+        if not asins:
+            return []
+
+        # 3. Scores coseno normalizados [0,1]
+        cosine_scores = {}
+        for i, p in enumerate(candidates):
+            pid = str(getattr(p, 'id', '') or getattr(p, 'product_id', ''))
+            # Intentar obtener score del objeto FAISS
+            score = getattr(p, 'score', None) or getattr(p, 'similarity', None)
+            if score is None:
+                # Fallback: score basado en posición (más relevante = score más alto)
+                score = 1.0 - (i / len(candidates))
+            cosine_scores[pid] = float(score)
+
+        # Normalizar coseno a [0,1]
+        vals = list(cosine_scores.values())
+        c_min, c_max = min(vals), max(vals)
+        if c_max > c_min:
+            cosine_scores = {pid: (s - c_min) / (c_max - c_min)
+                             for pid, s in cosine_scores.items()}
+        else:
+            # Todos iguales
+            cosine_scores = {pid: 0.5 for pid in cosine_scores}
+
+        # 4. Embeddings de productos
+        cache = load_embedding_cache()
+        prod_embs = []
+        valid_asins = []
+        for pid in asins:
+            emb = get_product_embedding(pid, cache)
+            if emb is not None:
+                prod_embs.append(np.array(emb).flatten())  # forzar [384]
+                valid_asins.append(pid)
+
+        if not valid_asins:
+            return asins[:k]
+
+        # 5. Reward scores
+        q_tensor = torch.tensor(q_emb_np, dtype=torch.float32, device=device)
+        q_tensor = q_tensor.unsqueeze(0).expand(len(valid_asins), -1)  # [N, 384]
+        
+        p_tensor = torch.tensor(
+            np.stack(prod_embs, axis=0),  # [N, 384]
+            dtype=torch.float32,
+            device=device
+        )
+
+        reward_model.eval()
+        with torch.no_grad():
+            scores = reward_model(q_tensor, p_tensor)
+            if scores.dim() > 1:
+                scores = scores.squeeze(-1)  # forzar [N]
+
+        reward_np = scores.cpu().numpy()
+
+        # Normalizar reward a [0,1]
+        r_min, r_max = reward_np.min(), reward_np.max()
+        if r_max > r_min:
+            reward_np = (reward_np - r_min) / (r_max - r_min)
+        else:
+            reward_np = np.ones_like(reward_np) * 0.5
+
+        # 6. Score combinado (interpolación lineal)
+        combined = []
+        for i, pid in enumerate(valid_asins):
+            cos = cosine_scores.get(pid, 0.5)
+            rew = float(reward_np[i])
+            final = (1 - alpha) * cos + alpha * rew
+            combined.append((pid, final))
+
+        # 7. Ordenar por score combinado descendente
+        combined.sort(key=lambda x: x[1], reverse=True)
+        ranked = [pid for pid, _ in combined[:k]]
+        
+        # Debug: mostrar top 5 scores
+        if len(ranked) >= 5:
+            logger.debug(f"Query: {query[:30]}... | alpha={alpha}")
+            for i, pid in enumerate(ranked[:5]):
+                logger.debug(f"  {i+1}. {pid} (cos={cosine_scores.get(pid,0):.3f}, "
+                           f"rew={reward_np[valid_asins.index(pid)]:.3f}, "
+                           f"comb={combined[i][1]:.3f})")
+        
+        return ranked
+
+    except Exception as e:
+        logger.error(f"Error en reward_only: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return []
+
 
 def baseline_rank(system, pipeline, query: str, k: int) -> List[str]:
-    """Baseline FAISS"""
+    """Baseline FAISS puro"""
     try:
         q_emb = pipeline.emb_model.encode(query, normalize_embeddings=True)
         candidates = system.vector_store.search(q_emb, k=k)
@@ -181,31 +278,21 @@ def _asins(products) -> List[str]:
 # ---------------------------------------------------------------------
 # Evaluación
 # ---------------------------------------------------------------------
-_rank_cache: Dict[str, List[str]] = {}
-
-
 def get_ranked(system, pipeline, method: str, query: str, k: int = 20,
                pool_size: Optional[int] = None) -> List[str]:
-    """
-    Obtiene ranking para un método, con cache y parámetros específicos
-
-    Args:
-        pool_size: Solo se usa para reward_only, controla cuántos candidatos rerankear
-    """
+    """Obtiene ranking para un método, con cache"""
     cache_key = f"{method}|{query}|{k}|{pool_size}"
     if cache_key in _rank_cache:
         return _rank_cache[cache_key]
 
     try:
-        if method == 'reward_only':
-            # 🔥 PASAR POOL_SIZE EXPLÍCITAMENTE 🔥
-            if pool_size is None:
-                pool_size = 50  # default
-            asins = reward_only_rank(system, pipeline, query, k, pool_size=pool_size)
+        if method == 'baseline':
+            asins = baseline_rank(system, pipeline, query, k)
+        elif method == 'reward_only':
+            asins = reward_only_rank(system, pipeline, query, k,
+                                     pool_size=pool_size or 50)
         else:
-            res = system.query_four_methods(query, k=k)
-            prods = res.get('methods', {}).get(method, [])
-            asins = _asins(prods)
+            asins = baseline_rank(system, pipeline, query, k)
     except Exception as e:
         logger.debug(f"Error en get_ranked ({method}): {e}")
         asins = []
@@ -213,26 +300,36 @@ def get_ranked(system, pipeline, method: str, query: str, k: int = 20,
     _rank_cache[cache_key] = asins
     return asins
 
+
 def evaluate(system, pipeline, ground_truth: Dict[str, Dict[str, int]],
              queries: List[str], pool_size: int = 50) -> Dict[str, List[dict]]:
+    """Evalúa todos los métodos para todas las queries"""
     results = {m: [] for m in METHODS}
     n = len(queries)
+    
     logger.info(f"Evaluando {n:,} queries — métodos: {METHODS}")
     logger.info(f"Pool size para reward_only: {pool_size}")
 
     for i, query in enumerate(queries, 1):
         if i % 100 == 0 or i == 1:
             logger.info(f"  [{i}/{n}] {query[:50]}...")
+        
         relevance = ground_truth.get(query, {})
+        
         for method in METHODS:
             ranked = get_ranked(system, pipeline, method, query,
                                 k=20, pool_size=pool_size)
             metrics = all_metrics(ranked, relevance)
-            metrics.update({'query': query, 'method': method,
-                            'ranked_count': len(ranked)})
+            metrics.update({
+                'query': query,
+                'method': method,
+                'ranked_count': len(ranked)
+            })
             results[method].append(metrics)
 
     return results
+
+
 # ---------------------------------------------------------------------
 # Agregación y estadísticas
 # ---------------------------------------------------------------------
@@ -307,7 +404,8 @@ def stat_tests(results: Dict[str, List[dict]]) -> dict:
 # Tabla de resultados
 # ---------------------------------------------------------------------
 def print_table(summary: dict, tests: dict, n_queries: int, phase: str,
-                pool_size: int) -> str:
+                pool_size: int, alpha: float) -> str:
+    """Imprime tabla de resultados con interpolación"""
     bl = summary.get('baseline', {}).get('ndcg@10_mean', 0)
     ro = summary.get('reward_only', {}).get('ndcg@10_mean', 0)
     delta = ro - bl
@@ -315,11 +413,12 @@ def print_table(summary: dict, tests: dict, n_queries: int, phase: str,
 
     lines = [
         "",
-        "=" * 70,
-        f"  FASE 1 — baseline vs reward_only  ({n_queries:,} queries, pool={pool_size})",
-        "=" * 70,
+        "=" * 75,
+        f"  FASE 1 — baseline vs reward_only (interpolado α={alpha:.1f})",
+        f"  {n_queries:,} queries, pool={pool_size}",
+        "=" * 75,
         f"{'Método':<22} {'nDCG@5':>9} {'nDCG@10':>9} {'MRR':>9} {'MAP@10':>9} {'R@10':>9}",
-        "-" * 70,
+        "-" * 75,
     ]
 
     for method in METHODS:
@@ -329,11 +428,11 @@ def print_table(summary: dict, tests: dict, n_queries: int, phase: str,
         mrr = s.get('mrr_mean', 0)
         mp  = s.get('map@10_mean', 0)
         r10 = s.get('recall@10_mean', 0)
-        label = 'Baseline (FAISS)' if method == 'baseline' else 'Reward-Only'
+        label = 'Baseline (FAISS)' if method == 'baseline' else f'Reward-Only (α={alpha:.1f})'
         lines.append(f"{label:<22} {n5:>9.4f} {n10:>9.4f} {mrr:>9.4f} {mp:>9.4f} {r10:>9.4f}")
 
     lines += [
-        "-" * 70,
+        "-" * 75,
         f"  Δ nDCG@10:   {delta:+.4f}  ({delta_pct:+.1f}%)",
     ]
 
@@ -343,27 +442,37 @@ def print_table(summary: dict, tests: dict, n_queries: int, phase: str,
         lines.append(f"  p-value:     {p_val:.4f} {'(sig. p<0.05)' if p_val < 0.05 else '(no sig.)'}")
 
     lines += [""]
+    
+    # Punto de control Fase 1
+    target = 0.1625  # baseline esperado
     if ro > bl:
         lines += [
             "  ✅ FASE 1 SUPERADA — reward mejora baseline.",
-            "  → Siguiente: aumentar preferencias y/o proceder a Fase 2.",
+            "  → Próximos pasos:",
+            "    1. Probar diferentes α (0.2, 0.3, 0.4, 0.5)",
+            "    2. Evaluación completa: python evaluate_esci_v2.py",
+            "    3. Si mejora estable, proceder a Fase 2",
         ]
     else:
         lines += [
             "  ❌ FASE 1 NO SUPERADA.",
-            "  → Acciones: más preferencias, más epochs, revisar corpus.",
+            "  → Acciones:",
+            "    1. Ajustar α (probar 0.2, 0.3, 0.4, 0.5)",
+            "    2. Aumentar pool_size a 40-50",
+            "    3. Verificar calidad del reward model",
         ]
 
-    lines.append("=" * 70)
+    lines.append("=" * 75)
     table = "\n".join(lines)
     print(table)
     return table
+
 
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Evaluación ESCI v2")
+    parser = argparse.ArgumentParser(description="Evaluación ESCI v2 con interpolación")
     parser.add_argument('--sample', type=int, default=None,
                         help='Muestra aleatoria de N queries')
     parser.add_argument('--quick', action='store_true',
@@ -373,14 +482,21 @@ def main():
                         help='Modo debug con más logging')
     parser.add_argument('--pool-size', type=int, default=50,
                         help='Tamaño del pool para reranking (default: 50)')
+    parser.add_argument('--alpha', type=float, default=0.3,
+                        help='Peso del reward en interpolación (0-1, default: 0.3)')
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    print("\n" + "=" * 65)
-    print("  🔥 EVALUACIÓN ESCI v2 (FIX DE SHAPES) 🔥")
-    print("=" * 65 + "\n")
+    print("\n" + "=" * 70)
+    print("  🔥 EVALUACIÓN ESCI v2 — INTERPOLACIÓN FAISS + REWARD 🔥")
+    print("=" * 70 + "\n")
+    print(f"  Configuración:")
+    print(f"    alpha (peso reward): {args.alpha:.1f}")
+    print(f"    pool_size:           {args.pool_size}")
+    print(f"    modo:                {'quick' if args.quick else 'completo'}")
+    print()
 
     # Verificar ground truth
     gt_path = Path("data/esci/ground_truth_esci_v2.json")
@@ -409,10 +525,11 @@ def main():
         # Detectar tipo de modelo
         is_pointwise = _is_pointwise_model(pipeline)
         logger.info(f"📐 Modelo pointwise: {is_pointwise}")
-        logger.info(f"🎚️  Pool size: {args.pool_size}")
 
     except Exception as e:
         logger.error(f"❌ Error cargando sistema: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     # Seleccionar queries
@@ -431,8 +548,106 @@ def main():
     # Precargar cache de embeddings
     load_embedding_cache()
 
-    # 🔥 PASAR POOL_SIZE A LA EVALUACIÓN 🔥
-    logger.info(f"🚀 Iniciando evaluación con pool_size={args.pool_size}...")
+    # Modificar alpha en la función reward_only_rank
+    # (accedemos al closure de la función para cambiar alpha)
+    import inspect
+    import types
+    
+    # Crear una versión personalizada de reward_only_rank con el alpha especificado
+    original_reward_only_rank = reward_only_rank
+    
+    def reward_only_rank_with_alpha(system, pipeline, query, k, pool_size=50):
+        # Llamar a la función original con un alpha personalizado
+        # Pero necesitamos modificar el alpha dentro de la función
+        # Una forma es redefinir la función localmente con el alpha de args
+        nonlocal_alpha = args.alpha
+        
+        try:
+            emb_model = pipeline.emb_model
+            reward_model = pipeline.reward_model
+            device = pipeline.device
+
+            # 1. Embedding de la query
+            q_emb_np = emb_model.encode(query, normalize_embeddings=True)
+            q_emb_np = np.array(q_emb_np).flatten()
+
+            # 2. Candidatos FAISS
+            candidates = system.vector_store.search(q_emb_np, k=pool_size)
+            if not candidates:
+                return []
+
+            asins = _asins(candidates)
+            if not asins:
+                return []
+
+            # 3. Scores coseno
+            cosine_scores = {}
+            for i, p in enumerate(candidates):
+                pid = str(getattr(p, 'id', '') or getattr(p, 'product_id', ''))
+                score = getattr(p, 'score', None) or getattr(p, 'similarity', None)
+                if score is None:
+                    score = 1.0 - (i / len(candidates))
+                cosine_scores[pid] = float(score)
+
+            vals = list(cosine_scores.values())
+            c_min, c_max = min(vals), max(vals)
+            if c_max > c_min:
+                cosine_scores = {pid: (s - c_min) / (c_max - c_min)
+                                 for pid, s in cosine_scores.items()}
+            else:
+                cosine_scores = {pid: 0.5 for pid in cosine_scores}
+
+            # 4. Embeddings productos
+            cache = load_embedding_cache()
+            prod_embs = []
+            valid_asins = []
+            for pid in asins:
+                emb = get_product_embedding(pid, cache)
+                if emb is not None:
+                    prod_embs.append(np.array(emb).flatten())
+                    valid_asins.append(pid)
+
+            if not valid_asins:
+                return asins[:k]
+
+            # 5. Reward scores
+            q_tensor = torch.tensor(q_emb_np, dtype=torch.float32, device=device)
+            q_tensor = q_tensor.unsqueeze(0).expand(len(valid_asins), -1)
+            p_tensor = torch.tensor(np.stack(prod_embs, axis=0), dtype=torch.float32, device=device)
+
+            reward_model.eval()
+            with torch.no_grad():
+                scores = reward_model(q_tensor, p_tensor)
+                if scores.dim() > 1:
+                    scores = scores.squeeze(-1)
+
+            reward_np = scores.cpu().numpy()
+
+            r_min, r_max = reward_np.min(), reward_np.max()
+            if r_max > r_min:
+                reward_np = (reward_np - r_min) / (r_max - r_min)
+            else:
+                reward_np = np.ones_like(reward_np) * 0.5
+
+            # 6. Score combinado con alpha de argumento
+            combined = []
+            for i, pid in enumerate(valid_asins):
+                cos = cosine_scores.get(pid, 0.5)
+                rew = float(reward_np[i])
+                final = (1 - nonlocal_alpha) * cos + nonlocal_alpha * rew
+                combined.append((pid, final))
+
+            combined.sort(key=lambda x: x[1], reverse=True)
+            return [pid for pid, _ in combined[:k]]
+
+        except Exception as e:
+            logger.error(f"Error en reward_only con alpha={nonlocal_alpha}: {e}")
+            return []
+    
+    # Reemplazar la función global
+    globals()['reward_only_rank'] = reward_only_rank_with_alpha
+
+    logger.info(f"🚀 Iniciando evaluación con alpha={args.alpha:.1f}, pool_size={args.pool_size}...")
     results = evaluate(system, pipeline, ground_truth, queries,
                        pool_size=args.pool_size)
 
@@ -440,11 +655,10 @@ def main():
     summary = aggregate(results)
     tests = stat_tests(results)
 
-    # Determinar fase
-    phase = "FASE 1 (pre-training)" if not pipeline.policy_trained else "FASE 3 (PPO activo)"
-
     # Mostrar tabla
-    table = print_table(summary, tests, len(queries), phase, args.pool_size)
+    phase = "FASE 1 (interpolación)"
+    table = print_table(summary, tests, len(queries), phase, 
+                        args.pool_size, args.alpha)
 
     # Guardar resultados
     Path("results").mkdir(exist_ok=True)
@@ -461,6 +675,7 @@ def main():
         'summary': summary,
         'tests': tests,
         'config': {
+            'alpha': args.alpha,
             'pool_size': args.pool_size,
             'sample': args.sample,
             'quick': args.quick,
@@ -476,7 +691,7 @@ def main():
     rows = []
     for method, metrics_list in results.items():
         for metrics in metrics_list:
-            row = {'method': method}
+            row = {'method': method, 'alpha': args.alpha if method == 'reward_only' else 0}
             row.update({k: v for k, v in metrics.items()
                        if k not in ['query', 'method']})
             rows.append(row)
@@ -490,7 +705,26 @@ def main():
         f.write(table)
 
     print(f"\n  💾 Resultados guardados en results/esci_v2_evaluation_{ts}.*")
-    print("=" * 65 + "\n")
+    print("=" * 70 + "\n")
+    
+    # Recomendación final
+    ro_ndcg = summary.get('reward_only', {}).get('ndcg@10_mean', 0)
+    bl_ndcg = summary.get('baseline', {}).get('ndcg@10_mean', 0)
+    
+    if ro_ndcg > bl_ndcg:
+        print("\n  📋 RECOMENDACIÓN:")
+        print(f"  Con α={args.alpha:.1f} el reward mejora baseline.")
+        print("  Prueba estos valores para encontrar el óptimo:")
+        print("    python evaluate_esci_v2.py --quick --pool-size 40 --alpha 0.2")
+        print("    python evaluate_esci_v2.py --quick --pool-size 40 --alpha 0.3")
+        print("    python evaluate_esci_v2.py --quick --pool-size 40 --alpha 0.4")
+        print("    python evaluate_esci_v2.py --quick --pool-size 40 --alpha 0.5")
+    else:
+        print("\n  📋 RECOMENDACIÓN:")
+        print(f"  Con α={args.alpha:.1f} el reward NO mejora baseline.")
+        print("  Prueba valores más bajos (menos peso al reward):")
+        print("    python evaluate_esci_v2.py --quick --pool-size 40 --alpha 0.1")
+        print("    python evaluate_esci_v2.py --quick --pool-size 40 --alpha 0.2")
 
 
 if __name__ == "__main__":

@@ -1,14 +1,7 @@
 # src/rlhf_integration.py
+# -*- coding: utf-8 -*-
 """
 Integracion del RLHF Pipeline con UnifiedSystemV2.
-
-CAMBIO PRINCIPAL vs versión anterior:
-    El nuevo RLHFPipeline necesita:
-        embedding_model  -> extraído de system.canonicalizer.embedding_model
-        product_index    -> construido desde system.canonical_products
-        vector_store     -> system.vector_store
-
-    Ya NO acepta embedding_dim como argumento directo.
 
 Comandos disponibles:
     python main.py rlhf --stats
@@ -29,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
-# Función principal de integración
+# Función principal de integración - DEBE ESTAR DEFINIDA AL INICIO
 # ---------------------------------------------------------------------
 
 def add_rlhf_to_system(system):
@@ -45,9 +38,20 @@ def add_rlhf_to_system(system):
     para evitar recomputar 89k embeddings en cada ejecución (~15 min -> <1 seg).
     """
     try:
-        from src.rlhf.rlhf_pipeline import RLHFPipeline
-    except ImportError:
-        from rlhf.rlhf_pipeline import RLHFPipeline
+        # Intentar importar desde la estructura de paquetes
+        try:
+            from src.rlhf.rlhf_pipeline import RLHFPipeline
+        except ImportError:
+            from rlhf.rlhf_pipeline import RLHFPipeline
+            
+        # Importar PointwiseRewardModel para asegurar que está disponible
+        try:
+            from src.rlhf.pointwise_reward_model import PointwiseRewardModel
+        except ImportError:
+            from src.rlhf.pointwise_reward_model import PointwiseRewardModel
+    except ImportError as e:
+        logger.error(f"Error importando módulos RLHF: {e}")
+        raise
 
     # 1. Obtener el modelo de embeddings
     embedding_model = _get_embedding_model(system)
@@ -169,6 +173,9 @@ def handle_rlhf_command(args: List[str]):
     elif sub == "--train-reward":
         epochs = int(args[1]) if len(args) > 1 and args[1].isdigit() else 40
         print(f"\n  Entrenando reward model ({epochs} epocas)...")
+        print("  [NOTA] Para Fase 1, usa directamente:")
+        print("  python train_pointwise_reward.py")
+        print("  Este comando (RankingRewardTrainer) está deprecated para Fase 1\n")
         result = pipeline.train_reward_model(epochs=epochs, min_pairs=10)
         if "error" in result:
             print(f"\n  [ERR] Error: {result['error']}")
@@ -432,6 +439,7 @@ def _load_system():
         traceback.print_exc()
         return None
 
+
 def _try_load_pointwise(pipeline):
     """
     Carga checkpoint del reward model pointwise si existe.
@@ -443,16 +451,23 @@ def _try_load_pointwise(pipeline):
     try:
         import torch
         ckpt = torch.load(ckpt_path, map_location='cpu')
+        
+        # Intentar diferentes formatos de checkpoint
         if isinstance(ckpt, dict) and 'model_state' in ckpt:
             pipeline.reward_model.load_state_dict(ckpt['model_state'])
-        elif isinstance(ckpt, dict) and not any(k in ckpt for k in ['model_state', 'config']):
-            # es state_dict directo
+            pipeline.reward_trained = True
+            logger.info("  Reward model (pointwise) cargado desde checkpoint (formato con model_state)")
+        elif isinstance(ckpt, dict) and all(k.isdigit() for k in ckpt.keys()):
+            # Es un state_dict directo
             pipeline.reward_model.load_state_dict(ckpt)
+            pipeline.reward_trained = True
+            logger.info("  Reward model (pointwise) cargado desde checkpoint (state_dict directo)")
         else:
+            logger.debug(f"  Formato de checkpoint no reconocido: {type(ckpt)}")
             return
+            
         pipeline.reward_model.eval()
-        pipeline.reward_trained = True
-        logger.info("  Reward model (pointwise) cargado correctamente")
+        
     except Exception as e:
         logger.debug(f"  _try_load_pointwise: {e}")
 
