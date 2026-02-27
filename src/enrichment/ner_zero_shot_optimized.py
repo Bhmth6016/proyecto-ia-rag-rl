@@ -10,7 +10,7 @@ import hashlib
 logger = logging.getLogger(__name__)
 class OptimizedNERExtractor:
     
-    def __init__(self, use_zero_shot: bool = True, model_name: str = "facebook/bart-large-mnli"):
+    def __init__(self, use_zero_shot: bool = True, model_name: str = "cross-encoder/nli-deberta-v3-small"):
         self.use_zero_shot = use_zero_shot
         self.classifier: Optional[Callable[..., Any]] = None
         self._init_error = None
@@ -155,7 +155,7 @@ class OptimizedNERExtractor:
                     title,
                     candidate_labels=limited_candidates,
                     multi_label=True,
-                    hypothesis_template="This is related to {}."
+                    hypothesis_template="A product category: {}."
                     )
                 )
                 
