@@ -1,0 +1,51 @@
+method,ndcg@10,recall@10,mrr,map@10,query,n_relevant,ranked_count
+baseline,0.9671,1.0000,1.0000,0.8951,minecraft,8,20
+baseline,0.6952,1.0000,0.5000,0.5212,mmorpg,6,20
+baseline,0.9911,1.0000,1.0000,0.9683,need for speed,7,20
+baseline,0.8504,1.0000,1.0000,0.6656,pc gaming,6,20
+baseline,0.6565,1.0000,0.3333,0.4862,playstation games,6,20
+baseline,0.6309,1.0000,0.5000,0.5000,ps5 videogames,1,20
+baseline,0.9504,1.0000,1.0000,0.8783,racing games,9,20
+baseline,0.6663,1.0000,0.5000,0.4750,survival games,4,20
+baseline,0.5642,1.0000,0.3333,0.3694,survival horror videogames,3,20
+baseline,1.0000,1.0000,1.0000,1.0000,the last of us,2,20
+ner_enhanced,0.9748,1.0000,1.0000,0.9160,minecraft,8,20
+ner_enhanced,0.4855,0.5000,1.0000,0.2583,mmorpg,6,20
+ner_enhanced,0.9731,1.0000,1.0000,0.9129,need for speed,7,20
+ner_enhanced,0.9099,1.0000,1.0000,0.8179,pc gaming,6,20
+ner_enhanced,0.3433,0.5000,0.3333,0.1587,playstation games,6,20
+ner_enhanced,0.6309,1.0000,0.5000,0.5000,ps5 videogames,1,20
+ner_enhanced,0.6701,0.5556,1.0000,0.5016,racing games,9,20
+ner_enhanced,0.5414,0.5000,1.0000,0.3500,survival games,4,20
+ner_enhanced,0.3236,0.6667,0.1667,0.1508,survival horror videogames,3,20
+ner_enhanced,1.0000,1.0000,1.0000,1.0000,the last of us,2,20
+reward_only,1.0000,1.0000,1.0000,1.0000,minecraft,8,10
+reward_only,0.8878,1.0000,1.0000,0.7514,mmorpg,6,10
+reward_only,0.9404,1.0000,1.0000,0.8444,need for speed,7,10
+reward_only,0.7682,1.0000,0.5000,0.6454,pc gaming,6,10
+reward_only,0.8078,1.0000,1.0000,0.5974,playstation games,6,10
+reward_only,1.0000,1.0000,1.0000,1.0000,ps5 videogames,1,10
+reward_only,0.9667,1.0000,1.0000,0.9060,racing games,9,10
+reward_only,0.7100,1.0000,0.5000,0.5528,survival games,4,10
+reward_only,0.4716,1.0000,0.1667,0.2758,survival horror videogames,3,10
+reward_only,0.4486,1.0000,0.2500,0.2361,the last of us,2,10
+rlhf,0.9783,1.0000,1.0000,0.9318,minecraft,8,10
+rlhf,0.7946,1.0000,1.0000,0.5807,mmorpg,6,10
+rlhf,0.8775,1.0000,1.0000,0.7250,need for speed,7,10
+rlhf,0.9877,1.0000,1.0000,0.9583,pc gaming,6,10
+rlhf,0.6636,1.0000,0.3333,0.5161,playstation games,6,10
+rlhf,0.3155,1.0000,0.1250,0.1250,ps5 videogames,1,10
+rlhf,0.9842,1.0000,1.0000,0.9468,racing games,9,10
+rlhf,0.5869,1.0000,0.3333,0.3882,survival games,4,10
+rlhf,0.7586,1.0000,1.0000,0.5278,survival horror videogames,3,10
+rlhf,0.4556,1.0000,0.2000,0.2667,the last of us,2,10
+full_hybrid,1.0000,1.0000,1.0000,1.0000,minecraft,8,10
+full_hybrid,0.3901,0.3333,1.0000,0.2000,mmorpg,6,10
+full_hybrid,0.9799,1.0000,1.0000,0.9325,need for speed,7,10
+full_hybrid,0.7682,1.0000,0.5000,0.6454,pc gaming,6,10
+full_hybrid,0.2956,0.5000,0.2000,0.1204,playstation games,6,10
+full_hybrid,1.0000,1.0000,1.0000,1.0000,ps5 videogames,1,10
+full_hybrid,0.3951,0.5556,0.2000,0.2180,racing games,9,10
+full_hybrid,0.2913,0.5000,0.2500,0.1250,survival games,4,10
+full_hybrid,0.3236,0.6667,0.1667,0.1508,survival horror videogames,3,10
+full_hybrid,0.4218,1.0000,0.2000,0.2111,the last of us,2,10
