@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-02-28T06:37:00.996688",
+  "seed": 42,
+  "test_fraction": 0.45,
+  "n_train": 23,
+  "n_test": 16,
+  "gt_path": "data\\interactions\\ground_truth_REAL.json",
+  "leakage_free": true,
+  "note": "Split estratificado por n\u00famero de relevantes. Seed fijo = reproducible. Test queries NUNCA deben usarse en entrenamiento."
+}
