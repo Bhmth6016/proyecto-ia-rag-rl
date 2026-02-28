@@ -141,7 +141,7 @@ def print_split_stats(train_queries: list, test_queries: list, gt: dict):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--test-size', type=float, default=0.30,
+    parser.add_argument('--test-size', type=float, default=0.45,
                         help='Fracción para test (default: 0.30)')
     parser.add_argument('--seed',      type=int,   default=42,
                         help='Semilla aleatoria (default: 42) — NO cambiar después')
