@@ -1,460 +1,381 @@
-# Amazon E-commerce Search System with RLHF and NER
+# Amazon Videogame Search System with RLHF and NER
 
- A hybrid intelligent search system for e-commerce product discovery that combines semantic retrieval, Named Entity Recognition (NER), and Reinforcement Learning from Human Feedback (RLHF) with dynamic weight adaptation. The system operates entirely locally without cloud dependencies.
- 
+A hybrid intelligent search system for videogame product discovery that combines semantic retrieval (FAISS), Named Entity Recognition (NER), and Reinforcement Learning from Human Feedback (RLHF) with a pointwise reward model trained from pairwise human preferences and a PPO policy. The system operates entirely locally without cloud dependencies on a corpus of 9,999 Amazon videogame products.
+
+---
+
 ## Key Features
 
-* Semantic Search: FAISS-based vector similarity search with sentence transformers 
-* NER Enhancement: Product attribute extraction and query intent detection RLHF with 
-* Dynamic Weights: Self-adjusting learning from user interactions 
-* Hybrid Ranking: Combines multiple complementary ranking signals 
-* Review-Based Training: Generate training data from Amazon reviews 
-* Local Processing: Complete execution on local machine 
-* Reproducible Results: Consistent performance across multiple runs 
+- **Semantic Search**: FAISS-based vector similarity search with `all-MiniLM-L6-v2` (384-dim embeddings)
+- **NER Enhancement**: Zero-shot product attribute extraction for query intent detection (genre, platform, franchise, category)
+- **Pointwise Reward Model**: 435K-parameter MLP trained from human A/B pairwise preferences (val_acc ≈ 0.91–0.96)
+- **PPO Policy**: Learned reranking policy trained via Proximal Policy Optimization with KL-adaptive beta
+- **Interactive A/B Collection**: CLI tool to collect human preferences between policy and baseline rankings
+- **Human Ground Truth**: Interactive ground truth builder with manual relevance annotation (no FAISS leakage)
+- **Reproducible Evaluation**: nDCG@10, Recall@10, MRR, MAP@10 with paired t-test and Bonferroni correction
+- **Local Processing**: Full pipeline runs on GPU (CUDA) or CPU, no cloud dependencies
+
+---
+
+## Evaluated Methods
+
+The system benchmarks 5 ranking configurations on the same test query set:
+
+| Method | Description |
+|---|---|
+| **Baseline (FAISS)** | Pure cosine similarity semantic search |
+| **NER-Enhanced** | Baseline + attribute bonus for genre/platform/franchise matches |
+| **Reward-Only** | Baseline candidates reranked by pointwise reward model score |
+| **RLHF (PPO)** | Baseline candidates reranked by PPO-trained policy |
+| **Full Hybrid** | NER reranking + PPO policy combined |
+
+### Latest Results (135 A/B preferences, 15 test queries, interactive ground truth)
+
+| Method | nDCG@10 | Recall@10 | MRR | MAP@10 | Δ% vs Baseline | p-val |
+|---|---|---|---|---|---|---|
+| Baseline (FAISS) | 0.8497 | 1.0000 | 0.8000 | 0.7437 | — | — |
+| NER-Enhanced | 0.7788 | 0.8321 | **0.8667** | 0.6719 | -8.3% | 0.045* |
+| **Reward-Only** | **0.8817** | **1.0000** | **0.9167** | **0.7762** | **+3.8%** | 0.533 |
+| RLHF (PPO) | 0.7616 | 1.0000 | 0.6833 | 0.6250 | -10.4% | 0.152 |
+| Full Hybrid | 0.7424 | 0.8321 | 0.8778 | 0.5981 | -12.6% | 0.019* |
+
+> **Key findings**: Reward-Only achieves the best nDCG@10 (+3.8%). NER improves MRR (+8.3%) but degrades nDCG. PPO requires more preference data to converge reliably. Significance at p<0.05 requires larger test set or higher Δ.
+
+---
 
 ## Project Structure
-```
 
+```
 proyecto-ia-rag-rl/
 ├── src/
-│   ├── unified_system.py              # Base search system
-│   ├── unified_system_v2.py           # V2 with 4 ranking methods
+│   ├── unified_system_v2.py           # Core system: 9,999 products, FAISS + NER + RLHF
 │   ├── data/
-│   │   ├── loader.py                  # Amazon dataset loader
-│   │   ├── canonicalizer.py           # Product canonicalization
-│   │   ├── cache_manager.py           # Cache management
+│   │   ├── loader.py                  # Amazon JSONL dataset loader
+│   │   ├── canonicalizer.py           # Title + description fusion
+│   │   ├── cache_manager.py           # Embedding + system cache
 │   │   └── vector_store.py            # FAISS index manager
 │   ├── ranking/
-│   │   ├── baseline_ranker.py         # Basic FAISS ranking
-│   │   ├── ner_enhanced_ranker.py     # NER-augmented ranking
-│   │   └── rl_ranker_fixed.py         # RLHF with dynamic weights
+│   │   ├── baseline_ranker.py         # FAISS cosine similarity
+│   │   ├── ner_enhanced_ranker.py     # FAISS + attribute bonus scoring
+│   │   └── rl_ranker_fixed.py         # Legacy RLHF ranker
 │   ├── enrichment/
-│   │   └── ner_zero_shot_optimized.py # NER attribute extraction
+│   │   └── ner_zero_shot_optimized.py # Zero-shot NER attribute extraction
 │   ├── query/
-│   │   └── understanding.py           # Query intent analysis
-│   └── features/
-│       └── extractor.py               # Feature engineering
+│   │   └── understanding.py           # Query intent detection
+│   └── rlhf/
+│       ├── __init__.py
+│       ├── pointwise_reward_model.py  # 435K-param MLP reward model
+│       ├── policy_model.py            # Attention-based policy (heads=4, layers=2)
+│       ├── ppo_trainer.py             # PPO with KL-adaptive beta
+│       ├── rlhf_pipeline.py           # End-to-end RLHF pipeline
+│       ├── preference_collector.py    # A/B preference data loader
+│       └── tensor_utils.py            # Embedding utilities
 ├── data/
-│   ├── raw/                           # Raw Amazon product metadata
-│   ├── reviews/                       # Amazon review data
-│   ├── cache/                         # Processed system caches
-│   ├── rlhf_pairs/                    # Generated RLHF training pairs
+│   ├── raw/                           # Raw Amazon JSONL product metadata
+│   ├── cache/                         # Embedding cache (9,999 products × 384 dims)
+│   ├── preferences/
+│   │   └── preferences.jsonl          # Human A/B pairwise preferences
+│   ├── rlhf_checkpoints/
+│   │   ├── reward_model.pt            # Trained reward model checkpoint
+│   │   └── policy_model.pt            # Trained PPO policy checkpoint
 │   └── interactions/
-│       ├── real_interactions.jsonl    # User click data
-│       ├── rlhf_interactions_from_reviews.jsonl  # Review-based training
-│       ├── ground_truth_REAL.json     # Evaluation queries (manual)
-│       └── ground_truth_from_reviews.json  # Evaluation queries (reviews)
-├── results/                           # Experiment results
-├── logs/                              # System logs
-├── main.py                            # Main entry point
-├── experimento_completo_4_metodos.py  # 4-method evaluation
-├── extraer_ner_incremental.py         # Incremental NER processing
-├── generate_rlhf_pairs_from_reviews.py  # Generate training pairs
-├── integrate_rlhf_pairs.py            # Integrate pairs into system
-├── pipeline_reviews_to_rlhf.py        # Complete review pipeline
-├── regenerate_interactions.py         # Fix old interactions
-├── reviews_from_products_10000.py     # Filter reviews by products
-├── sistema_interactivo.py             # Interactive search interface
-└── requirements.txt                   # Python dependencies
+│       ├── queries.txt                # 51 unique search queries
+│       ├── ground_truth_REAL.json     # Human-annotated relevance judgments
+│       ├── train_queries.json         # Train split (~55%)
+│       ├── test_queries.json          # Test split (~45%, no leakage)
+│       └── split_info.json            # Split metadata (seed=42)
+├── results/                           # Evaluation results (JSON + TXT per run)
+├── main.py                            # Entry point: init / interactivo / rlhf / experimento
+├── train_pointwise_reward.py          # Train reward model from A/B preferences
+├── evaluate_methods.py                # 5-method evaluation with statistical tests
+├── ground_truth_builder.py            # Build ground truth (--mode auto/interactive)
+├── split_queries.py                   # Train/test split with leakage check
+├── extract_queries_from_interactions.py  # Extract queries from interaction logs
+└── requirements.txt
 ```
 
-## Quick Start Guide 
+---
 
-### 1. Prerequisites 
-Python 3.10+ 16GB+ RAM (recommended for 90K products) 10GB+ disk space for models and data CPU with AVX2 support (for FAISS) 
+## Quick Start
 
-### 2. Installation 
-Clone repository 
-git clone <proyecto-ia-rag-rl> 
-cd proyecto-ia-rag-rl 
+### 1. Prerequisites
 
-#### Create virtual environment 
-python -m venv ambiente 
-source ambiente/bin/activate # Linux/Mac 
+- Python 3.10+
+- CUDA GPU recommended (CPU supported but slower)
+- 8GB+ RAM
+- ~5GB disk for model cache
 
-#### or 
-ambiente\Scripts\activate # Windows 
+### 2. Installation
 
-#### Install dependencies 
+```bash
+git clone <repo>
+cd proyecto-ia-rag-rl
+
+python -m venv ambiente
+ambiente\Scripts\activate      # Windows
+# source ambiente/bin/activate  # Linux/Mac
+
 pip install -r requirements.txt
+```
 
 ### 3. Data Preparation
 
-Download Amazon product metadata and reviews from: https://amazon-reviews-2023.github.io
+Download `meta_Video_Games.jsonl` from [Amazon Reviews 2023](https://amazon-reviews-2023.github.io) and place it in `data/raw/`.
 
-Place JSONL files in appropriate directories:
-
-**Products (data/raw/):**
-* meta_Video_Games.jsonl 
-* meta_Electronics.jsonl 
-* meta_Books.jsonl 
-* meta_Automotive.jsonl  
-* meta_Beauty_and_Personal_Care.jsonl 
-* meta_Clothing_Shoes_and_Jewelry.jsonl 
-* meta_Home_and_Kitchen.jsonl
-* meta_Sports_and_Outdoors.jsonl 
-* meta_Toys_and_Games.jsonl
-
-**Reviews (data/reviews/):**
-* Video_Games.jsonl 
-* Electronics_10000.jsonl 
-* Books_10000.jsonl (and other categories) 
-
-#### Expected product format: 
-json{ "parent_asin": "B001234567", 
-"title": "Product name", 
-"description": ["Detailed description"], 
-"features": ["Feature 1", "Feature 2"], 
-"price": 29.99, "average_rating": 4.5, 
-"rating_number": 1234, 
-"main_category": "Video Games", 
-"imageURL": "https://..." 
+Expected product format:
+```json
+{
+  "parent_asin": "B001234567",
+  "title": "Product name",
+  "description": ["Detailed description"],
+  "features": ["Feature 1", "Feature 2"],
+  "price": 29.99,
+  "average_rating": 4.5,
+  "rating_number": 1234,
+  "main_category": "Video Games"
 }
-
-#### Expected review format: 
-json{ "parent_asin": "B001234567", 
-"rating": 5.0, "helpful_vote": 12, 
-"verified_purchase": true, 
-"text": "Great product!" 
-} 
-
-### 4. System Initialization 
-#### Initialize system (processes products, takes ~1.5 hours first time) 
-python main.py init 
-#### Verify system integrity 
-python main.py stats 
-
-## Main Commands 
-### Build Search Index 
-python main.py init 
-Processes raw products: 
-* Canonicalization (title + description fusion) 
-* Embedding generation (all-MiniLM-L6-v2) 
-* FAISS index construction 
-* System cache creation 
-### Generate Training Data from Reviews 
-#### Complete pipeline (automated) 
-python pipeline_reviews_to_rlhf.py 
-This will: 
-1. Auto-detect all available categories 
-2. Generate RLHF pairs from reviews 
-3. Integrate pairs into system 
-4. Create ground truth 
-#### Manual steps (if needed): 
-##### Step 1: Generate pairs for all categories 
-python generate_rlhf_pairs_from_reviews.py 
-##### Step 2: Integrate pairs 
-python integrate_rlhf_pairs.py 
-#### Collect Real User Interactions 
-python main.py interactivo 
-Interactive search mode allows: 
-* Real-time product search 
-* User feedback collection (clicks) 
-* Interactive RLHF training 
-
-Important: Only products with real Amazon IDs (starting with 'B') are shown. 
-#### Run Complete Experiment 
-python main.py experimento 
-Evaluates 4 ranking methods: 
-1. Baseline (FAISS semantic search) 
-2. NER-Enhanced (FAISS + attribute matching) 
-3. RLHF (FAISS + learned preferences) 
-4. Full Hybrid (FAISS + NER + RLHF) 
-#### Extract NER Attributes 
-python extraer_ner_incremental.py 
-Processes products for attribute extraction: 
-* Brand, color, size, material 
-* Category matching 
-* Incremental caching (processes only new/changed products) 
-#### Fix Old Interactions 
-python regenerate_interactions.py 
-Updates old interaction files to use current product IDs. 
-### System Architecture 
-#### 1. Four Ranking Methods 
-##### Method 1: Baseline 
-* Pure semantic search with FAISS 
-* Sentence transformer embeddings 
-* L2 distance similarity 
-##### Method 2: NER-Enhanced 
-* Baseline + attribute bonus scoring 
-* Query intent detection 
-* 15% weight for attribute matches 
-##### Method 3: RLHF 
-* Baseline + learned user preferences 
-* 30 features extracted per product 
-* Dynamic weight adaptation 
-##### Method 4: Full Hybrid 
-* Combines all three approaches 
-* NER applied first, then RLHF 
-* Best overall performance 
-#### 2. RLHF Dynamic Weights 
-The system automatically learns which features matter: 
-#### Feature types tracked 
-- semantic_match: Query-title overlap 
-- rating_value: Product ratings 
-- category_match: Category relevance 
-- specific_preferences: User-specific patterns 
-##### Dynamic adjustment (every 5 feedbacks) 
-- Success tracking per feature type 
-- Automatic rebalancing 
-- Soft normalization 
-#### 3. Review-Based Reward Function 
-Product Reward Calculation: pythonreward = ( α * rating_normalized + # 0.4 weight β * helpful_votes_score + # 0.3 weight γ * verified_purchase_ratio + # 0.2 weight δ * recency_score # 0.1 weight )
-**Position-based rewards (for clicks):**
-- Position 1:     0.3 (obvious click)
-- Position 2-3:   0.7 (good)
-- Position 4-10:  1.2 (discovery)
-- Position 10+:   1.5 (excellent discovery)
-
-### 4. Data Processing Pipeline
 ```
-Raw Products → Canonicalization → Embeddings → FAISS Index 
-                    ↓ 
-              NER Extraction 
-                    ↓ 
-                Reviews → Aggregate by Product → Calculate Rewards → RLHF Pairs 
-                                                                            ↓ 
-                                                                      Ground Truth 
-                                                                      
-```
-## Evaluation Metrics 
-### Primary Metrics 
-#### * MRR (Mean Reciprocal Rank): Primary evaluation metric 
-#### * P@5 (Precision at 5): Fraction of relevant items in top 5 
-#### * R@5 (Recall at 5): Coverage of relevant items in top 5 
-#### * NDCG@5: Normalized Discounted Cumulative Gain 
 
-Statistical Significance Testing 
-* t-test (paired samples) 
-* Cohen's d (effect size) 
-* p-value < 0.05 for significance 
+### 4. System Initialization
 
-### Configuration 
-Main Settings (config/config.yaml) 
-data: 
-limit: 100000 # Product limit 
-raw_path: "data/raw" 
-cache_path: "data/cache" 
-
-models: 
-embedding_model: "all-MiniLM-L6-v2" 
-embedding_dim: 384 
-
-ranking: 
-ner_weight: 0.15 # NER bonus weight 
-rlhf_learning_rate: 0.5 
-match_rating_balance: 1.5 
-
-reviews: 
-min_reviews: 5 # Min reviews per product 
-pairs_per_query: 3 # Training pairs per query 
-
-#### Advanced Configuration 
-In unified_system_v2.py:
-pythoninitialize_with_ner(
-    limit=None,           # Process all products
-    use_cache=True,       # Load from cache if available
-    use_zero_shot=False   # Disable zero-shot NER (faster)
-)
-
-In generate_rlhf_pairs_from_reviews.py:
-pythongenerator = RLHFPairGenerator(
-    min_reviews=5,           # Minimum reviews per product
-    pairs_per_query=3        # Pairs generated per query
-)
-Advanced Usage
-1. Custom Ground Truth (Manual)
-Create data/interactions/ground_truth_REAL.json:
-json{
-  "gaming laptop": ["B08PRODUCT1", "B08PRODUCT2"],
-  "wireless mouse": ["B08MOUSE123"]
-}
-2. Add User Interactions
-Append to data/interactions/real_interactions.jsonl:
-json{"timestamp": "2024-01-09T10:30:00", "session_id": "session_123", "interaction_type": "click", "context": {"query": "wireless mouse", "product_id": "B08MOUSE123", "position": 3, "product_title": "Logitech Wireless Mouse", "has_real_id": true, "is_relevant": true}}
-3. Retrain RLHF
-python# In Python script
-from src.unified_system_v2 import UnifiedSystemV2
-
-system = UnifiedSystemV2.load_from_cache()
-system.train_rlhf_with_queries(
-    train_queries=["query1", "query2"],
-    interactions_file="data/interactions/real_interactions.jsonl"
-)
-4. Process Specific Categories
-python# In generate_rlhf_pairs_from_reviews.py
-generator.process_category(
-    category="Video_Games",
-    limit_products=10000,
-    limit_reviews=100000
-)
-Troubleshooting
-Cache Corruption Error
-bash# Remove corrupted cache
-rm data/cache/unified_system_v2.pkl
-
-# Rebuild system
+```bash
+# First run: builds FAISS index and embedding cache (~2-5 min for 9,999 products)
 python main.py init
-Memory Issues
-python# Reduce batch size in data/canonicalizer.py
-BATCH_SIZE = 1000  # Instead of 2000
-ID Mismatch Issues
-If you encounter ID mismatches between old and new data:
-bash# Regenerate interactions with current IDs
-python regenerate_interactions.py
-Missing Review Files
-bash# Filter reviews to match sampled products
-python reviews_from_products_10000.py
 
-
-## Performance Optimization
-
-### 1. First Run (Cold Start)
-
-- Product loading: 5 seconds
-- Canonicalization: 60-90 minutes (90K products)
-- Index building: 2 seconds
-- NER processing: 1 second (with cache)
-- **Total: ~1.5 hours**
-
-### 2. Subsequent Runs (Cache)
-
-- System loading: 2-3 seconds
-- Ready to search immediately
-
-### 3. Review Processing
-
-- RLHF pair generation (all categories): 5-10 minutes
-- Integration: 1-2 seconds
-
-### 4. Experiment Execution
-
-- RLHF training: 1 second (with cached data)
-- Evaluation (5 queries): 3-5 seconds
-- **Total experiment: ~5 seconds (with cache)**
-
-## Best Practices
-
-### 1. Data Quality
-
-- Ensure products have titles and descriptions
-- Verify `parent_asin` fields are populated
-- Clean duplicate products before indexing
-- Match review files with product files
-
-### 2. Review-Based Training
-
-- Use products with 5+ reviews
-- Verify `parent_asin` consistency across files
-- Check for helpful votes and verified purchases
-- Balance categories in training data
-
-### 3. Evaluation
-
-- Use stratified train/test split (75/25)
-- Maintain balanced query distribution
-- Collect diverse user interactions
-- Test with 30+ queries for statistical significance
-
-### 4. RLHF Training
-
-- **Minimum 20+ interactions** recommended
-- Mix of positions (early and late clicks)
-- Regular retraining with new data
-- Use both manual clicks and review-based pairs
-
-### 5. Production Deployment
-
-- Pre-build cache in staging environment
-- Monitor memory usage (16GB+ recommended)
-- Implement periodic cache refresh
-- Log all user interactions for retraining
-- Use incremental NER processing for updates
-
-## File Outputs
-
-### Experiment Results
-```
-results/
-├── experimento_4_metodos_YYYYMMDD_HHMMSS.json  # Detailed results
-├── experimento_4_metodos_YYYYMMDD_HHMMSS.csv   # Metrics table
-└── resumen_YYYYMMDD_HHMMSS.txt                 # Human-readable summary
+# Verify system
+python main.py stats
 ```
 
-### System Logs
-```
-logs/
-└── experimento_YYYYMMDD_HHMMSS.log  # Complete execution log
+---
+
+## Main Commands
+
+### Build Ground Truth
+
+```bash
+# Automatic mode (FAISS-based, threshold 0.55) — fast but has circular evaluation risk
+python ground_truth_builder.py --mode auto --threshold 0.55
+
+# Interactive mode (human-annotated) — recommended for valid evaluation
+python ground_truth_builder.py --mode interactive
 ```
 
-### Cached Data
-```
-data/cache/
-├── unified_system.pkl              # Base system
-├── unified_system_v2.pkl           # V2 with RLHF
-├── ner_cache_incremental.pkl       # NER attributes
-└── canonical/                      # Canonicalized products
-```
+### Split Queries (Train / Test)
 
-### Training Data
-```
-data/rlhf_pairs/
-└── rlhf_pairs_*.jsonl             # Training pairs per category
+```bash
+# Creates train/test split with seed=42, checks for leakage
+python split_queries.py
 
-data/interactions/
-├── rlhf_interactions_from_reviews.jsonl  # Review-based training
-└── ground_truth_from_reviews.json        # Evaluation queries
-```
-## Research Applications
-
-This system serves as a foundation for research in:
-
-- E-commerce search and recommendation
-- Human-in-the-loop learning
-- Hybrid ranking systems
-- NER for product understanding
-- Dynamic weight adaptation
-- Review-based implicit feedback
-- Multi-signal ranking fusion
-
-## Data Flow Diagram
+# Force overwrite existing split
+python split_queries.py --force
 ```
 
-                    ┌─────────────────┐
-                    │  Raw Products   │
-                    │  (90K+ items)   │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │ Canonicalization│
-                    │   + Embeddings  │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-     ┌────────▼────────┐    │    ┌────────▼────────┐
-     │  FAISS Index    │    │    │  NER Extraction │
-     │  (Semantic)     │    │    │  (Attributes)   │
-     └────────┬────────┘    │    └────────┬────────┘
-              │              │              │
-              │    ┌─────────▼────────┐    │
-              │    │  Amazon Reviews  │    │
-              │    │  (Aggregated)    │    │
-              │    └─────────┬────────┘    │
-              │              │              │
-              │    ┌─────────▼────────┐    │
-              │    │  RLHF Pairs      │    │
-              │    │  (chosen/reject) │    │
-              │    └─────────┬────────┘    │
-              │              │              │
-              └──────────────┼──────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Hybrid Ranking │
-                    │  (4 Methods)    │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Search Results │
-                    └─────────────────┘
+### Collect Human Preferences (A/B)
+
+```bash
+# Interactive session: compare policy vs baseline rankings
+python main.py interactivo
 ```
+
+The system shows two ranked lists (A and B) for each query. You select the preferred ranking. Each session generates ~10-20 preferences stored in `data/preferences/preferences.jsonl`.
+
+Format:
+```json
+{
+  "query": "survival games",
+  "ranking_a_ids": ["B00...", ...],
+  "ranking_b_ids": ["B00...", ...],
+  "ranking_a_type": "policy",
+  "ranking_b_type": "baseline",
+  "preference": "B",
+  "preferred_type": "baseline"
+}
+```
+
+### Train Reward Model
+
+```bash
+python train_pointwise_reward.py
+```
+
+Reads all A/B preferences from `data/preferences/preferences.jsonl`, extracts pairwise comparisons using rank-swap logic, and trains the pointwise reward model. Reports val_accuracy and chosen-rejected gap.
+
+Current best: **1,472 pairs from 135 preferences → val_acc=0.909, chosen-rejected=+0.960**
+
+### Train PPO Policy
+
+```bash
+# Default: 50 queries, 5 epochs
+python main.py rlhf --ppo
+
+# Custom: 50 queries, 10 epochs
+python main.py rlhf --ppo 50 10
+```
+
+Loads the trained reward model and runs PPO with KL-adaptive beta to learn a reranking policy. Saves versioned checkpoints: `policy_v0_before_cycleN.pt`, `policy_v1_after_cycleN.pt`.
+
+### Run Evaluation
+
+```bash
+python evaluate_methods.py
+```
+
+Evaluates all 5 methods on the test query set. Reports nDCG@10, Recall@10, MRR, MAP@10 with paired t-test and Bonferroni correction. Results saved to `results/evaluation_YYYYMMDD_HHMMSS.json`.
+
+### Full Recommended Workflow
+
+```bash
+# 1. Build ground truth interactively
+python ground_truth_builder.py --mode interactive
+
+# 2. Split queries
+python split_queries.py
+
+# 3. Collect preferences (repeat for more data)
+python main.py interactivo
+
+# 4. Train reward model
+python train_pointwise_reward.py
+
+# 5. Train PPO policy
+python main.py rlhf --ppo 50 10
+
+# 6. Evaluate
+python evaluate_methods.py
+```
+
+---
+
+## System Architecture
+
+### RLHF Pipeline
+
+```
+Human A/B Preferences (preferences.jsonl)
+        │
+        ▼
+Pair Extraction (rank-swap logic)
+  chosen: ranks higher in winner AND lower in loser
+        │
+        ▼
+PointwiseRewardModel (MLP: 384→256→1, input=1536)
+  Input: [q_emb; prod_emb; q_emb*prod_emb; |q_emb-prod_emb|]
+  Loss: margin ranking loss (margin=0.5)
+        │
+        ▼
+PPO Training
+  Policy: Transformer (emb=384, hidden=128, heads=4, layers=2)
+  Reward signal: reward_model(query, product) per candidate
+  KL constraint: adaptive beta (target_kl=0.02)
+        │
+        ▼
+Evaluation: nDCG@10, Recall@10, MRR, MAP@10
+```
+
+### NER Intent Detection
+
+The NER module detects intent types from queries and applies bonus scoring:
+
+- **franchise**: "minecraft", "zelda", "pokemon", "mario" → boosts exact franchise matches
+- **platform**: "ps5", "xbox", "nintendo switch" → boosts platform-specific products
+- **genre**: "mmorpg", "fps", "rpg", "survival" → boosts genre matches
+- **category**: "videogames", "gaming" → general category boost
+
+Bonus weight: 15% over base FAISS score. NER improves MRR (+8.3% observed) but can reduce nDCG by boosting irrelevant products when intent is ambiguous.
+
+### Reward Model Architecture
+
+```
+Input: concat([q_emb, p_emb, q_emb * p_emb, |q_emb - p_emb|])  # 384*4 = 1,536 dims
+       → Linear(1536, 256) → ReLU → Dropout(0.1)
+       → Linear(256, 128) → ReLU → Dropout(0.1)
+       → Linear(128, 1) → scalar reward score
+
+Parameters: 435,457
+Training: margin ranking loss, lr=2e-4, batch=32, early stopping (patience=7)
+```
+
+---
+
+## Evaluation Design
+
+### Ground Truth Construction
+
+Two modes are supported:
+
+- **Auto mode** (`--threshold 0.55`): Uses FAISS cosine similarity to auto-label relevant products. Fast but creates circular evaluation (baseline nDCG→1.0). Use only for debugging.
+- **Interactive mode** (recommended): Human annotator reviews top-30 FAISS candidates per query and manually selects relevant products. Breaks circularity and produces valid evaluation data.
+
+Current ground truth: **45 queries, 219 relevants, avg 4.9/query, min 1 / max 10**
+
+### Split Strategy
+
+- Seed: 42 (fixed, never change)
+- Test fraction: 45% (~20 queries)
+- Leakage check enforced: train and test queries must not overlap
+- Train queries are used for PPO training; test queries are held out for evaluation
+
+### Statistical Testing
+
+- Paired t-test (per-query nDCG@10 differences)
+- Bonferroni correction for multiple comparisons
+- Significance threshold: p < 0.05
+
+> **Note on sample size**: With n=15 test queries, a Δ=+3.8% nDCG requires ~n=30 for p<0.05. The Reward-Only result is directionally consistent but not yet statistically significant.
+
+---
+
+## Troubleshooting
+
+**Cache corruption**
+```bash
+del data\cache\unified_system_v2.pkl
+python main.py init
+```
+
+**PPO reward negative** — reward model and policy are misaligned. Retrain PPO from scratch after collecting more preferences:
+```bash
+del data\rlhf_checkpoints\policy_model.pt
+python main.py rlhf --ppo 50 10
+```
+
+**Baseline nDCG = 1.0** — ground truth was built with auto mode (FAISS leakage). Rebuild with interactive mode:
+```bash
+python ground_truth_builder.py --mode interactive
+python split_queries.py --force
+```
+
+**Low reward model accuracy (<0.85)** — insufficient or noisy preference data. Collect more A/B sessions:
+```bash
+python main.py interactivo   # 20-30 more comparisons
+python train_pointwise_reward.py
+```
+
+---
+
+## Performance
+
+| Stage | Time |
+|---|---|
+| System initialization (first run) | ~2-5 min (9,999 products) |
+| Embedding cache load (subsequent) | ~2 sec |
+| Reward model training (1,472 pairs) | ~9 sec (GPU) |
+| PPO training (50 queries × 10 epochs) | ~15 sec (GPU) |
+| Evaluation (15 queries × 5 methods) | ~3 sec (GPU) |
+
+---
+
+## Research Context
+
+This system implements a full RLHF loop for information retrieval:
+
+1. **Retrieval**: Dense retrieval with FAISS + sentence transformers
+2. **Preference Learning**: Pointwise reward model from pairwise human judgments
+3. **Policy Optimization**: PPO over the reward signal with KL regularization
+4. **Evaluation**: IR metrics on human-annotated ground truth
+
+Key findings from experiments:
+- Reward-only reranking consistently outperforms the baseline when trained on 100+ preferences
+- NER improves precision-at-1 (MRR) but can hurt full-ranking quality (nDCG) in ambiguous domains
+- PPO requires aligned preference and ground truth signals to converge — preference pairs collected during early (weak) policy phases bias learning toward baseline behavior
+- Statistical significance with IR metrics requires n≥30 test queries for small effect sizes (Δ<5%)
