@@ -1,0 +1,36 @@
+2026-03-11 14:03:10,240 - experimento_completo_4_metodos - INFO -  Ground truth: 45 queries
+2026-03-11 14:03:10,240 - experimento_completo_4_metodos - INFO -  Split: 31 train, 14 test
+2026-03-11 14:03:21,530 - faiss.loader - INFO - Loading faiss with AVX2 support.
+2026-03-11 14:03:21,562 - faiss.loader - INFO - Successfully loaded faiss with AVX2 support.
+2026-03-11 14:03:22,814 - src.unified_system_v2 - INFO -  Sistema V2 cargado: 9,999 productos
+2026-03-11 14:03:22,814 - experimento_completo_4_metodos - INFO -  Sistema: 9,999 productos
+2026-03-11 14:03:22,814 - experimento_completo_4_metodos - INFO -  Sin checkpoint RLHF — método rlhf reportará baseline
+2026-03-11 14:03:23,114 - ranking.ner_enhanced_ranker - INFO -    Query: 'zombie videogames' -> Intent: ['category', 'genre']
+2026-03-11 14:03:23,114 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:23,561 - ranking.ner_enhanced_ranker - INFO -    Query: 'skyrim' -> Intent: []
+2026-03-11 14:03:23,562 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 20/20 productos
+2026-03-11 14:03:23,942 - ranking.ner_enhanced_ranker - INFO -    Query: 'the witcher' -> Intent: []
+2026-03-11 14:03:23,942 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:24,270 - ranking.ner_enhanced_ranker - INFO -    Query: 'pc gaming' -> Intent: ['category', 'platform']
+2026-03-11 14:03:24,270 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 17/20 productos
+2026-03-11 14:03:24,590 - ranking.ner_enhanced_ranker - INFO -    Query: 'survival games' -> Intent: ['category', 'genre']
+2026-03-11 14:03:24,590 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:24,909 - ranking.ner_enhanced_ranker - INFO -    Query: 'action video games' -> Intent: ['category', 'genre']
+2026-03-11 14:03:24,910 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:25,233 - ranking.ner_enhanced_ranker - INFO -    Query: 'fps videogames' -> Intent: ['category', 'platform', 'genre']
+2026-03-11 14:03:25,233 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:25,540 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox 360 videogames' -> Intent: ['category', 'platform']
+2026-03-11 14:03:25,540 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 19/20 productos
+2026-03-11 14:03:25,862 - ranking.ner_enhanced_ranker - INFO -    Query: 'sport videogames' -> Intent: ['category']
+2026-03-11 14:03:25,863 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:26,232 - ranking.ner_enhanced_ranker - INFO -    Query: 'pokemon' -> Intent: ['franchise']
+2026-03-11 14:03:26,234 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 18/20 productos
+2026-03-11 14:03:26,536 - ranking.ner_enhanced_ranker - INFO -    Query: 'tower defense videogames' -> Intent: ['category']
+2026-03-11 14:03:26,538 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 19/20 productos
+2026-03-11 14:03:26,894 - ranking.ner_enhanced_ranker - INFO -    Query: 'multiplayer games' -> Intent: ['category']
+2026-03-11 14:03:26,894 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 17/20 productos
+2026-03-11 14:03:27,242 - ranking.ner_enhanced_ranker - INFO -    Query: 'xbox console' -> Intent: ['category', 'platform']
+2026-03-11 14:03:27,247 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 19/20 productos
+2026-03-11 14:03:27,594 - ranking.ner_enhanced_ranker - INFO -    Query: 'soulslike videogames' -> Intent: ['category']
+2026-03-11 14:03:27,595 - ranking.ner_enhanced_ranker - INFO -     NER bonus aplicado a 19/20 productos
+2026-03-11 14:03:28,017 - experimento_completo_4_metodos - INFO -  Resultados: results\experimento_4_metodos_20260311_140328.json

@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "timestamp": "20260311_140328",
+    "train_queries_count": 31,
+    "test_queries_count": 14
+  },
+  "summary": {
+    "baseline": {
+      "mrr_mean": 0.7380952380952381,
+      "mrr_std": 0.3378810651155435,
+      "precision_mean": 0.5714285714285714,
+      "recall_mean": 0.605952380952381,
+      "ndcg_mean": 0.6708061136809386,
+      "total_found": 40,
+      "n_queries": 14
+    },
+    "ner_enhanced": {
+      "mrr_mean": 0.8035714285714286,
+      "mrr_std": 0.3422011811079096,
+      "precision_mean": 0.6,
+      "recall_mean": 0.6386904761904761,
+      "ndcg_mean": 0.7169834628639746,
+      "total_found": 42,
+      "n_queries": 14
+    },
+    "rlhf": {
+      "mrr_mean": 0.7380952380952381,
+      "mrr_std": 0.3378810651155435,
+      "precision_mean": 0.5714285714285714,
+      "recall_mean": 0.605952380952381,
+      "ndcg_mean": 0.6708061136809386,
+      "total_found": 40,
+      "n_queries": 14
+    },
+    "full_hybrid": {
+      "mrr_mean": 0.8035714285714286,
+      "mrr_std": 0.3422011811079096,
+      "precision_mean": 0.6,
+      "recall_mean": 0.6386904761904761,
+      "ndcg_mean": 0.7169834628639746,
+      "total_found": 42,
+      "n_queries": 14
+    }
+  },
+  "statistical_tests": {
+    "ner_enhanced": {
+      "t_statistic": -1.2130410802199634,
+      "p_value": 0.2466961989610428,
+      "significant": false,
+      "cohens_d": 0.19981842937700536,
+      "mean_improvement": 0.06547619047619047,
+      "percent_improvement": 8.870967741935482,
+      "baseline_mean": 0.7380952380952381,
+      "method_mean": 0.8035714285714286
+    },
+    "rlhf": {
+      "t_statistic": null,
+      "p_value": null,
+      "significant": false,
+      "cohens_d": 0.0,
+      "mean_improvement": 0.0,
+      "percent_improvement": 0.0,
+      "baseline_mean": 0.7380952380952381,
+      "method_mean": 0.7380952380952381
+    },
+    "full_hybrid": {
+      "t_statistic": -1.2130410802199634,
+      "p_value": 0.2466961989610428,
+      "significant": false,
+      "cohens_d": 0.19981842937700536,
+      "mean_improvement": 0.06547619047619047,
+      "percent_improvement": 8.870967741935482,
+      "baseline_mean": 0.7380952380952381,
+      "method_mean": 0.8035714285714286
+    }
+  }
+}
