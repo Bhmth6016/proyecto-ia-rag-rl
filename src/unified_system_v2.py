@@ -94,11 +94,20 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
                 try:
                     with open(self.ner_cache_path, 'rb') as f:
                         cache_data = pickle.load(f)
+                    
+                    # cache_data es una LISTA de dicts, hay que convertirla a dict keyed por id
+                    cache_dict = {item["id"]: item for item in cache_data}
+                    
+                    loaded = 0
                     for product in self.canonical_products:
-                        if hasattr(product, 'id') and product.id in cache_data:
-                            product.ner_attributes = cache_data[product.id].get('ner_attributes', {})
-                            product.enriched_text = cache_data[product.id].get('enriched_text', '')
-                    logger.info("   Cache NER aplicado")
+                        pid = getattr(product, 'id', '')
+                        if pid and pid in cache_dict:
+                            entry = cache_dict[pid]
+                            product.ner_attributes = entry.get('ner_attributes', {})
+                            product.enriched_text = entry.get('enriched_text', '')
+                            loaded += 1
+                    
+                    logger.info(f"   Cache NER aplicado: {loaded:,}/{len(self.canonical_products):,} productos")
                 except Exception as e:
                     logger.error(f"Error cargando cache NER: {e}")
             else:
@@ -132,7 +141,10 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
                     logger.error(f"Error procesando NER: {e}")
 
         if NER_available and NEREnhancedRanker is not None:
-            self.ner_ranker = NEREnhancedRanker(ner_weight=0.15)
+            self.ner_ranker = NEREnhancedRanker(
+                ner_weight=0.10,
+                ner_extractor=self.ner_extractor
+            )
         else:
             self.ner_ranker = None
 
@@ -309,30 +321,37 @@ class UnifiedSystemV2(UnifiedRAGRLSystem):
         logger.debug("Policy RLHF no entrenada — usando baseline")
         return self._process_query_baseline(query_text, k)
 
-    def _method_full_hybrid(self, query_text: str, k: int) -> List:
-        """
-        NER + RLHF real.
-        Si RLHF no está entrenado, usa solo NER.
-        """
-        # Primero NER
-        ner_results = self._method_ner_enhanced(query_text, k * 2)
-        if not ner_results:
-            return []
+    def _method_full_hybrid(self, query: str, top_k: int = 10):
 
-        # Luego RLHF encima de NER si está entrenado
-        if hasattr(self, 'rlhf_pipeline') and self.rlhf_pipeline is not None:
-            pipeline = self.rlhf_pipeline
-            if pipeline.policy_trained:
-                try:
-                    query_emb_np = self.canonicalizer.embedding_model.encode(
-                        query_text, normalize_embeddings=True
-                    )
-                    ranked = pipeline.rank_products(query_text, ner_results, query_emb_np)
-                    return ranked[:k]
-                except Exception as e:
-                    logger.error(f"Error en hybrid RLHF: {e}")
+        # 1️⃣ Retrieval base FAISS
+        candidates, faiss_scores = self._get_candidates_with_scores(
+            query,
+            top_k=40
+        )
 
-        return ner_results[:k]
+        # 2️⃣ PPO reranking sobre distribución original
+        if self.rlhf_pipeline and self.rlhf_pipeline.policy_trained:
+            candidates = self.rlhf_pipeline.rerank_with_policy(
+                candidates,
+                query
+            )
+
+            policy_scores = [
+                1.0 - (i / len(candidates))
+                for i in range(len(candidates))
+            ]
+        else:
+            policy_scores = faiss_scores
+
+        # 3️⃣ Boost NER ligero (NO rerank agresivo)
+        reranked = self.ner_ranker.rank_with_ner(
+            candidates, 
+            query, 
+            policy_scores,
+            ner_weight_override=0.05  # ← override solo para este método
+        )
+
+        return reranked[:top_k]
 
     def _calculate_method_score(self, products: List, query: str) -> float:
         if not products:

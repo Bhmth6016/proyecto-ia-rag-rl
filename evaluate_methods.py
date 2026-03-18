@@ -1,33 +1,4 @@
-"""
-evaluate_methods.py
-===================
-Evaluación limpia de los 4 métodos de ranking.
-
-Métodos:
-    1. baseline      — FAISS puro (similitud coseno)
-    2. ner_enhanced  — FAISS + boost léxico NER
-    3. reward_only   — FAISS retrieval + PointwiseReward reranking
-    4. rlhf          — FAISS retrieval + PolicyModel (PPO)
-    5. full_hybrid   — NER + PointwiseReward reranking
-
-Métricas:
-    nDCG@10  (principal — sensible al orden)
-    Recall@10
-    MRR@10
-    MAP@10
-
-Evaluación estadística:
-    Paired t-test de cada método vs baseline
-    Corrección de Bonferroni para comparaciones múltiples
-
-REGLA: solo usa test_queries.json (nunca train_queries).
-
-Uso:
-    python evaluate_methods.py
-    python evaluate_methods.py --sample 50    # muestra aleatoria
-    python evaluate_methods.py --methods baseline reward_only
-"""
-
+# evaluate_methods.py
 import argparse
 import json
 import logging
@@ -208,56 +179,52 @@ def rank_rlhf(system, query: str, k: int = 20) -> List[str]:
         logger.debug(f"rlhf error ({query}): {e}")
         return rank_baseline(system, query, k)
 
-
 def rank_full_hybrid(system, query: str, k: int = 20) -> List[str]:
-    """NER-enhanced + PointwiseReward reranking."""
-    ner_results = rank_ner_enhanced(system, query, k=k * 2)
-    if not ner_results:
-        return rank_baseline(system, query, k)
-
-    if not hasattr(system, 'rlhf_pipeline') or system.rlhf_pipeline is None:
-        return ner_results[:k]
-
-    pipeline = system.rlhf_pipeline
-    if not pipeline.reward_trained:
-        return ner_results[:k]
-
-    import torch
+    """PPO reranking + NER boost ligero (mismo orden que _method_full_hybrid)."""
+    
+    # 1. FAISS retrieval
     try:
-        # Recuperar objetos de producto desde IDs
-        id_map = {
-            str(getattr(p, 'id', '') or getattr(p, 'product_id', '')): p
-            for p in system.canonical_products
-        }
-        ner_products = [id_map[pid] for pid in ner_results if pid in id_map]
-        if not ner_products:
-            return ner_results[:k]
-
-        q_emb_np  = system.canonicalizer.embedding_model.encode(
+        q_emb_np   = system.canonicalizer.embedding_model.encode(
             query, normalize_embeddings=True
         )
-        prod_embs = pipeline._products_to_embs(ner_products[:pipeline.top_k])
-        if prod_embs is None:
-            return ner_results[:k]
-
-        q_t = torch.tensor(q_emb_np, dtype=torch.float32, device=pipeline.device)
-
-        pipeline.reward_model.eval()
-        scores = []
-        with torch.no_grad():
-            for i in range(prod_embs.size(0)):
-                p_emb = prod_embs[i:i+1]
-                r     = pipeline.reward_model(q_t.unsqueeze(0), p_emb)
-                scores.append(r.item())
-
-        order   = np.argsort(scores)[::-1]
-        ranked  = [ner_products[j] for j in order if j < len(ner_products)]
-        return _to_ids(ranked[:k])
-
+        candidates = system.vector_store.search(q_emb_np, k=k * 2)
+        if not candidates:
+            return []
     except Exception as e:
-        logger.debug(f"full_hybrid error ({query}): {e}")
-        return ner_results[:k]
+        logger.debug(f"full_hybrid FAISS error: {e}")
+        return []
 
+    # 2. PPO reranking si está entrenado
+    pipeline = getattr(system, 'rlhf_pipeline', None)
+    if pipeline and pipeline.policy_trained:
+        import torch
+        try:
+            prod_embs = pipeline._products_to_embs(candidates[:pipeline.top_k])
+            if prod_embs is not None:
+                q_t = torch.tensor(q_emb_np, dtype=torch.float32, device=pipeline.device)
+                pipeline.reward_model.eval()
+                scores = []
+                with torch.no_grad():
+                    for i in range(prod_embs.size(0)):
+                        r = pipeline.reward_model(q_t.unsqueeze(0), prod_embs[i:i+1])
+                        scores.append(r.item())
+                order = np.argsort(scores)[::-1]
+                candidates = [candidates[j] for j in order if j < len(candidates)]
+        except Exception as e:
+            logger.debug(f"full_hybrid PPO error: {e}")
+
+    # Scores posicionales después del PPO
+    policy_scores = [1.0 - (i / max(len(candidates), 1)) for i in range(len(candidates))]
+
+    # 3. NER boost ligero
+    ner_ranker = getattr(system, 'ner_ranker', None)
+    if ner_ranker:
+        candidates = ner_ranker.rank_with_ner(
+            candidates, query, policy_scores,
+            ner_weight_override=0.05
+        )
+
+    return _to_ids(candidates[:k])
 
 RANKERS = {
     'baseline':     rank_baseline,
