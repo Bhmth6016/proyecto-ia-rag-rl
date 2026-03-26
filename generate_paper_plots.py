@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # generate_paper_plots.py
 """
-generar_figuras.py
-==================
-Genera todas las figuras del paper con datos reales del proyecto.
-Ejecutar desde la raiz del proyecto:
-    python generar_figuras.py
+generate_figures.py
+===================
+Generates all paper figures with real project data.
+Run from project root:
+    python generate_figures.py
 
-Requiere: matplotlib, numpy
+Requires: matplotlib, numpy
     pip install matplotlib numpy
 """
 
@@ -21,41 +21,41 @@ import os
 
 os.makedirs("figures", exist_ok=True)
 
-# ── Paleta de colores IEEE-friendly (escala de grises + azul) ─────────────────
-C_BASELINE  = "#4A4A4A"   # gris oscuro
-C_NER       = "#2196F3"   # azul
-C_REWARD    = "#1565C0"   # azul oscuro
-C_PPO       = "#78909C"   # gris azulado
-C_HYBRID    = "#0D47A1"   # azul muy oscuro
+# ── IEEE-friendly color palette (grayscale + blue) ─────────────────
+C_BASELINE  = "#4A4A4A"   # dark gray
+C_NER       = "#2196F3"   # blue
+C_REWARD    = "#1565C0"   # dark blue
+C_PPO       = "#78909C"   # bluish gray
+C_HYBRID    = "#0D47A1"   # very dark blue
 COLORS = [C_BASELINE, C_NER, C_REWARD, C_PPO, C_HYBRID]
 
 METHODS     = ["Baseline\n(FAISS)", "NER-\nEnhanced", "Reward-\nOnly", "RLHF\n(PPO)", "Full\nHybrid"]
 METHODS_SHORT = ["Baseline", "NER", "Reward-Only", "RLHF", "Full Hybrid"]
 
-# ── Datos reales de la última evaluación (17/03/2026) ─────────────────────────
+# ── Real data from latest evaluation (03/17/2026) ─────────────────────────
 NDCG   = [0.8497, 0.8334, 0.8817, 0.8350, 0.8817]
 RECALL = [1.0000, 0.9214, 1.0000, 1.0000, 1.0000]
 MRR    = [0.8000, 0.8778, 0.9167, 0.8444, 0.9167]
 MAP    = [0.7437, 0.7175, 0.7762, 0.7115, 0.7762]
 DELTA  = [0.0,   -1.9,   +3.8,   -1.7,   +3.8]
 
-# ── Evolución histórica del reward model ──────────────────────────────────────
+# ── Historical evolution of reward model ──────────────────────────────────────
 PREF_HIST  = [31, 59, 135]
-NDCG_HIST  = [0.800, 0.823, 0.8817]   # Reward-Only nDCG en cada iteración
+NDCG_HIST  = [0.800, 0.823, 0.8817]   # Reward-Only nDCG at each iteration
 VACC_HIST  = [0.944, 0.957, 0.909]    # val_accuracy reward model
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURA 1 — Comparativa nDCG@10 por método (barras horizontales)
+# FIGURE 1 — nDCG@10 comparison by method (horizontal bars)
 # ══════════════════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(7, 3.5))
 
 y = np.arange(len(METHODS))
 bars = ax.barh(y, NDCG, color=COLORS, height=0.55, edgecolor='white', linewidth=0.5)
 
-# Línea de referencia baseline
+# Baseline reference line
 ax.axvline(NDCG[0], color=C_BASELINE, linestyle='--', linewidth=1.2, alpha=0.7, label='Baseline')
 
-# Etiquetas de valor
+# Value labels
 for i, (bar, val, delta) in enumerate(zip(bars, NDCG, DELTA)):
     ax.text(val + 0.001, bar.get_y() + bar.get_height()/2,
             f'{val:.4f}', va='center', ha='left', fontsize=8.5, fontweight='bold')
@@ -70,7 +70,7 @@ ax.set_yticks(y)
 ax.set_yticklabels(METHODS, fontsize=9)
 ax.set_xlabel('nDCG@10', fontsize=9)
 ax.set_xlim(0.70, 0.945)
-ax.set_title('Comparativa nDCG@10 por método de ranking', fontsize=10, fontweight='bold', pad=8)
+ax.set_title('nDCG@10 comparison by ranking method', fontsize=10, fontweight='bold', pad=8)
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 ax.grid(axis='x', alpha=0.3, linestyle=':')
@@ -81,7 +81,7 @@ plt.close()
 print("✓ fig_ndcg_comparativa")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURA 2 — Tabla de métricas completa (4 métricas × 5 métodos)
+# FIGURE 2 — Complete metrics table (4 metrics × 5 methods)
 # ══════════════════════════════════════════════════════════════════════════════
 fig, axes = plt.subplots(1, 4, figsize=(12, 3.2), sharey=True)
 
@@ -111,7 +111,7 @@ legend_patches = [mpatches.Patch(color=c, label=m)
                   for c, m in zip(COLORS, METHODS_SHORT)]
 fig.legend(handles=legend_patches, loc='lower center', ncol=5,
            fontsize=8, frameon=False, bbox_to_anchor=(0.5, -0.05))
-fig.suptitle('Métricas de evaluación por método (test set, n=15 queries)',
+fig.suptitle('Evaluation metrics by method (test set, n=15 queries)',
              fontsize=10, fontweight='bold', y=1.01)
 plt.tight_layout()
 plt.savefig('figures/fig_metricas_completas.pdf', bbox_inches='tight', dpi=150)
@@ -120,7 +120,7 @@ plt.close()
 print("✓ fig_metricas_completas")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURA 3 — Evolución Reward-Only nDCG con preferencias
+# FIGURE 3 — Reward-Only nDCG evolution with preferences
 # ══════════════════════════════════════════════════════════════════════════════
 fig, ax1 = plt.subplots(figsize=(6, 3.5))
 
@@ -134,18 +134,18 @@ ax1.axhline(NDCG[0], color=C_BASELINE, linestyle='--', linewidth=1.2,
 line2, = ax2.plot(PREF_HIST, VACC_HIST, 's--', color='#43A047',
                   linewidth=1.8, markersize=6, label='Reward val_acc')
 
-# Anotaciones
+# Annotations
 for x, y_val in zip(PREF_HIST, NDCG_HIST):
     ax1.annotate(f'{y_val:.4f}', (x, y_val), textcoords="offset points",
                  xytext=(0, 10), ha='center', fontsize=8.5, color=C_REWARD)
 
-ax1.set_xlabel('Número de preferencias A/B recolectadas', fontsize=9)
+ax1.set_xlabel('Number of collected A/B preferences', fontsize=9)
 ax1.set_ylabel('nDCG@10 (Reward-Only)', fontsize=9, color=C_REWARD)
 ax2.set_ylabel('val_accuracy (Reward Model)', fontsize=9, color='#43A047')
 ax1.set_ylim(0.76, 0.92)
 ax2.set_ylim(0.88, 0.97)
 ax1.set_xticks(PREF_HIST)
-ax1.set_title('Evolución del sistema RLHF con datos de preferencia', fontsize=10,
+ax1.set_title('RLHF system evolution with preference data', fontsize=10,
               fontweight='bold', pad=8)
 ax1.spines['top'].set_visible(False)
 ax2.spines['top'].set_visible(False)
@@ -163,7 +163,7 @@ plt.close()
 print("✓ fig_evolucion_rlhf")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURA 4 — Arquitectura del sistema (diagrama de flujo SVG-style)
+# FIGURE 4 — System architecture (SVG-style flow diagram)
 # ══════════════════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.set_xlim(0, 10)
@@ -186,28 +186,28 @@ def draw_arrow(ax, x1, y1, x2, y2):
                 arrowprops=dict(arrowstyle='->', color='#455A64',
                                 lw=1.5), zorder=1)
 
-# Datos de entrada
+# Input data
 draw_box(ax, 1.0, 4.2, 1.6, 0.6, 'Amazon\nProducts\n(9,999)', '#FFF9C4', '#F57F17', 7)
-draw_box(ax, 1.0, 3.0, 1.6, 0.6, 'Interacciones\nUsuario\nA/B', '#FFF9C4', '#F57F17', 7)
+draw_box(ax, 1.0, 3.0, 1.6, 0.6, 'User\nInteractions\nA/B', '#FFF9C4', '#F57F17', 7)
 
-# Procesamiento
-draw_box(ax, 3.2, 4.2, 1.8, 0.6, 'Canonicalización\n+ Embeddings\n(MiniLM-L6-v2)', '#E3F2FD', '#1565C0', 7)
+# Processing
+draw_box(ax, 3.2, 4.2, 1.8, 0.6, 'Canonicalization\n+ Embeddings\n(MiniLM-L6-v2)', '#E3F2FD', '#1565C0', 7)
 draw_box(ax, 3.2, 3.0, 1.8, 0.6, 'NER Extractor\n(DeBERTa\nnli-v3-small)', '#E8F5E9', '#2E7D32', 7)
 draw_box(ax, 3.2, 1.8, 1.8, 0.6, 'Reward Model\n(MLP 435K\nval_acc=0.909)', '#FCE4EC', '#880E4F', 7)
 
-# Índices y modelos
+# Indices and models
 draw_box(ax, 5.7, 4.2, 1.8, 0.6, 'FAISS Index\n(384-dim\nAVX2)', '#E3F2FD', '#1565C0', 7)
-draw_box(ax, 5.7, 3.0, 1.8, 0.6, 'NER Cache\n(7,202/9,999\nproductos)', '#E8F5E9', '#2E7D32', 7)
+draw_box(ax, 5.7, 3.0, 1.8, 0.6, 'NER Cache\n(7,202/9,999\nproducts)', '#E8F5E9', '#2E7D32', 7)
 draw_box(ax, 5.7, 1.8, 1.8, 0.6, 'PPO Policy\n(Transformer\nheads=4)', '#FCE4EC', '#880E4F', 7)
 
-# Métodos de ranking
+# Ranking methods
 draw_box(ax, 8.3, 4.5, 1.6, 0.5, 'Baseline\nnDCG=0.8497', C_BASELINE, '#212121', 7)
 draw_box(ax, 8.3, 3.8, 1.6, 0.5, 'NER-Enhanced\nnDCG=0.8334', '#1976D2', '#0D47A1', 7, False)
 draw_box(ax, 8.3, 3.1, 1.6, 0.5, 'Reward-Only\nnDCG=0.8817 ★', '#1565C0', '#0D47A1', 7, True)
 draw_box(ax, 8.3, 2.4, 1.6, 0.5, 'RLHF (PPO)\nnDCG=0.8350', '#78909C', '#37474F', 7)
 draw_box(ax, 8.3, 1.7, 1.6, 0.5, 'Full Hybrid\nnDCG=0.8817', '#0D47A1', '#01579B', 7, True)
 
-# Flechas
+# Arrows
 draw_arrow(ax, 1.8, 4.2, 2.3, 4.2)
 draw_arrow(ax, 1.8, 3.0, 2.3, 3.0)
 draw_arrow(ax, 1.8, 3.0, 2.3, 1.8)
@@ -222,15 +222,15 @@ draw_arrow(ax, 6.6, 4.2, 7.5, 1.7)
 draw_arrow(ax, 6.6, 3.0, 7.5, 1.7)
 draw_arrow(ax, 6.6, 1.8, 7.5, 1.7)
 
-# Labels de secciones
-ax.text(3.2, 4.85, 'Procesamiento', ha='center', fontsize=8,
+# Section labels
+ax.text(3.2, 4.85, 'Processing', ha='center', fontsize=8,
         fontstyle='italic', color='#546E7A')
-ax.text(5.7, 4.85, 'Índices y Modelos', ha='center', fontsize=8,
+ax.text(5.7, 4.85, 'Indices and Models', ha='center', fontsize=8,
         fontstyle='italic', color='#546E7A')
-ax.text(8.3, 5.0, 'Métodos de Ranking', ha='center', fontsize=8,
+ax.text(8.3, 5.0, 'Ranking Methods', ha='center', fontsize=8,
         fontstyle='italic', color='#546E7A')
 
-ax.set_title('Arquitectura del sistema híbrido FAISS+NER+RLHF',
+ax.set_title('FAISS+NER+RLHF hybrid system architecture',
              fontsize=11, fontweight='bold', pad=10)
 
 plt.tight_layout()
@@ -240,7 +240,7 @@ plt.close()
 print("✓ fig_arquitectura")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURA 5 — Ciclo RLHF (diagrama circular)
+# FIGURE 5 — RLHF cycle (circular diagram)
 # ══════════════════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(6, 6))
 ax.set_xlim(-1.5, 1.5)
@@ -249,11 +249,11 @@ ax.axis('off')
 ax.set_aspect('equal')
 
 steps = [
-    (0,  1.0, 'Queries de\nTrain\n(23 queries)', '#FFF9C4', '#F57F17'),
-    (0.95, 0.31, 'Sesión A/B\nInteractiva\n(135 pref.)', '#E3F2FD', '#1565C0'),
-    (0.59, -0.81, 'Entrenamiento\nReward Model\n(val_acc=0.909)', '#FCE4EC', '#880E4F'),
+    (0,  1.0, 'Train\nQueries\n(23 queries)', '#FFF9C4', '#F57F17'),
+    (0.95, 0.31, 'Interactive\nA/B Session\n(135 pref.)', '#E3F2FD', '#1565C0'),
+    (0.59, -0.81, 'Reward Model\nTraining\n(val_acc=0.909)', '#FCE4EC', '#880E4F'),
     (-0.59, -0.81, 'PPO Training\n(50q × 10 epochs\nreward>0)', '#E8F5E9', '#2E7D32'),
-    (-0.95, 0.31, 'Evaluación\nnDCG@10\n(n=15)', '#F3E5F5', '#6A1B9A'),
+    (-0.95, 0.31, 'Evaluation\nnDCG@10\n(n=15)', '#F3E5F5', '#6A1B9A'),
 ]
 
 for (x, y, label, fc, ec) in steps:
@@ -262,7 +262,7 @@ for (x, y, label, fc, ec) in steps:
     ax.text(x, y, label, ha='center', va='center', fontsize=7.5,
             fontweight='bold', zorder=3, multialignment='center')
 
-# Flechas circulares
+# Circular arrows
 angles = [90, 90-72, 90-144, 90-216, 90-288]
 for i in range(5):
     a1 = np.radians(angles[i] - 25)
@@ -273,10 +273,10 @@ for i in range(5):
                 arrowprops=dict(arrowstyle='->', color='#455A64',
                                 lw=1.8, connectionstyle='arc3,rad=0.3'))
 
-ax.text(0, 0, 'Ciclo\nRLHF', ha='center', va='center', fontsize=10,
+ax.text(0, 0, 'RLHF\nCycle', ha='center', va='center', fontsize=10,
         fontweight='bold', color='#37474F')
 
-ax.set_title('Ciclo de entrenamiento RLHF implementado', fontsize=10,
+ax.set_title('Implemented RLHF training cycle', fontsize=10,
              fontweight='bold', pad=5)
 
 plt.tight_layout()
@@ -286,7 +286,7 @@ plt.close()
 print("✓ fig_ciclo_rlhf")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURA 6 — NER: intents detectados por DeBERTa (ejemplo)
+# FIGURE 6 — NER: intents detected by DeBERTa (example)
 # ══════════════════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(8, 3.5))
 ax.axis('off')
@@ -307,7 +307,7 @@ intents_ex = [
 ]
 
 table_data = list(zip(queries_ex, intents_ex))
-col_labels = ['Query', 'Intent detectado por DeBERTa NLI']
+col_labels = ['Query', 'Intent detected by DeBERTa NLI']
 col_widths = [0.22, 0.78]
 
 table = ax.table(
@@ -331,7 +331,7 @@ for (row, col), cell in table.get_celld().items():
         cell.set_facecolor('#FAFAFA')
     cell.set_edgecolor('#CFD8DC')
 
-ax.set_title('Ejemplos de detección de intent con DeBERTa zero-shot NLI',
+ax.set_title('Intent detection examples with DeBERTa zero-shot NLI',
              fontsize=10, fontweight='bold', pad=15)
 
 plt.tight_layout()
@@ -340,8 +340,8 @@ plt.savefig('figures/fig_ner_ejemplos.png', bbox_inches='tight', dpi=150)
 plt.close()
 print("✓ fig_ner_ejemplos")
 
-print("\nTodas las figuras generadas en ./figures/")
-print("Archivos: fig_ndcg_comparativa, fig_metricas_completas,")
-print("          fig_evolucion_rlhf, fig_arquitectura,")
-print("          fig_ciclo_rlhf, fig_ner_ejemplos")
-print("Formatos: .pdf (para LaTeX) y .png (para preview)")
+print("\nAll figures generated in ./figures/")
+print("Files: fig_ndcg_comparativa, fig_metricas_completas,")
+print("       fig_evolucion_rlhf, fig_arquitectura,")
+print("       fig_ciclo_rlhf, fig_ner_ejemplos")
+print("Formats: .pdf (for LaTeX) and .png (for preview)")
