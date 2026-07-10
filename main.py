@@ -137,7 +137,9 @@ def main():
 
             pref_file = Path("data/preferences/preferences.jsonl")
             if pref_file.exists():
-                n = sum(1 for _ in open(pref_file))
+                with open(pref_file, "r", encoding="utf-8") as f:
+                    n = sum(1 for _ in f)
+
                 print(f"\n  Preferencias A/B: {n}")
                 print(f"    {'[OK] Suficiente para entrenar' if n >= 10 else '[ERR] Necesitas 10+ comparaciones'}")
 
