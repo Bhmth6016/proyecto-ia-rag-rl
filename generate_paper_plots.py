@@ -406,7 +406,7 @@ def fig_train_val_loss():
     ax2.set_ylabel('Validation Accuracy', fontsize=FONT_SIZE_LABEL, color=TEXT_COLOR)
     ax1.tick_params(axis='y', labelcolor=TEXT_COLOR)
     ax2.tick_params(axis='y', labelcolor=TEXT_COLOR)
-    ax1.set_xlim(0.5, 23.5)
+    ax1.set_ylim(0, 0.5)
     ax1.set_ylim(-0.005, 0.23)
     ax2.set_ylim(0.68, 0.96)
 
@@ -417,7 +417,6 @@ def fig_train_val_loss():
                ['Train loss', 'Val loss', 'Val accuracy'],
                loc='center right')
     
-    add_figure_title(ax1, 'Reward Model Training: Loss and Accuracy Curves')
 
     plt.tight_layout()
     _save('fig_train_val_loss')
@@ -451,7 +450,6 @@ def fig_ndcg_comparativa():
 
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='lower right')
-    add_figure_title(ax, 'nDCG@10 Comparison Across Retrieval Methods')
 
     plt.tight_layout()
     _save('fig_ndcg_comparativa')
@@ -494,7 +492,6 @@ def fig_evolucion_rlhf():
     lines = [l1, ax1.get_lines()[1], l2]
     labs = [l.get_label() for l in lines]
     add_legend(ax1, lines, labs, loc='lower right')
-    add_figure_title(ax1, 'RLHF Evolution: Reward-Only Performance vs A/B Comparisons')
 
     plt.tight_layout()
     _save('fig_evolucion_rlhf')
@@ -751,7 +748,18 @@ def fig_boxplot_ndcg():
                     flierprops=dict(marker='o', markersize=4, alpha=0.5,
                                    markeredgecolor=get_neutral_color('gray_medium')),
                     zorder=3)
-
+    for i, m in enumerate(METHODS, start=1):
+        mean = np.mean(PQ_NDCG[m])
+        ax.text(
+            i,
+            mean,
+            f'{mean:.3f}',
+            ha='center',
+            va='bottom',
+            fontsize=FONT_SIZE_TICK-1,
+            color=TEXT_COLOR,
+            fontweight='bold'
+        )
     for patch, m in zip(bp['boxes'], METHODS):
         patch.set_facecolor(get_method_color(m, 'fig_boxplot_ndcg'))
         patch.set_alpha(0.72)
@@ -759,7 +767,7 @@ def fig_boxplot_ndcg():
     baseline_color = get_method_color('baseline', 'fig_boxplot_ndcg')
     ax.axhline(np.mean(PQ_NDCG['baseline']), color=baseline_color,
                linestyle='--', linewidth=1.2, alpha=0.7,
-               label=f'Baseline mean ({np.mean(PQ_NDCG["baseline"]):.4f})')
+               label=f'Baseline mean ({np.mean(PQ_NDCG["baseline"]):.3f})')
 
     ax.set_xticks(range(1, len(METHODS) + 1))
     ax.set_xticklabels([LABELS[m] for m in METHODS],
@@ -770,7 +778,6 @@ def fig_boxplot_ndcg():
 
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='lower right')
-    add_figure_title(ax, 'nDCG@10 Distribution Across Test Queries')
 
     plt.tight_layout()
     _save('fig_boxplot_ndcg')
@@ -786,7 +793,18 @@ def fig_boxplot_mrr():
                     flierprops=dict(marker='o', markersize=4, alpha=0.5,
                                    markeredgecolor=get_neutral_color('gray_medium')),
                     zorder=3)
-
+    for i, m in enumerate(METHODS, start=1):
+        mean = np.mean(PQ_NDCG[m])
+        ax.text(
+            i,
+            mean,
+            f'{mean:.3f}',
+            ha='center',
+            va='bottom',
+            fontsize=FONT_SIZE_TICK-1,
+            color=TEXT_COLOR,
+            fontweight='bold'
+        )
     for patch, m in zip(bp['boxes'], METHODS):
         patch.set_facecolor(get_method_color(m, 'fig_boxplot_mrr'))
         patch.set_alpha(0.72)
@@ -794,7 +812,7 @@ def fig_boxplot_mrr():
     baseline_color = get_method_color('baseline', 'fig_boxplot_mrr')
     ax.axhline(np.mean(PQ_MRR['baseline']), color=baseline_color,
                linestyle='--', linewidth=1.2, alpha=0.7,
-               label=f'Baseline mean ({np.mean(PQ_MRR["baseline"]):.4f})')
+               label=f'Baseline mean ({np.mean(PQ_MRR["baseline"]):.3f})')
 
     ax.set_xticks(range(1, len(METHODS) + 1))
     ax.set_xticklabels([LABELS[m] for m in METHODS],
@@ -805,7 +823,6 @@ def fig_boxplot_mrr():
 
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='lower right')
-    add_figure_title(ax, 'MRR Distribution Across Test Queries')
 
     plt.tight_layout()
     _save('fig_boxplot_mrr')
@@ -837,7 +854,6 @@ def fig_precision_recall():
     ax.set_ylim(0.60, 1.02)
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='upper right')
-    add_figure_title(ax, 'Precision@k vs k')
 
     # Precision-Recall
     ax = axes[1]
@@ -850,7 +866,6 @@ def fig_precision_recall():
     ax.set_ylim(0.60, 1.02)
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='upper right')
-    add_figure_title(ax, 'Precision-Recall Curve')
 
     plt.tight_layout()
     _save('fig_precision_recall')
@@ -895,7 +910,6 @@ def fig_reward_training():
 
     add_legend(ax1, [l1, l2], ['Train Loss', 'Val Accuracy'],
                loc='center right')
-    add_figure_title(ax1, 'Reward Model: Training Loss and Validation Accuracy')
 
     plt.tight_layout()
     _save('fig_reward_training')
@@ -916,7 +930,6 @@ def fig_ppo_curves():
     set_axis_labels(ax, xlabel='Epoch', ylabel='Average Reward')
     ax.set_xticks(EPOCHS_PPO)
     apply_axes_style(ax, grid_axis='y')
-    add_figure_title(ax, 'PPO: Average Reward per Epoch')
 
     # KL
     ax = axes[1]
@@ -928,7 +941,6 @@ def fig_ppo_curves():
     ax.set_xticks(EPOCHS_PPO)
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='upper left')
-    add_figure_title(ax, 'PPO: KL Divergence per Epoch')
 
     # Beta
     ax = axes[2]
@@ -937,7 +949,6 @@ def fig_ppo_curves():
     set_axis_labels(ax, xlabel='Epoch', ylabel='β  (log scale)')
     ax.set_xticks(EPOCHS_PPO)
     apply_axes_style(ax, grid_axis='y')
-    add_figure_title(ax, 'PPO: β Coefficient per Epoch')
 
     plt.tight_layout()
     _save('fig_ppo_curves')
@@ -993,7 +1004,6 @@ def fig_metricas_combinadas():
 
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='upper right')
-    add_figure_title(ax, 'Comprehensive Metrics Comparison Across All Methods')
 
     plt.tight_layout()
     _save('fig_metricas_combinadas')
@@ -1020,7 +1030,6 @@ def fig_preferencias():
         pt.set_fontsize(10)
         pt.set_fontweight('bold')
         pt.set_color(TEXT_COLOR)
-    add_figure_title(ax, 'A/B Preference Distribution')
 
     # Bar chart
     ax2 = axes[1]
@@ -1053,7 +1062,6 @@ def fig_preferencias():
 
     apply_axes_style(ax2, grid_axis='y')
     add_legend(ax2, loc='upper left')
-    add_figure_title(ax2, 'Policy vs Baseline Win Rate Comparison')
 
     plt.tight_layout()
     _save('fig_preferencias')
@@ -1095,7 +1103,6 @@ def fig_ablation():
             color=TEXT_COLOR, fontweight='bold')
 
     apply_axes_style(ax, grid_axis='y')
-    add_figure_title(ax, 'Ablation Study: Effect of Components on Performance')
 
     plt.tight_layout()
     _save('fig_ablation')
@@ -1121,7 +1128,6 @@ def fig_sensitivity():
     ax.set_ylim(0.815, 0.875)
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='lower left')
-    add_figure_title(ax, 'NER Weight Sensitivity Analysis')
 
     # Threshold sensitivity
     ax = axes[1]
@@ -1133,7 +1139,6 @@ def fig_sensitivity():
     ax.set_ylim(0.829, 0.869)
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='lower left')
-    add_figure_title(ax, 'NER Threshold Sensitivity Analysis')
 
     plt.tight_layout()
     _save('fig_sensitivity')
@@ -1188,7 +1193,6 @@ def fig_power_analysis():
                           facecolor='white',
                           edgecolor=get_neutral_color('gray_light'), alpha=0.95))
 
-    add_figure_title(ax, 'Statistical Power Analysis: Required Sample Size')
 
     plt.tight_layout()
     _save('fig_power_analysis')
@@ -1229,7 +1233,6 @@ def fig_evolucion_historica():
 
     apply_axes_style(ax, grid_axis='y')
     add_legend(ax, loc='lower right', ncol=2)
-    add_figure_title(ax, 'Historical Evolution of nDCG@10 Across Project Phases')
 
     plt.tight_layout()
     _save('fig_evolucion_historica')
@@ -1292,12 +1295,7 @@ def fig_radar_metricas():
         for text in legend.get_texts():
             text.set_color(TEXT_COLOR)
     
-    fig.suptitle('Radar Plot: Multi-Metric Performance Comparison', 
-                 fontsize=FONT_SIZE_TITLE + 1, 
-                 color=TEXT_COLOR,
-                 fontweight='bold')
-
-    plt.tight_layout()
+    
     _save('fig_radar_metricas')
 
 # ============================================================================
